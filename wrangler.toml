@@ -1,0 +1,65 @@
+name = "agent-house"
+main = "apps/api/src/index.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# The website is served from the same origin as the API, so workspace sessions use secure cookies.
+[assets]
+directory = "./apps/web/dist"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/v1/*", "/r/*", "/.well-known/*", "/mcp", "/mcp/*", "/llms.txt"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "agent-house"
+database_id = "REPLACE_WITH_D1_ID"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "agent-house-files"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+[[queues.producers]]
+binding = "JOBS"
+queue = "agent-house-jobs"
+
+[[queues.consumers]]
+queue = "agent-house-jobs"
+max_batch_size = 10
+max_batch_timeout = 2
+max_retries = 10
+dead_letter_queue = "agent-house-dead"
+
+# Outbound email (MAIL_MODE = "cloudflare"). Uncomment once Cloudflare email sending is enabled on the account,
+# or set MAIL_MODE = "http" with MAIL_HTTP_URL and MAIL_HTTP_KEY for another provider.
+# [[send_email]]
+# name = "SEND_EMAIL"
+
+[triggers]
+crons = ["*/15 * * * *", "*/30 * * * *", "0 6 * * 1", "0 7 * * *", "0 8 1-3 * *", "0 3 * * *"]
+
+[vars]
+APP_URL = "https://agenthouse.example"
+API_URL = "https://agenthouse.example"
+CH_API_BASE = "https://api.company-information.service.gov.uk"
+CH_RATE_LIMIT = "600"
+GAZETTE_BASE = ""
+FCA_BASE = "https://register.fca.org.uk/services/V0.1"
+FACILITATOR_URL = "https://x402.org/facilitator"
+X402_NETWORK = "eip155:8453"
+X402_ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+X402_PAY_TO = "REPLACE_WITH_RECEIVING_WALLET"
+SIGNING_KID = "ah-2026-10"
+MAIL_MODE = "cloudflare"
+MAIL_FROM = "Agent House <alerts@agenthouse.example>"
+SENDS_LIVE = "false"
+COOKIE_SECURE = "true"
+ALLOW_ANY_WEBHOOK_HOST = "false"
+STRIPE_BASE = "https://api.stripe.com"
+AGENT_MODEL = "claude-sonnet-5-5"
+INBOUND_DOMAIN = "in.agenthouse.example"   # route <alias>@ this domain to the Worker for business inboxes
+TURNSTILE_SITE_KEY = ""   # public site key; set TURNSTILE_SECRET as a secret to enforce it

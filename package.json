@@ -1,0 +1,34 @@
+{
+  "name": "agent-house",
+  "version": "1.0.0",
+  "description": "Agent House: client book watch, new-client checks and prospect lists for UK MSPs, plus the UK Business Source of Truth API.",
+  "scripts": {
+    "setup": "node scripts/dev-secrets.mjs && wrangler d1 migrations apply agent-house --local",
+    "mocks": "node mocks/server.mjs",
+    "dev": "wrangler dev",
+    "listener": "node --env-file=.dev.vars apps/stream-listener/listener.mjs",
+    "web:build": "npm --prefix apps/web run build",
+    "typecheck": "tsc -p .",
+    "test": "vitest run",
+    "test:e2e": "node tests/e2e/run.mjs",
+    "deploy": "npm run web:build && wrangler deploy"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261019.1",
+    "@types/node": "^22.20.5",
+    "playwright": "^1.56.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
+    "wrangler": "^4.151.3"
+  },
+  "dependencies": {
+    "hono": "^4.13.13",
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.76"
+  },
+  "private": true,
+  "type": "module"
+}
