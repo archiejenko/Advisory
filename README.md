@@ -3,6 +3,7 @@
 One place for everything agentic, with three doors:
 
 - **For businesses:** hire agents that run parts of a small business (outreach, inbox, credit control, customer and supplier watch, company checks, lead lists, research, a weekly briefing). They work from the business profile, use catalogue tools, record every step, and ask before anything is sent.
+- **The Floor:** describe the business (typed or spoken) and Claude designs a swarm of agents for it, or start from a preset (Sales floor, Back office; Markets desk is shown but locked until market data is connected). The swarm runs on a live Floor: a station per agent showing what it's doing, work cards moving through stages, handoffs between agents, KPIs, a desk of things waiting for you, a CRM (companies, contacts, deals, timeline), and a command bar you can talk to from your phone.
 - **For developers:** call the tool catalogue over REST or MCP, run a whole agent in one call (`/v1/agents/run`), or publish an API as a tool and earn 80% of every paid call.
 - **For agents:** discover the catalogue (`/.well-known/agent-house.json`, `/v1/tools`, `/llms.txt`, `/mcp`) and pay per call with x402. Every answer is Ed25519-signed.
 
@@ -55,11 +56,11 @@ Opened straight from disk, `apps/web/dist/index.html` runs as an offline demo wi
 ## Tests
 
 ```bash
-npm test               # unit (60): matching, checks, signing, tenant isolation, rate limits, scheduling, catalogue,
-                       # plus the hardening suite run against real SQL (Node's built-in SQLite, every migration applied)
+npm test               # unit (78): matching, checks, signing, tenant isolation, rate limits, scheduling, catalogue, swarms,
+                       # plus the hardening and swarm suites run against real SQL (Node's built-in SQLite, every migration applied)
 npm run typecheck
-npm run test:e2e       # API: 34 flows against wrangler dev and the mocks
-node tests/e2e/ui.mjs  # browser: 19 flows clicking through the real website in Chromium
+npm run test:e2e       # API: 41 flows against wrangler dev and the mocks
+node tests/e2e/ui.mjs  # browser: 20 flows clicking through the real website in Chromium
 ```
 
 Stop any running `npm run dev` or `npm run mocks` before the end-to-end suites; they start their own on ports 8787 and 8788 with fresh state. The browser suite saves screenshots to `ui-shots/`.
@@ -71,6 +72,9 @@ Stop any running `npm run dev` or `npm run mocks` before the end-to-end suites; 
 | Website | `/` | Hash routes. Workspace pages show the live workspace when signed in and the demo when not. |
 | Sign-in | `/api/auth/*` | Email magic links. Session is an HttpOnly cookie. |
 | Workspace | `/api/ws/*` | Overview, agent catalogue and hiring, runs, approvals, leads, tasks, invoices, inbox, alerts, customers, imports, briefs, channels, usage and plan, team, audit, billing. Roles: owner, manager, viewer. Every query is forced through an org filter. |
+| Swarms and the Floor | `/api/ws/swarm-presets`, `/api/ws/swarms*`, `/api/ws/work-items/:id` | Plan a blueprint from a description, preview its cost against the plan, spin it up, poll the Floor (`GET /swarms/:id?since=<cursor>`), ask the command bar, brief, pause all, remove. `/#/floor` and `/#/floor/:id`. |
+| CRM | `/api/ws/crm/*` | Companies (leads), contacts, deals and an activity timeline written by agents and people. |
+| Voice | `/api/ws/voice/transcribe`, `/api/ws/voice/speak` | Speech to text (Whisper) and text to speech (Deepgram Aura) on Workers AI. The browser's own speech is the fallback; dictation keyboards like Wispr Flow type into the command bar with nothing extra. |
 | Public forms | `/api/public/*` | Self-serve sign-up, customer check upload, booking slots, API keys, credits, unsubscribe. Per-IP limits; Turnstile when configured. |
 | Reports | `/r/:token` | Customer check reports, only after the operator approves them. |
 | Tool gateway | `/v1/tools`, `/v1/tools/:slug`, `/v1/agents/run` | First-party and developer tools, priced per call. x402 (`PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE`) or an API key. Every response is Ed25519-signed; the key is at `/.well-known/agent-house-key`. The original `/v1/resolve`, `/v1/companies/:number`, `/v1/check` and `/v1/watch` still work. |
@@ -90,6 +94,8 @@ Background work runs on two queues. `AGENT_JOBS` carries agent runs only, one pe
 **Billing state.** Agents stop (hiring, manual runs, schedules and already-queued runs) when a workspace is cancelled, its trial has ended, or Stripe reports the subscription `unpaid`, `canceled`, `incomplete_expired` or `paused`; `past_due` gets 7 days' grace from the first failure. Plan changes in the Stripe customer portal update the workspace's plan by price id. Webhook events are recorded as seen only after they've been processed, so a failure is retried by Stripe instead of dropped.
 
 **Deletion.** Thirty days after cancellation, retention queues a purge of the workspace: every workspace table (agents, runs, actions, leads, invoices, inbox, tasks, usage, clients, alerts and the rest), agent transcripts, prospect lists and uploaded files in R2, and people who belong to no other workspace. The audit log keeps the actions with targets and details cleared.
+
+**Swarms.** A swarm is a checked JSON blueprint (`packages/core/swarms.ts`, validated in `lib/swarm.ts`): agents (catalogue templates, or custom roles with standing orders and a whitelisted tool set), stages with rules that place records on the board (`lead`, `invoice`, `message`), handoffs, KPIs and a skin. `lib/engine.ts` turns a description into a blueprint with one Claude call plus one correction round, falling back to the nearest preset; it never fails the owner. Swarm agents count against the plan's agents, and spinning up reuses free agents of the same template. Cards follow their records (`syncSwarm`, after every run and every change you make), and a `hand-off` tool lets one agent pass a card to another: allowed routes only, at most 5 a day per card, never straight back, and the note is passed as information, not instructions. Every step lands in `swarm_event`, which the Floor polls every 4 seconds from a cursor. The command bar has fast paths (`@agent do this`, `brief me`, `pause outreach`) and otherwise one routing call to Claude; pausing or resuming always comes back for you to confirm on screen, and nothing can be approved or sent from it.
 
 **Two engines for agents.** LLM agents (outreach, inbox, credit control, research, briefing) run through the tool registry in `lib/agents.ts` and `lib/tools.ts`. The register agents (customer watch, customer check, prospect finder) are the original MSP engines (`agent_config`, `lib/process.ts`, `lib/truth.ts`, briefs); hiring one switches its engine on. New capabilities go into the tool registry.
 
@@ -114,6 +120,8 @@ node -e "crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']).then
 # paste the output as SIGNING_JWK
 for s in SIGNING_JWK CHANNEL_KEY CH_API_KEY FCA_EMAIL FCA_KEY STRIPE_SECRET STRIPE_WEBHOOK_SECRET INGEST_SECRET ADMIN_TOKEN OPERATOR_EMAIL TURNSTILE_SECRET ANTHROPIC_API_KEY SEARCH_API_KEY; do wrangler secret put $s; done
 ```
+
+Voice uses the Workers AI binding (`[ai] binding = "AI"` in `wrangler.toml`, set `VOICE_SPEAKER` and `VOICE_LANGUAGE` in vars). Workers AI always runs remotely, so local dev and the tests point `VOICE_HTTP_URL` at the mock instead; leave it unset in production. Without either, voice routes answer 503 `voice_off` and the Floor uses the browser's speech. Apply migration `0004_swarms.sql` before deploying the Floor.
 
 `CHANNEL_KEY` is 32 random bytes, base64url. `TURNSTILE_SECRET` is optional; set `TURNSTILE_SITE_KEY` in vars alongside it. `ANTHROPIC_API_KEY` runs the agents (model from `AGENT_MODEL`; costs are recorded per run using `AGENT_PRICE_IN_PENCE` and `AGENT_PRICE_OUT_PENCE` per million tokens, with cache writes and reads at `AGENT_CACHE_WRITE_X` and `AGENT_CACHE_READ_X` of the input price).
 
@@ -143,4 +151,6 @@ These are built to the published documentation but have only been run against th
 - **Stripe:** create one recurring price per plan (Starter, Growth, Scale) and set their ids.
 - **Claude and web search:** agent runs are tested against a scripted mock of the Messages API and Brave Search. Run each agent once against the real model with a test business before inviting customers, and review its drafts.
 - **Developer payouts:** earnings are recorded per settled call (`tool_earning`); paying publishers out (the site says monthly by bank transfer once £20 is earned) is a manual process for now.
+- **Swarm planner and command router:** tested against a scripted mock. Try ten real business descriptions against the real model and read the blueprints before opening the Floor to customers.
+- **Voice:** Whisper's accuracy on UK accents and noisy phone audio, and Aura's voice choice (`VOICE_SPEAKER`). The routes cap uploads at 4 MB (about a minute) and 240 voice calls an hour per workspace.
 - **Cloudflare Containers:** connection lifetime for the long-lived stream, if you host the listener there.

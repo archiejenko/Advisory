@@ -104,9 +104,49 @@ function toolResults(messages) {
   return out;
 }
 const textOf = (c) => typeof c === "string" ? c : Array.isArray(c) ? c.filter((x) => x.type === "text").map((x) => x.text).join("\n") : "";
+/* The Swarm engine's planner: a recruitment swarm with custom roles. "needs a retry" first answers with a
+   tool that doesn't exist, to exercise the correction round; "unusable" never answers with JSON. */
+const RECRUITMENT = {
+  name: "Recruitment desk", sector: "Recruitment agency", goals: ["Find companies hiring now", "Start conversations with hiring managers"],
+  agents: [
+    { key: "scout", name: "Job scout", role: "Finds companies that are hiring in the area", template: "custom", rhythm: "weekdays", run_hour: 7,
+      tools: ["business-profile", "find-companies", "company-research", "read-page", "save-lead", "create-task"],
+      instructions: "1. Read the business profile.\n2. Find companies that are hiring the roles we place.\n3. Save each as a lead with its published email, and hand it to outreach." },
+    { key: "outreach", name: "Outreach", role: "Writes to hiring managers", template: "outreach", rhythm: "weekdays", run_hour: 9 },
+    { key: "inbox", name: "Inbox", role: "Answers replies", template: "inbox", rhythm: "on_event" },
+  ],
+  stages: [
+    { key: "spotted", name: "Spotted", agent: "scout", rule: { source: "lead", status: ["new"], has_email: false } },
+    { key: "ready", name: "Ready", agent: "outreach", rule: { source: "lead", status: ["new"], has_email: true } },
+    { key: "pitched", name: "Pitched", agent: "outreach", rule: { source: "lead", status: ["contacted"] } },
+    { key: "talking", name: "Talking", agent: "inbox", rule: { source: "lead", status: ["replied"] } },
+    { key: "client", name: "Client", agent: "inbox", rule: { source: "lead", status: ["won"] }, done: true },
+  ],
+  handoffs: [{ from: "scout", to: "outreach", when: "A hiring company has a published email" }],
+  kpis: ["new_leads_week", "emails_sent_week", "replies_week", "won_month"], skin: "floor", needs: [],
+};
+function plannerReply(b) {
+  const desc = textOf(b.messages[0].content), turn = b.messages.filter((m) => m.role === "assistant").length;
+  const reply = (text) => ({ id: "msg_plan", type: "message", role: "assistant", content: [{ type: "text", text }], stop_reason: "end_turn", usage: { input_tokens: 4200, output_tokens: 900 } });
+  if (/unusable/i.test(desc)) return reply("Sorry, I can't design that.");
+  if (/needs a retry/i.test(desc) && turn === 0) return reply(JSON.stringify({ ...RECRUITMENT, agents: RECRUITMENT.agents.map((a, i) => (i === 0 ? { ...a, tools: [...a.tools, "linkedin-scrape"] } : a)) }));
+  return reply("Here is the swarm:\n" + JSON.stringify(RECRUITMENT));
+}
+/* The command router: answers questions, otherwise sends the instruction to the agent it names. */
+function routerReply(b) {
+  const q = textOf(b.messages[0].content);
+  const agents = [...(b.system.match(/^Agents: (.*)$/m)?.[1] || "").matchAll(/([a-z][a-z0-9-]*) \(([^:,)]+)/g)].map((m) => ({ key: m[1], name: m[2] }));
+  const reply = (o) => ({ id: "msg_route", type: "message", role: "assistant", content: [{ type: "text", text: JSON.stringify(o) }], stop_reason: "end_turn", usage: { input_tokens: 900, output_tokens: 60 } });
+  if (/\?\s*$|^how many|^what/i.test(q)) return reply({ type: "answer", answer: "From the Floor: " + (b.system.match(/^Facts: (.*)$/m)?.[1] || "nothing yet") });
+  const a = agents.find((x) => q.toLowerCase().includes(x.key) || q.toLowerCase().includes(x.name.toLowerCase().split(" ")[0])) || agents[0];
+  return reply({ type: "instruct", agent: a?.key, input: q });
+}
+
 function mockClaude(raw) {
   // The API takes system as a string or as cached text blocks; normalise both.
   const b = { ...raw, system: textOf(raw.system) };
+  if (b.system.startsWith("SWARM BLUEPRINT")) return plannerReply(b);
+  if (b.system.startsWith("COMMAND ROUTER")) return routerReply(b);
   const tpl = ((b.system || "").match(/TEMPLATE: ([\w-]+)/) || [])[1] || "adhoc";
   const H = toolResults(b.messages);
   const last = H[H.length - 1];
@@ -142,6 +182,22 @@ function mockClaude(raw) {
     if (turn === 1) return use("triage-message", { id: m.id, urgency: "high", category: "quote", summary: `Asks for a quote: ${m.subject}` });
     if (turn === 2) return use("propose-email", { to: m.from_addr, message_id: m.id, subject: `Re: ${m.subject}`, body: "Hello,\n\nThanks for getting in touch. We'd be glad to help. Could you tell us how many people are in your office, and when you'd like to start? We'll come back with a quote the same day.\n\nKind regards,\n" + sign, reason: "Quote request: reply asking for the details we need" });
     return done(`Triaged 1 message (quote request, high urgency) and drafted a reply for approval.`);
+  }
+  if (tpl === "custom" && (b.tools || []).some((t) => t.name === "find-companies")) {
+    // A prospector-style custom role: find one company, research it, save it, and hand it to outreach.
+    if (turn === 0) return use("business-profile", {});
+    if (turn === 1) return use("find-companies", { districts: ["M2", "M3"], sic: ["69"], min_age: 3, limit: 1 });
+    const found = H[1]?.companies || [];
+    if (!found.length) return done("No new companies matched today.");
+    const co = found[0];
+    if (turn === 2) return use("company-research", { input: co.name });
+    if (turn === 3) return use("read-page", { url: H[2]?.likely_website || "http://127.0.0.1:8788/web/none" });
+    const email = H[3]?.emails_on_page?.[0];
+    if (turn === 4) return use("save-lead", { company: co.name, number: co.number, email, website: H[3]?.url, notes: `Established ${co.incorporated?.slice(0, 4)} firm in ${co.district}.` });
+    const target = (b.system.match(/You may hand work to: ([a-z][a-z0-9-]*)/) || [])[1];
+    if (turn === 5 && email && H[4]?.card_id && target) return use("hand-off", { item_id: H[4].card_id, to: target, note: `Established firm in ${co.district}; a business email is published on their site.` });
+    if (turn === 5 && !email) return use("create-task", { title: `Find a contact at ${co.name}`, detail: "No email is published on their website." });
+    return done(`Found ${co.name}${email && target ? ` and handed it to ${target}` : ""}.`);
   }
   if (tpl === "credit-control") {
     if (turn === 0) return use("list-invoices", { overdue_only: true });
@@ -300,6 +356,19 @@ const server = http.createServer(async (req, res) => {
       return c ? json(res, 200, { ok: true, timepoint }) : json(res, 404, { error: "no such company" });
     }
     if (p === "/control/captured") return json(res, 200, { captured });
+    /* Voice: "audio" here is the words themselves, base64-encoded, so tests can say what was spoken. */
+    if (p === "/voice/transcribe" && req.method === "POST") {
+      const b = JSON.parse(await readBody(req));
+      const text = Buffer.from(b.audio || "", "base64").toString("utf8");
+      captured.push({ target: "/voice/transcribe", body: { bytes: (b.audio || "").length }, at: new Date().toISOString() });
+      return json(res, 200, { text: /^[\x20-\x7e\n]+$/.test(text) ? text : "brief me" });
+    }
+    if (p === "/voice/speak" && req.method === "POST") {
+      const b = JSON.parse(await readBody(req));
+      captured.push({ target: "/voice/speak", body: { text: b.text }, at: new Date().toISOString() });
+      res.writeHead(200, { "Content-Type": "audio/mpeg" });
+      return res.end(Buffer.concat([Buffer.from("ID3"), Buffer.from(String(b.text || ""))]));
+    }
     if (p === "/control/claude-fail" && req.method === "POST") { claudeFailures = Number(JSON.parse(await readBody(req)).n || 0); return json(res, 200, { ok: true }); }
     if (p === "/control/companies") return json(res, 200, { companies: [...companies.values()].map((c) => ({ number: c.company_number, name: c.company_name, postcode: c.registered_office_address.postal_code })) });
     if (p === "/control/reset" && req.method === "POST") { seed(); captured.length = 0; backlog.length = 0; gazetteFeed.length = 0; return json(res, 200, { ok: true }); }

@@ -188,6 +188,7 @@ export const ORG_TABLES = [
   "client", "import_row", "import", "agent_config", "channel", "alert", "delivery", "brief",
   "agent", "agent_run", "agent_action", "lead", "task", "invoice", "inbox_message",
   "usage_event", "api_key", "session", "membership",
+  "swarm", "work_item", "swarm_event", "contact", "deal", "activity",
 ] as const;
 
 async function deletePrefix(env: Env, prefix: string) {
@@ -253,6 +254,7 @@ export async function retention(env: Env) {
   await run(env, "DELETE FROM rate_window WHERE bucket < ?", "ch:" + Math.floor(Date.now() / 300000 - 12));
   await pruneRateWindows(env);
   await run(env, "DELETE FROM magic_link WHERE expires_at < ?", cutoff);
+  await run(env, "DELETE FROM swarm_event WHERE at < ?", cutoff); // the Floor's log is kept 30 days
   await run(env, "DELETE FROM session WHERE expires_at < ?", nowIso());
   return { health_checks: old.length, orgs: gone.length };
 }

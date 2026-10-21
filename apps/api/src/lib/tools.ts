@@ -9,6 +9,9 @@ import { webSearch, readPage, safeOutboundUrl } from "./web";
 import { proposeEmail } from "./actions";
 import { notifyChannel } from "./delivery";
 import { unseal } from "./crypto";
+import { SWARM_TOOL_DEFS } from "./swarmtools";
+import { logActivity } from "./crm";
+import { syncSwarm } from "./swarm";
 import type { ToolDef } from "./llm";
 
 export type ToolCtx = { env: Env; orgId?: string; agentId?: string; runId?: string };
@@ -144,7 +147,7 @@ const BUSINESS: Tool[] = [
     description: "Save or update a lead. Only include an email that is published on the company's own website.",
     input_schema: S({ company: str("Company name"), number: str("Companies House number, if known"), email: str("Published business email, if found"), contact_name: str("Contact name, if published"), website: str("Website URL"), notes: str("Why they fit, in one line") }, ["company"]),
     run: async (c, i) => {
-      const { db, agentId } = need(c);
+      const { db, agentId, env } = need(c);
       const company = text(i.company, 200);
       if (!company) throw new HttpError(400, "invalid_request", "A lead needs a company name.");
       const email = i.email ? text(i.email, 200).toLowerCase() : null;
@@ -159,6 +162,14 @@ const BUSINESS: Tool[] = [
       const id = newId("lead");
       await db.run("INSERT INTO lead (org_id, id, agent_id, company, number, contact_name, email, website, notes, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
         id, agentId, company, opt(i.number, 8), opt(i.contact_name, 120), email, opt(i.website, 300), opt(i.notes, 500), nowIso());
+      const by = await db.one<any>("SELECT name, swarm_id FROM agent WHERE org_id = ?1 AND id = ?2", agentId);
+      await logActivity(env, { orgId: c.orgId!, leadId: id, agentId, actor: by?.name || "Agent", kind: "lead", summary: `Saved as a lead${i.notes ? `: ${text(i.notes, 300)}` : ""}` });
+      // In a swarm, the lead's card goes on the board now, so the agent can hand it on in the same run.
+      if (by?.swarm_id) {
+        await syncSwarm(env, c.orgId!, by.swarm_id, { force: true });
+        const card = await db.one<any>("SELECT id, stage FROM work_item WHERE org_id = ?1 AND swarm_id = ?2 AND ref_kind = 'lead' AND ref_id = ?3", by.swarm_id, id);
+        if (card) return { lead_id: id, created: true, card_id: card.id, stage: card.stage };
+      }
       return { lead_id: id, created: true };
     },
   },
@@ -244,7 +255,7 @@ const BUSINESS: Tool[] = [
   },
 ];
 
-const BUILTIN = new Map([...PUBLIC, ...BUSINESS].map((t) => [t.slug, t]));
+const BUILTIN = new Map([...PUBLIC, ...BUSINESS, ...SWARM_TOOL_DEFS].map((t) => [t.slug, t]));
 
 /* ---------- Developer tools: proxied with a signed request ---------- */
 async function hmacHex(secret: string, msg: string) {

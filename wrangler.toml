@@ -54,6 +54,11 @@ dead_letter_queue = "agent-house-dead"
 # [[send_email]]
 # name = "SEND_EMAIL"
 
+# Workers AI for voice: speech to text (Whisper) and spoken replies (Deepgram Aura). Always remote, even in local dev,
+# so local development and tests set VOICE_HTTP_URL to the mocks instead.
+[ai]
+binding = "AI"
+
 [triggers]
 crons = ["*/15 * * * *", "*/30 * * * *", "0 6 * * 1", "0 7 * * *", "0 8 1-3 * *", "0 3 * * *"]
 
@@ -85,3 +90,5 @@ AGENT_PRICE_IN_PENCE = "240"
 AGENT_PRICE_OUT_PENCE = "1200"
 AGENT_CACHE_WRITE_X = "1.25"
 AGENT_CACHE_READ_X = "0.1"
+VOICE_SPEAKER = "angus"            # Deepgram Aura voice for spoken replies
+VOICE_LANGUAGE = "en"

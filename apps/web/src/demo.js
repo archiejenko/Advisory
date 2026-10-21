@@ -2,6 +2,7 @@
 // Example business and fictional companies. Changes last until the page reloads.
 import { TEMPLATES, RHYTHM_LABEL, PLANS } from "../../../packages/core/templates.ts";
 import { ALERTS, CLIENTS, PROSPECTS } from "./data.js";
+import { floorDemo } from "./floorDemo.js";
 
 const H = 3600e3, D = 24 * H;
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
@@ -150,6 +151,8 @@ export async function demoApi(method, path, body) {
   const m = (re) => p.match(re);
   const now = () => new Date().toISOString();
   let r;
+  const floor = floorDemo(method, p, q, body, s, fail);
+  if (floor !== undefined) return floor;
 
   if (method === "GET") {
     if (p === "/overview") {

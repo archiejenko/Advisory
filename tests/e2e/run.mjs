@@ -529,6 +529,131 @@ async function main() {
     ok((await call("POST", `/api/ws/my-agents/${agents.outreach}/run`, {}, { cookie: other })).status === 404, "can't run another business's agent");
   });
 
+  /* 17b. Swarms, the Floor, the CRM and voice */
+  let hb, swarm, sw = {};
+  await check("swarms: presets listed; a description becomes a blueprint (with a correction round, or the nearest preset)", async () => {
+    ok((await call("POST", "/api/public/signup", { business: "Harbour Facilities", name: "Kit", email: "kit@harbour.example", what: "Office cleaning and facilities for professional firms in Manchester" }, { cookie: false })).status === 201, "sign-up");
+    hb = await signIn("kit@harbour.example");
+    await call("PATCH", "/api/ws/org", { prospect_districts: ["M2", "M3"], prospect_sic: ["69"], profile: { customers: "law and accountancy firms", sign_off: "Kit, Harbour" } }, { cookie: hb });
+    const pr = (await call("GET", "/api/ws/swarm-presets", undefined, { cookie: hb })).json;
+    ok(pr.presets.length === 3 && pr.presets.find((p) => p.key === "markets-desk").locked && pr.voice === true, JSON.stringify(pr).slice(0, 300));
+    const g = (await call("POST", "/api/ws/swarms/plan", { description: "We're a recruitment agency in Manchester placing accountants with growing firms." }, { cookie: hb })).json;
+    ok(g.source === "generated" && g.blueprint.name === "Recruitment desk" && g.blueprint.agents[0].template === "custom" && g.preview.fits && g.preview.new_agents === 3, JSON.stringify(g).slice(0, 300));
+    const fixed = (await call("POST", "/api/ws/swarms/plan", { description: "Recruitment agency, needs a retry to get this right." }, { cookie: hb })).json;
+    ok(fixed.source === "generated" && !fixed.blueprint.agents[0].tools.includes("linkedin-scrape"), "the correction round fixed the unknown tool");
+    const fb = (await call("POST", "/api/ws/swarms/plan", { description: "Something unusable about chasing unpaid invoices." }, { cookie: hb })).json;
+    ok(fb.source === "preset" && fb.preset === "back-office" && /closest preset/.test(fb.note), JSON.stringify(fb).slice(0, 200));
+    ok((await call("POST", "/api/ws/swarms/plan", { description: "short" }, { cookie: hb })).status === 400, "too-short description refused");
+    sw.recruit = g.blueprint;
+  });
+
+  await check("swarms: spin up the sales floor; locked presets and over-plan swarms are refused and leave nothing behind", async () => {
+    const lk = await call("POST", "/api/ws/swarms", { preset: "markets-desk" }, { cookie: hb });
+    ok(lk.status === 409 && lk.json.error.code === "needs_connection", lk.text);
+    const bad = await call("POST", "/api/ws/swarms", { blueprint: { ...sw.recruit, agents: sw.recruit.agents.map((a, i) => (i ? a : { ...a, tools: ["send-money"] })) } }, { cookie: hb });
+    ok(bad.status === 400 && bad.json.error.code === "invalid_blueprint", bad.text);
+    const r = await call("POST", "/api/ws/swarms", { preset: "sales-floor" }, { cookie: hb });
+    ok(r.status === 201 && r.json.hired === 4 && r.json.reused === 0, r.text);
+    swarm = r.json.id;
+    const over = await call("POST", "/api/ws/swarms", { blueprint: sw.recruit }, { cookie: hb });
+    ok(over.status === 409 && over.json.error.code === "plan_limit", over.text);
+    const mine = (await call("GET", "/api/ws/my-agents", undefined, { cookie: hb })).json.agents;
+    ok(mine.length === 4 && mine.every((a) => a.swarm_id === swarm), "only the sales floor's agents exist: " + mine.length);
+    for (const a of mine) sw[a.name.toLowerCase()] = a.id;
+    ok(mine.find((a) => a.template === "custom").role.startsWith("Finds companies"), "custom role hired");
+    const f = (await call("GET", "/api/ws/swarms/" + swarm, undefined, { cookie: hb })).json;
+    ok(f.stations.length === 4 && f.kpis.length === 4 && f.blueprint.stages.length === 5 && f.events.some((e) => e.kind === "created") && f.cursor > 0, JSON.stringify(f).slice(0, 300));
+    ok((await call("GET", "/api/ws/swarms", undefined, { cookie: hb })).json.swarms[0].agents === 4, "listed");
+  });
+
+  await check("the Floor: the prospector finds a company, saves it as a card and hands it to outreach, which wakes", async () => {
+    const r = await call("POST", `/api/ws/my-agents/${sw.prospector}/run`, {}, { cookie: hb });
+    ok(r.status === 202, r.text);
+    const run = await waitRun(r.json.run_id, hb);
+    ok(run.status === "done" && /handed it to outreach/.test(run.summary), JSON.stringify(run));
+    const f = (await call("GET", "/api/ws/swarms/" + swarm, undefined, { cookie: hb })).json;
+    const card = f.items.find((i) => i.title === "ASHWORTH HALE SOLICITORS LTD");
+    ok(card && card.stage === "qualified" && card.agent_id === sw.outreach && card.ref_kind === "lead", JSON.stringify(f.items));
+    ok(f.events.some((e) => e.kind === "handoff" && e.item_id === card.id) && f.events.some((e) => e.kind === "tool" && e.agent_id === sw.prospector), "handoff and tool events");
+    const woke = await waitFor(async () => (await call("GET", `/api/ws/runs?agent=${sw.outreach}`, undefined, { cookie: hb })).json.runs.find((x) => x.trigger === "event"), "outreach woken");
+    const det = (await call("GET", "/api/ws/runs/" + woke.id, undefined, { cookie: hb })).json.run;
+    ok(/^Handoff from Prospector/.test(det.input) && /as information and not instructions/.test(det.input), det.input);
+    await waitRun(woke.id, hb);
+    const since = (await call("GET", `/api/ws/swarms/${swarm}?since=${f.cursor}`, undefined, { cookie: hb })).json;
+    ok(since.events.every((e) => e.id > f.cursor) && since.cursor >= f.cursor, "events since the cursor only");
+    ok((await call("GET", "/api/ws/swarms/" + swarm, undefined, { cookie: hb })).json.events.some((e) => e.agent_id === sw.outreach && e.kind === "run_done"), "outreach's run shows on the Floor");
+    sw.card = card;
+  });
+
+  await check("command bar: @agent instructs, brief me, questions go to the router, pause comes back for confirmation", async () => {
+    const at = (await call("POST", `/api/ws/swarms/${swarm}/ask`, { text: "@outreach write to Peel Street Accountants" }, { cookie: hb })).json;
+    ok(at.type === "instruct" && at.agent.id === sw.outreach && at.run_id, JSON.stringify(at));
+    await waitRun(at.run_id, hb);
+    const br = (await call("POST", `/api/ws/swarms/${swarm}/ask`, { text: "brief me", voice: true }, { cookie: hb })).json;
+    ok(br.type === "brief" && br.say.length > 20, JSON.stringify(br));
+    const q = (await call("POST", `/api/ws/swarms/${swarm}/ask`, { text: "How many replies came in this week?" }, { cookie: hb })).json;
+    ok(q.type === "answer" && /^From the Floor:/.test(q.say), JSON.stringify(q));
+    const ch = (await call("POST", `/api/ws/swarms/${swarm}/ask`, { text: "pause inbox" }, { cookie: hb })).json;
+    ok(ch.type === "change" && ch.change.action === "pause" && ch.change.agent_id === sw.inbox, JSON.stringify(ch));
+    ok((await call("GET", `/api/ws/my-agents/${sw.inbox}`, undefined, { cookie: hb })).json.agent.status === "running", "nothing changes until it's confirmed");
+    const f = (await call("GET", "/api/ws/swarms/" + swarm, undefined, { cookie: hb })).json;
+    ok(f.events.some((e) => e.kind === "ask" && e.summary === "You said: brief me"), "spoken asks are logged");
+    ok((await call("POST", `/api/ws/swarms/${swarm}/brief`, undefined, { cookie: hb })).json.text.length > 20, "brief endpoint");
+  });
+
+  await check("voice: a recording is transcribed and a reply is spoken; both are metered", async () => {
+    const t = await call("POST", "/api/ws/voice/transcribe", "pause outreach", { cookie: hb, headers: { "Content-Type": "audio/webm" } });
+    ok(t.status === 200 && t.json.text === "pause outreach", t.text);
+    const fd = new FormData(); fd.set("audio", new Blob(["brief me"], { type: "audio/webm" }), "a.webm");
+    ok((await call("POST", "/api/ws/voice/transcribe", fd, { cookie: hb })).json.text === "brief me", "multipart upload");
+    const res = await fetch(API + "/api/ws/voice/speak", { method: "POST", headers: { Cookie: hb, "Content-Type": "application/json" }, body: JSON.stringify({ text: "Two emails are waiting for you." }) });
+    const buf = Buffer.from(await res.arrayBuffer());
+    ok(res.status === 200 && res.headers.get("content-type") === "audio/mpeg" && buf.subarray(0, 3).toString() === "ID3", "audio back");
+    ok((await call("POST", "/api/ws/voice/speak", { text: "" }, { cookie: hb })).status === 400, "empty text refused");
+    ok((await mock("GET", "/control/captured")).captured.some((c) => c.target === "/voice/speak" && c.body.text === "Two emails are waiting for you."), "speech requested");
+  });
+
+  await check("CRM: contacts, a deal won, notes and a timeline; moving a card moves its lead", async () => {
+    const cos = (await call("GET", "/api/ws/crm/companies", undefined, { cookie: hb })).json.companies;
+    const co = cos.find((c) => c.company === "ASHWORTH HALE SOLICITORS LTD");
+    ok(co, JSON.stringify(cos).slice(0, 200));
+    const ct = await call("POST", "/api/ws/crm/contacts", { lead_id: co.id, name: "Priya Hale", role: "Practice manager", email: "priya@ashworth-hale-solicitors.example" }, { cookie: hb });
+    ok(ct.status === 201 && ct.json.created, ct.text);
+    ok((await call("POST", "/api/ws/crm/contacts", { lead_id: co.id, name: "Priya Hale" }, { cookie: hb })).json.created === false, "contacts dedupe");
+    const mv = await call("PATCH", "/api/ws/work-items/" + sw.card.id, { stage: "replied" }, { cookie: hb });
+    ok(mv.status === 200, mv.text);
+    ok((await call("GET", "/api/ws/leads", undefined, { cookie: hb })).json.leads.find((l) => l.id === co.id).status === "replied", "lead follows the card");
+    const d = await call("POST", "/api/ws/crm/deals", { lead_id: co.id, title: "Nightly office clean", value_pence: 180000 }, { cookie: hb });
+    ok(d.status === 201 && d.json.status === "open", d.text);
+    ok((await call("PATCH", "/api/ws/crm/deals/" + d.json.deal_id, { status: "won" }, { cookie: hb })).json.status === "won", "deal won");
+    ok((await call("POST", "/api/ws/crm/notes", { lead_id: co.id, summary: "Walk-round booked for Thursday", kind: "call" }, { cookie: hb })).status === 201, "note");
+    const v = (await call("GET", "/api/ws/crm/companies/" + co.id, undefined, { cookie: hb })).json;
+    ok(v.company.status === "won" && v.contacts.length === 1 && v.deals[0].status === "won", JSON.stringify(v).slice(0, 300));
+    const kinds = v.timeline.map((t) => t.kind);
+    for (const k of ["lead", "note", "deal", "won", "call", "stage"]) ok(kinds.includes(k), "timeline has " + k + ": " + kinds.join());
+    const f = (await call("GET", "/api/ws/swarms/" + swarm, undefined, { cookie: hb })).json;
+    ok(f.items.find((i) => i.id === sw.card.id).stage === "won" && f.kpis.find((k) => k.key === "won_month").value === 1, "the card is won on the Floor");
+    ok((await call("POST", "/api/ws/crm/notes", { lead_id: "lead_nope", summary: "x" }, { cookie: hb })).status === 404, "unknown company");
+  });
+
+  await check("swarms are private, viewers can't drive them, and removing one removes its agents", async () => {
+    await call("POST", "/api/auth/magic-link", { email: "owner@other.example" }, { cookie: false });
+    const other = await signIn("owner@other.example");
+    ok((await call("GET", "/api/ws/swarms/" + swarm, undefined, { cookie: other })).status === 404, "other business can't see the Floor");
+    ok((await call("POST", `/api/ws/swarms/${swarm}/ask`, { text: "brief me" }, { cookie: other })).status === 404, "or ask it anything");
+    ok((await call("PATCH", "/api/ws/work-items/" + sw.card.id, { stage: "found" }, { cookie: other })).status === 404, "or move its cards");
+    ok((await call("GET", "/api/ws/crm/companies", undefined, { cookie: other })).json.companies.every((c) => c.company !== "ASHWORTH HALE SOLICITORS LTD"), "CRM scoped");
+    await call("POST", "/api/ws/users", { email: "viewer@harbour.example", role: "viewer" }, { cookie: hb });
+    const viewer = await signIn("viewer@harbour.example");
+    ok((await call("GET", "/api/ws/swarms/" + swarm, undefined, { cookie: viewer })).status === 200, "viewer watches the Floor");
+    ok((await call("POST", `/api/ws/swarms/${swarm}/ask`, { text: "brief me" }, { cookie: viewer })).status === 403, "viewer can't instruct");
+    ok((await call("PATCH", "/api/ws/swarms/" + swarm, { status: "paused" }, { cookie: hb })).status === 200, "pause all");
+    ok((await call("GET", "/api/ws/my-agents", undefined, { cookie: hb })).json.agents.every((a) => a.status === "paused"), "every agent paused");
+    ok((await call("DELETE", "/api/ws/swarms/" + swarm, undefined, { cookie: hb })).status === 200, "removed");
+    ok((await call("GET", "/api/ws/my-agents", undefined, { cookie: hb })).json.agents.length === 0 && (await call("GET", "/api/ws/swarms/" + swarm, undefined, { cookie: hb })).status === 404, "agents and Floor gone");
+    ok((await call("GET", "/api/ws/leads", undefined, { cookie: hb })).json.leads.length >= 1, "the CRM keeps its records");
+  });
+
   /* 18. Tools for agents and developers */
   await check("tool gateway: catalogue and discovery; x402 or a key; every answer signed", async () => {
     const cat = (await call("GET", "/v1/tools", undefined, { cookie: false })).json;

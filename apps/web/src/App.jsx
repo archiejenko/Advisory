@@ -11,6 +11,7 @@ import { HealthCheck, Pricing, Standards, Developers, BookCall, NotFound } from 
 import { Gate, SignIn, LiveAlerts, LiveClients, LiveClient, LiveCheck, LiveImport, LiveProspects } from "./pages/Live.jsx";
 import Admin from "./pages/Admin.jsx";
 import { DevDashboard, ForAgents } from "./pages/Dev.jsx";
+import { FloorHome, FloorView } from "./pages/Floor.jsx";
 
 // Workspace pages show your workspace when signed in, and the demo workspace when not.
 const ws = (live) => (props) => <Gate live={live} {...props} />;
@@ -42,6 +43,8 @@ const ROUTES = [
   ["/workspace/prospects", ws(LiveProspects)],
   ["/workspace/usage", ws(WsUsage)],
   ["/workspace/settings", ws(WsSettings)],
+  ["/floor", ws(FloorHome)],
+  ["/floor/:id", ws(FloorView)],
   ["/sign-in", SignIn],
   ["/admin", Admin],
   ["/health-check", HealthCheck],

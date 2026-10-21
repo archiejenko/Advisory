@@ -10,6 +10,8 @@ import { body, bad, notFound } from "../lib/http";
 import { requireRole, type Vars } from "./auth";
 import { hireAgent, setAgentStatus, startRun, nextRunAt } from "../lib/agents";
 import { executeAction, rejectAction } from "../lib/actions";
+import { specFor, syncOrgSwarms } from "../lib/swarm";
+import { logActivity } from "../lib/crm";
 
 type App = Hono<{ Bindings: Env; Variables: Vars }>;
 const manager = requireRole("manager");
@@ -47,8 +49,8 @@ export function registerAgentRoutes(ws: App) {
 
   /* ---------- My agents ---------- */
   const agentOut = (a: any) => {
-    const t = template(a.template);
-    return { id: a.id, template: a.template, name: a.name, brief: a.brief, settings: JSON.parse(a.settings || "{}"), status: a.status, rhythm: a.rhythm, rhythm_label: RHYTHM_LABEL[a.rhythm as keyof typeof RHYTHM_LABEL], run_hour: a.run_hour, autonomy: a.autonomy, channel_id: a.channel_id, monthly_cap: a.monthly_cap, next_run_at: a.next_run_at, last_run_at: a.last_run_at, created_at: a.created_at, engine: t?.engine, category: t?.category, glyph: t?.glyph, waiting: a.waiting ?? undefined, runs: a.runs ?? undefined };
+    const t = template(a.template) || (a.template === "custom" ? { engine: "llm", category: "Run", glyph: "spark" } : undefined);
+    return { id: a.id, template: a.template, swarm_id: a.swarm_id ?? null, role: a.role ?? null, name: a.name, brief: a.brief, settings: JSON.parse(a.settings || "{}"), status: a.status, rhythm: a.rhythm, rhythm_label: RHYTHM_LABEL[a.rhythm as keyof typeof RHYTHM_LABEL], run_hour: a.run_hour, autonomy: a.autonomy, channel_id: a.channel_id, monthly_cap: a.monthly_cap, next_run_at: a.next_run_at, last_run_at: a.last_run_at, created_at: a.created_at, engine: t?.engine, category: t?.category, glyph: t?.glyph, waiting: a.waiting ?? undefined, runs: a.runs ?? undefined };
   };
   ws.get("/my-agents", async (c) => {
     const rows = await c.get("db").all(`SELECT a.*, (SELECT COUNT(*) FROM agent_action x WHERE x.agent_id = a.id AND x.status = 'proposed') AS waiting,
@@ -71,7 +73,11 @@ export function registerAgentRoutes(ws: App) {
     const month = nowIso().slice(0, 7) + "-01";
     const used = ((await db.one("SELECT COALESCE(SUM(tool_calls),0) AS n FROM agent_run WHERE org_id = ?1 AND agent_id = ?2 AND created_at >= ?3", id, month)) as any).n;
     const org = await db.one("SELECT name, profile FROM org WHERE id = ?1");
-    return c.json({ agent: agentOut(a), runs, actions_this_month: used, template: tplOut(template(a.template)!, { name: org.name, ...JSON.parse(org.profile || "{}") }) });
+    const t = template(a.template);
+    const spec = specFor(a)!;
+    const tpl = t ? tplOut(t, { name: org.name, ...JSON.parse(org.profile || "{}") })
+      : { key: "custom", name: a.name, category: spec.category, glyph: spec.glyph, short: a.role || "A custom role in a swarm.", description: a.role || "", does: [], needs: "", status: "live", engine: "llm", rhythm: a.rhythm, rhythm_label: RHYTHM_LABEL[a.rhythm as keyof typeof RHYTHM_LABEL], tools: spec.tools, default_brief: a.brief };
+    return c.json({ agent: agentOut(a), runs, actions_this_month: used, template: tpl });
   });
 
   ws.patch("/my-agents/:id", manager, async (c) => {
@@ -84,7 +90,7 @@ export function registerAgentRoutes(ws: App) {
       if (b[k] !== undefined) await db.run(`UPDATE agent SET ${k} = ?3 WHERE org_id = ?1 AND id = ?2`, id, b[k]);
     }
     if (b.rhythm !== undefined || b.run_hour !== undefined) {
-      const t = template(a.template)!;
+      const t = specFor(a)!;
       await db.run("UPDATE agent SET next_run_at = ?3 WHERE org_id = ?1 AND id = ?2", id, t.engine === "llm" && a.status === "running" ? nextRunAt(b.rhythm ?? a.rhythm, b.run_hour ?? a.run_hour) : null);
     }
     const engineKey = ({ watch: "watch", check: "check", prospect: "prospect" } as Record<string, string>)[template(a.template)?.engine || ""];
@@ -142,6 +148,7 @@ export function registerAgentRoutes(ws: App) {
   ws.post("/actions/:id/approve", manager, async (c) => {
     const b = await body(c, z.object({ subject: z.string().min(1).max(200).optional(), body: z.string().min(1).max(5000).optional() }));
     const r = await executeAction(c.env, c.get("orgId"), c.req.param("id")!, c.get("user").email, b);
+    await syncOrgSwarms(c.env, c.get("orgId"));
     return c.json(r);
   });
   ws.post("/actions/:id/reject", manager, async (c) => {
@@ -159,9 +166,13 @@ export function registerAgentRoutes(ws: App) {
     const b = await body(c, z.object({ status: z.enum(["new", "contacted", "replied", "won", "lost", "unsubscribed"]).optional(), notes: z.string().max(2000).nullable().optional(), email: z.string().email().nullable().optional() }));
     const db = c.get("db"), id = c.req.param("id");
     if (!(await db.one("SELECT id FROM lead WHERE org_id = ?1 AND id = ?2", id))) throw notFound("Lead");
-    if (b.status) await db.run("UPDATE lead SET status = ?3 WHERE org_id = ?1 AND id = ?2", id, b.status);
+    if (b.status) {
+      await db.run("UPDATE lead SET status = ?3 WHERE org_id = ?1 AND id = ?2", id, b.status);
+      await logActivity(c.env, { orgId: c.get("orgId"), leadId: id, actor: c.get("user").email, kind: b.status === "won" ? "won" : "stage", summary: `Marked ${b.status}` });
+    }
     if (b.notes !== undefined) await db.run("UPDATE lead SET notes = ?3 WHERE org_id = ?1 AND id = ?2", id, b.notes);
     if (b.email !== undefined) await db.run("UPDATE lead SET email = ?3 WHERE org_id = ?1 AND id = ?2", id, b.email?.toLowerCase() ?? null);
+    if (b.status || b.email !== undefined) await syncOrgSwarms(c.env, c.get("orgId"));
     return c.json({ ok: true });
   });
 
@@ -217,6 +228,7 @@ export function registerAgentRoutes(ws: App) {
       }
     }
     await audit(c.env, c.get("orgId"), c.get("user").id, "invoices_imported", undefined, { rows: rows.length - 1, skipped: skipped.length });
+    await syncOrgSwarms(c.env, c.get("orgId"));
     return c.json({ imported: added, updated, skipped_rows: skipped }, 201);
   });
 
@@ -224,6 +236,7 @@ export function registerAgentRoutes(ws: App) {
     const b = await body(c, z.object({ status: z.enum(["unpaid", "paid", "disputed"]) }));
     const r = await c.get("db").run("UPDATE invoice SET status = ?3 WHERE org_id = ?1 AND id = ?2", c.req.param("id"), b.status);
     if (!r.meta.changes) throw notFound("Invoice");
+    await syncOrgSwarms(c.env, c.get("orgId"));
     return c.json({ ok: true });
   });
 

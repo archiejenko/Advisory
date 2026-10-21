@@ -4,6 +4,8 @@ import { type Env, one, run, audit } from "./db";
 import { checkInput } from "./truth";
 import { sendMail } from "./mail";
 import { wakeOnEvent } from "./agents";
+import { syncOrgSwarms } from "./swarm";
+import { logActivity, leadForEmail } from "./crm";
 import PostalMime from "postal-mime";
 
 /** Pull the request out of a message: the subject, else the first non-empty body line. */
@@ -55,12 +57,15 @@ export async function onEmail(message: ForwardableEmailMessage, env: Env) {
     const body = parsed.text;
     const id = newId("msg");
     await run(env, "INSERT INTO inbox_message (id, org_id, from_addr, subject, body, received_at) VALUES (?,?,?,?,?,?)", id, org.id, from, subject.slice(0, 300), body.slice(0, 20000), nowIso());
-    // A reply from someone we emailed marks that lead as replied.
+    // A reply from someone we emailed marks that lead as replied, and goes on its timeline.
     await run(env, "UPDATE lead SET status = 'replied' WHERE org_id = ? AND email = ? AND status IN ('new','contacted')", org.id, from);
+    const leadId = await leadForEmail(env, org.id, from);
+    if (leadId) await logActivity(env, { orgId: org.id, leadId, actor: from, kind: "reply", summary: `Reply: ${subject.slice(0, 200) || "(no subject)"}`, refKind: "message", refId: id });
     if (/^\s*(stop|unsubscribe)\b/i.test(body)) {
       await run(env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", from, "reply_stop", nowIso());
       await run(env, "UPDATE lead SET status = 'unsubscribed' WHERE org_id = ? AND email = ?", org.id, from);
     }
+    await syncOrgSwarms(env, org.id);
     await wakeOnEvent(env, org.id, "inbox", `New message from ${from}: ${subject}`);
     return;
   }

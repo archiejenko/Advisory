@@ -8,7 +8,7 @@ const out = await build({
   jsx: "automatic", loader: { ".js": "jsx" }, define: { "process.env.NODE_ENV": '"production"' }, target: "es2020",
 });
 const js = out.outputFiles[0].text.replace(/<\/script/g, "<\\/script");
-const css = readFileSync("src/styles.css", "utf8") + "\n" + readFileSync("src/theme.css", "utf8");
+const css = ["src/styles.css", "src/theme.css", "src/floor.css"].map((f) => readFileSync(f, "utf8")).join("\n");
 const html = `<!doctype html>
 <html lang="en-GB">
 <head>

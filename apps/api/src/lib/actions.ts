@@ -3,6 +3,8 @@ import { newId, nowIso } from "../../../../packages/core/util";
 import { type Env, one, run, audit } from "./db";
 import { HttpError } from "./http";
 import { sendMail } from "./mail";
+import { emitForAgent } from "./swarm";
+import { logActivity, leadForEmail } from "./crm";
 
 export type EmailPayload = { to: string; subject: string; body: string; lead_id?: string; invoice_id?: string; message_id?: string };
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[a-z]{2,}$/i;
@@ -23,6 +25,7 @@ export async function proposeEmail(env: Env, ctx: { orgId: string; agentId: stri
   const id = newId("act");
   await run(env, "INSERT INTO agent_action (id, org_id, agent_id, run_id, kind, title, payload, reason, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
     id, ctx.orgId, ctx.agentId, ctx.runId ?? null, "email", `Email ${to}: ${payload.subject}`, JSON.stringify(payload), p.reason?.slice(0, 500) ?? null, "proposed", nowIso());
+  await emitForAgent(env, ctx.agentId, { runId: ctx.runId, kind: "proposed", summary: `${agent.name} drafted an email to ${to}`, detail: { action_id: id } });
   const auto = await mayAutoSend(env, agent, payload, ctx.runId);
   if (auto === true) {
     const r = await executeAction(env, ctx.orgId, id, "agent");
@@ -101,6 +104,12 @@ export async function executeAction(env: Env, orgId: string, actionId: string, d
   if (p.invoice_id) await run(env, "UPDATE invoice SET reminders = reminders + 1, last_reminder_at = ? WHERE id = ? AND org_id = ?", nowIso(), p.invoice_id, orgId);
   if (p.message_id) await run(env, "UPDATE inbox_message SET status = 'replied' WHERE id = ? AND org_id = ?", p.message_id, orgId);
   await audit(env, orgId, decidedBy, "action_sent", actionId, { to: p.to });
+  await emitForAgent(env, a.agent_id, { kind: "sent", summary: `Email sent to ${p.to}: ${p.subject}`, detail: { action_id: actionId, by: decidedBy } });
+  const leadId = p.lead_id || (await leadForEmail(env, orgId, p.to));
+  if (leadId) {
+    const ag = await one<any>(env, "SELECT name FROM agent WHERE id = ?", a.agent_id);
+    await logActivity(env, { orgId, leadId, agentId: a.agent_id, actor: decidedBy === "agent" ? ag?.name || "Agent" : decidedBy, kind: "email", summary: `Email sent to ${p.to}: ${p.subject}`, refKind: "action", refId: actionId });
+  }
   return { status: "sent", result };
 }
 

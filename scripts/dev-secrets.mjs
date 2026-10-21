@@ -15,7 +15,7 @@ const vars = {
   INGEST_SECRET: "dev-ingest-" + b64u(c.getRandomValues(new Uint8Array(12))), ADMIN_TOKEN: "dev-admin-" + b64u(c.getRandomValues(new Uint8Array(12))),
   STREAM_BASE: MOCK + "/ch-stream", STREAM_KEY: "dev-key",
   ANTHROPIC_BASE: MOCK + "/anthropic", ANTHROPIC_API_KEY: "dev", AGENT_MODEL: "claude-sonnet-5-5", SEARCH_BASE: MOCK + "/search", SEARCH_API_KEY: "dev", ALLOW_HTTP_FETCH: "true", INBOUND_DOMAIN: "in.agenthouse.test",
-  CLAUDE_RETRY_BASE_MS: "200",
+  CLAUDE_RETRY_BASE_MS: "200", VOICE_HTTP_URL: MOCK + "/voice",
   MAIL_MODE: "outbox", OPERATOR_EMAIL: "operator@agenthouse.example", SENDS_LIVE: "true", COOKIE_SECURE: "false", ALLOW_ANY_WEBHOOK_HOST: "true",
 };
 if (existsSync(".dev.vars") && !process.argv.includes("--force")) { console.log(".dev.vars exists; use --force to replace it"); process.exit(0); }

@@ -13,6 +13,7 @@ import { checkInput, profileFields } from "../lib/truth";
 import { addClient, summarise } from "../lib/imports";
 import { prospectRows } from "../lib/jobs";
 import { registerAgentRoutes } from "./agents";
+import { registerSwarmRoutes } from "./swarms";
 import { PLANS } from "../../../../packages/core/templates";
 import { planCheckout, portal } from "../lib/stripe";
 import { sendMail } from "../lib/mail";
@@ -372,3 +373,4 @@ ws.post("/billing/portal", owner, async (c) => {
 });
 
 registerAgentRoutes(ws);
+registerSwarmRoutes(ws);

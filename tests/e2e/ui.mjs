@@ -265,6 +265,37 @@ async function main() {
     await text("Recent briefs");
   });
 
+  await check("the Floor: describe the business, spin up a swarm, brief me, pause an agent, see the board and companies", async () => {
+    await go("/floor");
+    await page.locator("#fh-desc").waitFor();
+    await page.fill("#fh-desc", "We're a recruitment agency in Manchester placing accountants with growing firms.");
+    await btn("Design my swarm");
+    await text("Recruitment desk");
+    await text("Job scout");
+    await shot("15a-floor-preview");
+    await btn("Spin it up");
+    await page.waitForURL(/#\/floor\/swm_/);
+    await page.getByRole("button", { name: /^Job scout:/ }).waitFor();
+    await page.getByRole("button", { name: /^Outreach:/ }).waitFor();
+    await page.locator(".fl-kpi").first().waitFor();
+    await page.click("text=Brief me");
+    await page.locator(".cmd-say.t-brief").waitFor();
+    await page.fill("#fl-cmd", "pause inbox");
+    await page.keyboard.press("Enter");
+    await text("Pause Inbox? Confirm on screen.");
+    await btn("Yes, pause");
+    await waitFor(async () => page.getByRole("button", { name: /^Inbox: Paused/ }).count(), "Inbox paused on the Floor", 20000);
+    await shot("15b-floor");
+    await page.getByRole("button", { name: "Board", exact: true }).click();
+    await page.locator(".bd-col").first().waitFor();
+    await page.getByRole("button", { name: "Companies", exact: true }).click();
+    await text("Ashworth Hale", 15000);
+    await page.getByRole("button", { name: "Floor", exact: true }).click();
+    await page.getByRole("button", { name: /^Inbox:/ }).click();
+    await btn("Resume Inbox");
+    await waitFor(async () => !(await page.getByRole("button", { name: /^Inbox: Paused/ }).count()), "Inbox resumed", 20000);
+  });
+
   await check("usage and plan: actions counted; choosing Growth goes to Stripe Checkout", async () => {
     await go("/workspace/usage");
     await text("Actions used");

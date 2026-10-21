@@ -19,11 +19,12 @@ export const isDemo = () => demoMode;
 
 export async function api(method, path, body, { raw = false } = {}) {
   if (demoMode && path.startsWith("/api/ws/") && path !== "/api/ws/me") {
-    try { return await demoApi(method, path, body instanceof FormData ? undefined : body); }
+    try { return await demoApi(method, path, body instanceof FormData || (typeof Blob !== "undefined" && body instanceof Blob) ? undefined : body); }
     catch (e) { throw new ApiError(e.status || 400, e.code || "demo", e.message); }
   }
   const init = { method, credentials: "same-origin", headers: {} };
   if (body instanceof FormData) init.body = body;
+  else if (typeof Blob !== "undefined" && body instanceof Blob) { init.body = body; init.headers["Content-Type"] = body.type || "application/octet-stream"; }
   else if (body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
   let res;
   try { res = await fetch(path, init); }

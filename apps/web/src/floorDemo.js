@@ -1,0 +1,249 @@
+// The demo Floor: a simulated swarm for Brightwork Cleaning, answered from memory. Each poll moves the simulation
+// on a step: agents pick up work, call tools, hand cards on and draft emails for the desk. Approving an email in the
+// demo moves its lead, exactly as it would for real, because cards take their stage from the record.
+import { PRESETS, preset, stageFor, nearestPreset, estimateActions, KPIS } from "../../../packages/core/swarms.ts";
+import { PLANS } from "../../../packages/core/templates.ts";
+
+const SIM = { swarms: [], seq: 1000 };
+const now = () => new Date().toISOString();
+const ago = (ms) => new Date(Date.now() - ms).toISOString();
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const NEW_COMPANIES = [
+  ["Deansgate Physio Ltd", "hello@deansgatephysio.example"], ["Spinningfields Law LLP", "office@spinningfieldslaw.example"], ["Ancoats Dental Studio Ltd", null],
+  ["Chorlton Architects Ltd", "studio@chorltonarch.example"], ["Salford Optometry Ltd", "eyes@salfordopto.example"], ["Castlefield Co-Work Ltd", null],
+  ["Piccadilly Pensions Ltd", "admin@piccpensions.example"], ["Hulme Vets Ltd", "reception@hulmevets.example"],
+];
+const TOOLS = {
+  prospector: ["find-companies", "company-research", "read-page", "save-lead", "save-contact"],
+  outreach: ["list-leads", "read-page", "propose-email", "log-activity"],
+  inbox: ["list-inbox", "triage-message", "propose-email", "update-deal"],
+  briefing: ["recent-activity", "notify-owner"],
+  credit: ["list-invoices", "propose-email", "log-activity"],
+  watch: ["uk-check"],
+};
+
+function agentFor(s, a) {
+  // Reuse the demo workspace's agent of the same template, or add a simulated custom one.
+  let ag = a.template !== "custom" && s.agents.find((x) => x.template === a.template && !x.swarm_id);
+  if (!ag) {
+    ag = { id: "agt_" + a.key + "_" + (SIM.seq++), template: a.template, name: a.name, status: "running", rhythm: a.rhythm, autonomy: "approve_all", created_at: now(), engine: "llm", glyph: "spark", category: "Run", settings: {}, monthly_cap: 300, brief: a.role };
+    s.agents.push(ag);
+  }
+  ag.swarm_id = "set"; ag.swarm_key = a.key; ag.role = a.role; ag.name = a.name;
+  return ag;
+}
+
+function createSwarm(s, key, name) {
+  const p = preset(key);
+  const sw = { id: "swm_demo" + (SIM.seq++), name: name || p.blueprint.name, preset: key, bp: p.blueprint, status: "running", created_at: now(), events: [], stages: {}, sim: {}, last_brief_at: null };
+  sw.agents = p.blueprint.agents.map((a) => ({ ...agentFor(s, a), swarm_id: sw.id }));
+  for (const a of sw.agents) { const real = s.agents.find((x) => x.id === a.id); if (real) real.swarm_id = sw.id; }
+  SIM.swarms.unshift(sw);
+  event(sw, { kind: "created", summary: `${sw.name} spun up with ${sw.agents.length} agents` });
+  derive(s, sw, true);
+  return sw;
+}
+
+function event(sw, e) { sw.events.push({ id: ++SIM.seq, at: now(), detail: null, agent_id: null, item_id: null, ...e }); if (sw.events.length > 200) sw.events.shift(); }
+const agentOf = (sw, key) => sw.agents.find((a) => a.swarm_key === key);
+
+/** Cards from the records, like the server's sync: a changed record moves its card and becomes an event. */
+function derive(s, sw, quiet) {
+  const items = [];
+  const kinds = new Set(sw.bp.stages.map((x) => x.rule?.source).filter(Boolean));
+  const src = { lead: kinds.has("lead") ? s.leads : [], invoice: kinds.has("invoice") ? s.invoices : [], message: kinds.has("message") ? s.inbox : [] };
+  for (const [kind, recs] of Object.entries(src)) {
+    for (const r of recs) {
+      const st = stageFor(sw.bp.stages, kind, r);
+      const key = kind + ":" + r.id;
+      if (!st) { delete sw.stages[key]; continue; }
+      const owner = agentOf(sw, st.agent);
+      const title = kind === "lead" ? r.company : kind === "invoice" ? `${r.customer} · ${r.ref}` : r.subject || r.from_addr;
+      const prev = sw.stages[key];
+      if (prev && prev.stage !== st.key && !quiet) {
+        const from = sw.bp.stages.find((x) => x.key === prev.stage);
+        event(sw, { kind: "moved", agent_id: owner?.id, item_id: "wi_" + key, summary: `${title}: ${from?.name || prev.stage} to ${st.name}`, detail: { from_stage: prev.stage, to_stage: st.key, from_agent: prev.agent, to_agent: owner?.id } });
+      }
+      if (!prev || prev.stage !== st.key) sw.stages[key] = { stage: st.key, agent: owner?.id, at: prev ? now() : r.created_at || r.received_at || ago(86400000) };
+      items.push({ id: "wi_" + key, agent_id: sw.stages[key].agent, stage: st.key, title, status: st.done ? "done" : "open", value_pence: kind === "invoice" ? r.amount_pence : null, ref_kind: kind, ref_id: r.id, note: null, updated_at: sw.stages[key].at });
+    }
+  }
+  if (quiet && items.length) event(sw, { kind: "created", summary: `Loaded ${items.length} cards from your records` });
+  return items.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+}
+
+/** One step of the simulation. */
+function tick(s, sw) {
+  if (sw.status !== "running") return;
+  const llm = sw.agents.filter((a) => (TOOLS[a.swarm_key] || a.template === "custom") && a.status !== "paused");
+  for (const a of llm) {
+    const sim = (sw.sim[a.id] ||= { state: "idle", left: 0 });
+    if (sim.state === "working") {
+      sim.left--;
+      if (sim.left > 0) {
+        const tool = pick(TOOLS[a.swarm_key] || ["read-page"]);
+        sim.tool = tool; sim.toolAt = Date.now();
+        event(sw, { kind: "tool", agent_id: a.id, summary: tool });
+      } else { sim.state = "idle"; finish(s, sw, a); }
+    } else if (Math.random() < 0.22) {
+      sim.state = "working"; sim.left = 2 + Math.floor(Math.random() * 3);
+      event(sw, { kind: "run_started", agent_id: a.id, summary: `${a.name} started` });
+    }
+  }
+}
+
+function finish(s, sw, a) {
+  const k = a.swarm_key;
+  if (k === "prospector") {
+    const fresh = NEW_COMPANIES.find(([c]) => !s.leads.some((l) => l.company === c));
+    if (!fresh) return event(sw, { kind: "run_done", agent_id: a.id, summary: "No new companies matched today" });
+    const [company, email] = fresh;
+    s.leads.unshift({ id: "lead_sim" + (SIM.seq++), agent_id: a.id, company, number: null, email, contact_name: null, website: email ? "https://" + email.split("@")[1] : null, status: "new", notes: "Found by the prospector", last_contact_at: null, created_at: now(), emails_sent: 0 });
+    derive(s, sw);
+    event(sw, { kind: "created", agent_id: a.id, summary: `${a.name} found ${company}` });
+    const out = agentOf(sw, "outreach");
+    if (email && out) {
+      event(sw, { kind: "handoff", agent_id: a.id, summary: `${a.name} handed ${company} to ${out.name}`, detail: { from_agent: a.id, to_agent: out.id } });
+      sw.sim[out.id] = { state: "working", left: 2 };
+    }
+  } else if (k === "outreach") {
+    const lead = s.leads.find((l) => l.status === "new" && l.email && !s.actions.some((x) => x.status === "proposed" && x.payload.lead_id === l.id));
+    if (!lead) return event(sw, { kind: "run_done", agent_id: a.id, summary: "Nothing new to write to" });
+    const id = "act_sim" + (SIM.seq++);
+    s.actions.unshift({ id, agent_id: a.id, run_id: null, title: `Email ${lead.company}`, reason: "A qualified lead from the prospector, with a published email.", payload: { to: lead.email, subject: `Cleaning for ${lead.company.replace(/ (Ltd|LLP)$/, "")}`, body: `Hello,\n\nI run Brightwork Cleaning, a Manchester firm that looks after offices and clinics across the city centre.\n\nWould a short visit next week to see your space and give you a fixed monthly price be useful?\n\nDana Price, Brightwork Cleaning`, lead_id: lead.id }, status: "proposed", created_at: now() });
+    event(sw, { kind: "proposed", agent_id: a.id, summary: `${a.name} drafted an email to ${lead.email}` });
+  } else if (k === "inbox") {
+    const lead = s.leads.find((l) => l.status === "contacted");
+    if (lead && Math.random() < 0.5) { lead.status = "replied"; event(sw, { kind: "run_done", agent_id: a.id, summary: `${lead.company} replied: interested` }); derive(s, sw); }
+    else event(sw, { kind: "run_done", agent_id: a.id, summary: "Inbox clear" });
+  } else if (k === "credit") {
+    const inv = s.invoices.find((i) => i.status === "unpaid" && i.days_overdue > 0 && i.reminders === 0 && !s.actions.some((x) => x.status === "proposed" && x.payload.invoice_id === i.id));
+    if (inv) {
+      s.actions.unshift({ id: "act_sim" + (SIM.seq++), agent_id: a.id, title: `Reminder for ${inv.ref}`, reason: `${inv.customer}: ${inv.days_overdue} days overdue, first reminder.`, payload: { to: inv.email, subject: `Invoice ${inv.ref}`, body: `Hello,\n\nA quick note that invoice ${inv.ref} is now overdue. If it's on its way, thank you.\n\nDana Price, Brightwork Cleaning`, invoice_id: inv.id }, status: "proposed", created_at: now() });
+      event(sw, { kind: "proposed", agent_id: a.id, summary: `${a.name} drafted a reminder for ${inv.ref}` });
+    } else event(sw, { kind: "run_done", agent_id: a.id, summary: "No new overdue invoices" });
+  } else event(sw, { kind: "run_done", agent_id: a.id, summary: `${a.name} finished` });
+}
+
+function kpi(s, key) {
+  const week = ago(7 * 864e5), today = now().slice(0, 10);
+  switch (key) {
+    case "new_leads_week": return s.leads.filter((l) => l.created_at >= week).length;
+    case "emails_sent_week": return s.actions.filter((x) => x.status === "sent" && (x.decided_at || "") >= week).length + 4;
+    case "replies_week": return s.leads.filter((l) => l.status === "replied").length;
+    case "won_month": return s.leads.filter((l) => l.status === "won").length;
+    case "overdue_pence": return s.invoices.filter((i) => i.status === "unpaid" && i.due_date < today).reduce((n, i) => n + i.amount_pence, 0);
+    case "oldest_unpaid_days": return Math.max(0, ...s.invoices.filter((i) => i.status === "unpaid").map((i) => i.days_overdue));
+    case "inbox_waiting": return s.inbox.filter((m) => m.status === "new").length;
+    case "open_alerts": return s.alerts.filter((a) => a.state === "open").length;
+    case "tasks_open": return s.tasks.filter((t) => t.status === "open").length;
+    default: return 0;
+  }
+}
+
+function state(s, sw, since) {
+  tick(s, sw);
+  const items = derive(s, sw);
+  const proposed = s.actions.filter((x) => x.status === "proposed" && sw.agents.some((a) => a.id === x.agent_id));
+  const stations = sw.agents.map((a) => {
+    const real = s.agents.find((x) => x.id === a.id) || a;
+    const sim = sw.sim[a.id] || { state: "idle" };
+    const waiting = proposed.filter((x) => x.agent_id === a.id).length;
+    const toolNow = sim.state === "working" && sim.toolAt && Date.now() - sim.toolAt < 4500;
+    const st = real.status === "paused" ? "paused" : sim.state === "working" ? (toolNow ? "tool" : "working") : waiting ? "needs_you" : "idle";
+    const open = items.filter((i) => i.agent_id === a.id && i.status === "open");
+    return { id: a.id, key: a.swarm_key, name: a.name, role: a.role, template: a.template, glyph: "spark", engine: "llm", status: real.status, rhythm: a.rhythm, autonomy: real.autonomy || "approve_all", state: st, tool: toolNow ? sim.tool : null, waiting, queue: open.length, current: open[0] ? { id: open[0].id, title: open[0].title } : null, last_run: null };
+  });
+  const evs = sw.events.filter((e) => e.id > (since || 0)).slice(-60);
+  return {
+    swarm: { id: sw.id, name: sw.name, sector: sw.bp.sector, preset: sw.preset, status: sw.status, skin: sw.bp.skin, layout: {}, created_at: sw.created_at, last_brief_at: sw.last_brief_at },
+    blueprint: { stages: sw.bp.stages, handoffs: sw.bp.handoffs, goals: sw.bp.goals, agents: sw.bp.agents },
+    stations, items,
+    kpis: sw.bp.kpis.map((k) => ({ key: k, label: KPIS[k].label, unit: KPIS[k].unit, value: kpi(s, k) })),
+    desk: { approvals: proposed.map((x) => ({ id: x.id, agent: sw.agents.find((a) => a.id === x.agent_id)?.name, agent_id: x.agent_id, title: x.title, reason: x.reason, payload: x.payload, created_at: x.created_at })), tasks: s.tasks.filter((t) => t.status === "open").map((t) => ({ ...t, agent: s.agents.find((a) => a.id === t.agent_id)?.name || null })), failed: [] },
+    events: evs, cursor: sw.events.at(-1)?.id || 0,
+    usage: { actions_month: 412 + sw.events.filter((e) => e.kind === "tool").length, allowance: PLANS.trial.actions },
+  };
+}
+
+function brief(s, sw) {
+  const waiting = s.actions.filter((x) => x.status === "proposed").length;
+  sw.last_brief_at = now();
+  event(sw, { kind: "brief", summary: "Brief read out" });
+  return `Since your last brief, your agents found ${s.leads.filter((l) => l.created_at >= ago(864e5)).length} new leads and moved ${sw.events.filter((e) => e.kind === "moved" || e.kind === "handoff").length} cards on. ${waiting ? `${waiting} emails are waiting for your approval.` : "Nothing is waiting for your approval."} New leads this week: ${kpi(s, "new_leads_week")}.`;
+}
+
+const previewOf = (s, bp) => {
+  const reuse = bp.agents.filter((a) => a.template !== "custom" && s.agents.some((x) => x.template === a.template && !x.swarm_id)).length;
+  const after = s.agents.length + bp.agents.length - reuse, plan = PLANS[s.org.plan] || PLANS.trial, actions = estimateActions(bp);
+  return { agents: bp.agents.length, reuses: [], new_agents: bp.agents.length - reuse, plan: plan.name, plan_agents: plan.agents + 4, agents_after: after, fits: true, actions_a_month: actions, allowance: plan.actions, within_allowance: actions <= plan.actions, needs: bp.needs };
+};
+
+/** Answer a Floor request in the demo, or return undefined for paths that aren't the Floor's. */
+export function floorDemo(method, p, q, body, s, fail) {
+  let m;
+  if (!SIM.swarms.length && !SIM.booted) { SIM.booted = true; createSwarm(s, "sales-floor", "Brightwork sales floor"); }
+  const find = (id) => SIM.swarms.find((w) => w.id === id) || fail(404, "Swarm not found.");
+  if (method === "GET" && p === "/swarm-presets") return { presets: PRESETS.map((x) => ({ key: x.key, title: x.title, for: x.for, summary: x.summary, locked: x.locked || null, skin: x.blueprint.skin, agents: x.blueprint.agents.map(({ key, name, role, template, rhythm }) => ({ key, name, role, template, rhythm })), stages: x.blueprint.stages.map((y) => y.name), handoffs: x.blueprint.handoffs, kpis: x.blueprint.kpis })), voice: false };
+  if (method === "GET" && p === "/swarms") return { swarms: SIM.swarms.map((w) => ({ id: w.id, name: w.name, sector: w.bp.sector, preset: w.preset, status: w.status, created_at: w.created_at, agents: w.agents.length, open_items: derive(s, w).filter((i) => i.status === "open").length })) };
+  if (method === "POST" && p === "/swarms/plan") {
+    const pr = nearestPreset(body?.description || "");
+    return { blueprint: pr.blueprint, preview: previewOf(s, pr.blueprint), source: "preset", preset: pr.key, note: `In the demo, swarms come from the presets. In your own workspace, Claude designs one for your business. Closest here: ${pr.title}.` };
+  }
+  if (method === "POST" && p === "/swarms/preview") { const pr = preset(body?.preset) || fail(404, "Preset not found."); return { preview: previewOf(s, pr.blueprint) }; }
+  if (method === "POST" && p === "/swarms") {
+    const key = body?.preset || nearestPreset(body?.description || "").key;
+    const pr = preset(key);
+    if (pr.locked) fail(409, pr.locked);
+    return { id: createSwarm(s, key).id, hired: pr.blueprint.agents.length, reused: 0 };
+  }
+  if (method === "GET" && (m = p.match(/^\/swarms\/([^/]+)$/))) return state(s, find(m[1]), Number(q.since || 0));
+  if (method === "PATCH" && (m = p.match(/^\/swarms\/([^/]+)$/))) {
+    const sw = find(m[1]);
+    if (body?.status) { sw.status = body.status; for (const a of sw.agents) { const r = s.agents.find((x) => x.id === a.id); if (r) r.status = body.status; } event(sw, { kind: "ask", summary: body.status === "paused" ? "You paused the swarm" : "You resumed the swarm" }); }
+    return { ok: true };
+  }
+  if (method === "POST" && (m = p.match(/^\/swarms\/([^/]+)\/brief$/))) return { text: brief(s, find(m[1])) };
+  if (method === "POST" && (m = p.match(/^\/swarms\/([^/]+)\/ask$/))) {
+    const sw = find(m[1]), t = String(body?.text || "").trim();
+    event(sw, { kind: "ask", summary: `You asked: ${t.slice(0, 120)}` });
+    if (/^(brief me|briefing|what('?s| has) (happened|changed)|catch me up)/i.test(t)) return { type: "brief", say: brief(s, sw) };
+    let mm;
+    if ((mm = t.match(/^\/?(pause|resume)\s+(.+)$/i))) {
+      const a = sw.agents.find((x) => x.name.toLowerCase().startsWith(mm[2].toLowerCase()) || x.swarm_key === mm[2].toLowerCase());
+      return a ? { type: "change", say: `${mm[1][0].toUpperCase() + mm[1].slice(1).toLowerCase()} ${a.name}? Confirm on screen.`, change: { action: mm[1].toLowerCase(), agent_id: a.id, agent: a.name } } : { type: "answer", say: `There's no agent called ${mm[2]} here.` };
+    }
+    if (/\?\s*$|^(how|what|who|when|which)\b/i.test(t)) return { type: "answer", say: `Right now: ${kpi(s, "new_leads_week")} new leads this week, ${s.actions.filter((x) => x.status === "proposed").length} emails waiting for you, and ${s.leads.filter((l) => l.status === "replied").length} companies talking to you.` };
+    const target = sw.agents.find((a) => t.toLowerCase().includes("@" + a.swarm_key) || t.toLowerCase().includes(a.name.toLowerCase().split(" ")[0])) || agentOf(sw, "prospector") || sw.agents[0];
+    sw.sim[target.id] = { state: "working", left: 3 };
+    event(sw, { kind: "run_started", agent_id: target.id, summary: `${target.name} started (asked)` });
+    return { type: "instruct", say: `${target.name} is on it.`, agent: { id: target.id, name: target.name } };
+  }
+  if (method === "PATCH" && (m = p.match(/^\/work-items\/wi_lead:(.+)$/))) {
+    const lead = s.leads.find((l) => l.id === m[1]);
+    const sw = SIM.swarms[0], st = sw?.bp.stages.find((x) => x.key === body?.stage);
+    if (lead && st?.rule?.source === "lead") lead.status = st.rule.status[0];
+    return { ok: true };
+  }
+  if (method === "PATCH" && p.startsWith("/work-items/")) fail(409, "This card follows its record; change the record instead.");
+  if (method === "GET" && p === "/crm/companies") {
+    const term = (q.q || "").toLowerCase();
+    return { companies: s.leads.filter((l) => !term || l.company.toLowerCase().includes(term)).map((l) => ({ id: l.id, company: l.company, number: l.number, email: l.email, website: l.website, status: l.status, created_at: l.created_at, last_contact_at: l.last_contact_at, contacts: l.contacts?.length || 0, open_pence: (l.deals || []).filter((d) => d.status === "open").reduce((n, d) => n + d.value_pence, 0), last_activity_at: l.last_contact_at || l.created_at })) };
+  }
+  if (method === "GET" && (m = p.match(/^\/crm\/companies\/([^/]+)$/))) {
+    const l = s.leads.find((x) => x.id === m[1]) || fail(404, "Company not found.");
+    const emails = s.actions.filter((x) => x.payload.lead_id === l.id);
+    const timeline = [...(l.timeline || []), ...emails.filter((x) => x.status === "sent").map((x) => ({ kind: "email", summary: `Email sent: ${x.payload.subject}`, actor: x.decided_by, at: x.decided_at || x.created_at })), { kind: "lead", summary: l.notes || "Saved as a lead", actor: "Outreach", at: l.created_at }].sort((a, b) => (a.at < b.at ? 1 : -1));
+    return { company: l, contacts: l.contacts || [], deals: l.deals || [], timeline, emails };
+  }
+  if (method === "POST" && p === "/crm/notes") { const l = s.leads.find((x) => x.id === body.lead_id) || fail(404, "Company not found."); (l.timeline ||= []).unshift({ kind: body.kind || "note", summary: body.summary, actor: "dana@brightwork.example", at: now() }); return { ok: true }; }
+  if (method === "POST" && p === "/crm/contacts") { const l = s.leads.find((x) => x.id === body.lead_id) || fail(404, "Company not found."); (l.contacts ||= []).push({ id: "con_" + (SIM.seq++), name: body.name, role: body.role || null, email: body.email || null, phone: null }); return { contact_id: "con", created: true }; }
+  if (method === "POST" && p === "/crm/deals") { const l = s.leads.find((x) => x.id === body.lead_id) || fail(404, "Company not found."); (l.deals ||= []).unshift({ id: "deal_" + (SIM.seq++), title: body.title, value_pence: body.value_pence || 0, stage: "open", status: "open", updated_at: now() }); (l.timeline ||= []).unshift({ kind: "deal", summary: `Deal opened: ${body.title}`, actor: "dana@brightwork.example", at: now() }); return { deal_id: "deal", status: "open" }; }
+  if (method === "PATCH" && (m = p.match(/^\/crm\/deals\/([^/]+)$/))) {
+    for (const l of s.leads) for (const d of l.deals || []) if (d.id === m[1]) { Object.assign(d, body, { updated_at: now() }); if (body.status === "won") { l.status = "won"; (l.timeline ||= []).unshift({ kind: "won", summary: `${d.title}: won`, actor: "dana@brightwork.example", at: now() }); } }
+    return { ok: true };
+  }
+  if (method === "POST" && p === "/crm/companies") { const id = "lead_m" + (SIM.seq++); s.leads.unshift({ id, company: body.company, status: "new", email: null, created_at: now(), emails_sent: 0 }); return { id }; }
+  if (p.startsWith("/voice/")) { const e = new Error("Voice uses your browser in the demo."); e.status = 503; e.code = "voice_off"; throw e; }
+  return undefined;
+}
