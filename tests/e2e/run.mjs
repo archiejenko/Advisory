@@ -68,6 +68,12 @@ async function signIn(email) {
   return sc.split(";")[0];
 }
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
+async function stripeEvent(ev) {
+  const payload = JSON.stringify(ev), t = Math.floor(Date.now() / 1000);
+  const key = await wc.subtle.importKey("raw", new TextEncoder().encode(vars.STRIPE_WEBHOOK_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = Buffer.from(await wc.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${payload}`))).toString("hex");
+  return call("POST", "/api/webhooks/stripe", payload, { cookie: false, headers: { "Stripe-Signature": `t=${t},v1=${sig}`, "Content-Type": "application/json" } });
+}
 
 /* ---------- Main ---------- */
 async function main() {
@@ -401,9 +407,10 @@ async function main() {
     const p = (await call("GET", "/api/ws/prospects/preview")).json;
     ok(p.rows.length === 3 && p.rows.every((x) => x.name !== "NEW START CONSULTING LTD" && x.name !== "DISSOLVED LEGAL LTD"), JSON.stringify(p.rows));
     await call("PATCH", "/api/ws/agents/prospect", { on: true });
-    await admin("POST", "/run/monthly");
-    const f = await call("GET", "/api/ws/prospects/file");
-    ok(f.status === 200 && f.text.includes("ASHWORTH HALE SOLICITORS LTD"), f.text.slice(0, 120));
+    const m = await admin("POST", "/run/monthly");
+    ok(m.json.result === 1, "one prospect build queued: " + m.text);
+    const f = await waitFor(async () => { const r = await call("GET", "/api/ws/prospects/file"); return r.status === 200 && r; }, "prospect list built", 30000);
+    ok(f.text.includes("ASHWORTH HALE SOLICITORS LTD"), f.text.slice(0, 120));
   });
 
   /* 17. Agents for every business */
@@ -496,8 +503,10 @@ async function main() {
 
   await check("research and briefing agents; the scheduler runs what's due", async () => {
     ok((await call("POST", `/api/ws/my-agents/${agents.research}/run`, {}, { cookie: biz })).status === 400, "research needs a question");
+    await mock("POST", "/control/claude-fail", { n: 2 }); // Claude is overloaded for the next two calls: the run retries and carries on
     const rr = await waitRun((await call("POST", `/api/ws/my-agents/${agents.research}/run`, { input: "Who are Quayside Lettings?" }, { cookie: biz })).json.run_id, biz);
     ok(rr.status === "done" && /Sources:\n- http/.test(rr.summary), rr.summary);
+    ok((await mock("GET", "/control/captured")).captured.filter((c) => c.target === "/anthropic" && c.body.overloaded).length === 2, "two overloaded responses were retried");
     const br = await waitRun((await call("POST", `/api/ws/my-agents/${agents.briefing}/run`, {}, { cookie: biz })).json.run_id, biz);
     ok(br.status === "done", JSON.stringify(br));
     await waitFor(async () => (await outbox()).find((m) => m.to_addr === "dana@brightwork.example" && /Weekly briefing: note/.test(m.subject) && /Needs you/.test(m.body)), "briefing email to the owner");
@@ -523,7 +532,7 @@ async function main() {
   /* 18. Tools for agents and developers */
   await check("tool gateway: catalogue and discovery; x402 or a key; every answer signed", async () => {
     const cat = (await call("GET", "/v1/tools", undefined, { cookie: false })).json;
-    ok(cat.tools.length === 8 && cat.tools.find((t) => t.slug === "web-research").price.pence === 3 && cat.agents_run.price.pence === 25, JSON.stringify(cat).slice(0, 200));
+    ok(cat.tools.length === 8 && cat.tools.find((t) => t.slug === "web-research").price.pence === 3 && cat.agents_run.price.per_step_pence === 12, JSON.stringify(cat).slice(0, 200));
     const llms = await call("GET", "/llms.txt", undefined, { cookie: false });
     ok(llms.status === 200 && llms.text.startsWith("# Agent House") && llms.text.includes("company-research"), llms.text.slice(0, 80));
     const wk = (await call("GET", "/.well-known/agent-house.json", undefined, { cookie: false })).json;
@@ -540,9 +549,23 @@ async function main() {
     ok(legacy.status === 200 && legacy.json.tool === "uk-check" && legacy.json.result.flags.some((f) => f.text === "Accounts overdue"), "legacy names still work");
   });
 
-  await check("Agents API: one call runs an agent with catalogue tools, signed", async () => {
-    const r = await call("POST", "/v1/agents/run", { instructions: "You check UK companies before payment.", input: "Tarnbrook Logistics, INV-2207", tools: ["uk-check"] }, { cookie: false, headers: { Authorization: "Bearer " + devKey } });
-    ok(r.status === 200 && r.json.steps[0].tool === "uk-check" && r.json.steps[0].ok && r.json.output.startsWith("Answer:") && r.json.signature, r.text.slice(0, 300));
+  await check("Agents API: priced per step, not free, paid before it runs; one call runs an agent with catalogue tools, signed", async () => {
+    const spec = { instructions: "You check UK companies before payment.", input: "Tarnbrook Logistics, INV-2207", tools: ["uk-check"] };
+    const tl = (await call("GET", "/v1/tools", undefined, { cookie: false })).json.agents_run;
+    ok(tl.price.per_step_pence === 12 && tl.price.default_steps === 4 && tl.free_calls === false, JSON.stringify(tl));
+    // The developer key still has free calls left, but agent runs aren't covered by them.
+    const free = await call("POST", "/v1/agents/run", spec, { cookie: false, headers: { Authorization: "Bearer " + devKey } });
+    ok(free.status === 402 && free.json.error.code === "credits_exhausted" && /48p/.test(free.json.error.message), free.text);
+    const quote = await call("POST", "/v1/agents/run", { ...spec, max_steps: 3 }, { cookie: false });
+    const accept = JSON.parse(Buffer.from(quote.headers.get("payment-required"), "base64")).accepts[0];
+    ok(quote.status === 402 && accept.amount === "450000", "3 steps x 12p = 36p = 0.45 USDC: " + accept.amount);
+    const short = await call("POST", "/v1/agents/run", { ...spec, max_steps: 3 }, { cookie: false, headers: { "PAYMENT-SIGNATURE": b64({ x402Version: 2, payload: { signature: "valid", authorization: { from: "0xA9e1", to: accept.payTo, value: "100" } } }) } });
+    ok(short.status === 402, "underpayment refused: " + short.text);
+    const before = (await mock("GET", "/control/captured")).captured.filter((c) => c.target === "/anthropic").length;
+    const r = await call("POST", "/v1/agents/run", { ...spec, max_steps: 3 }, { cookie: false, headers: { "PAYMENT-SIGNATURE": b64({ x402Version: 2, payload: { signature: "valid", authorization: { from: "0xA9e1", to: accept.payTo, value: accept.amount } } }) } });
+    ok(r.status === 200 && r.headers.get("payment-response") && r.json.steps[0].tool === "uk-check" && r.json.steps[0].ok && r.json.output.startsWith("Answer:") && r.json.signature && r.json.price.pence === 36, r.text.slice(0, 300));
+    const calls = (await mock("GET", "/control/captured")).captured.filter((c) => c.target === "/anthropic").slice(before);
+    ok(calls.length >= 2 && calls.every((c) => c.body.cached), "every model call marks the prompt for caching");
     const bad = await call("POST", "/v1/agents/run", { instructions: "You check UK companies before payment.", input: "x", tools: ["propose-email"] }, { cookie: false, headers: { Authorization: "Bearer " + devKey } });
     ok(bad.status === 400, "only first-party public tools: " + bad.text);
     ok((await call("POST", "/v1/agents/run", { instructions: "You check UK companies before payment.", input: "x", tools: ["uk-check"] }, { cookie: false })).status === 402, "unpaid runs get 402");
@@ -597,6 +620,23 @@ async function main() {
     ok(over.status === 409 && over.json.error.code === "plan_limit", over.text);
     const u = (await call("GET", "/api/ws/usage", undefined, { cookie: biz })).json;
     ok(u.plan === "trial" && u.plan_actions === 1500 && u.actions > 0 && u.by_agent.length === 6, JSON.stringify(u).slice(0, 300));
+  });
+
+  await check("billing state: plan changes follow Stripe; past-due and cancelled workspaces stop their agents", async () => {
+    const me = (await call("GET", "/api/ws/me")).json;
+    const sub = (status, price = "price_scale") => stripeEvent({ id: "evt_" + Math.random().toString(36).slice(2), type: "customer.subscription.updated", data: { object: { id: "sub_1", status, items: { data: [{ price: { id: price } }] } } } });
+    ok((await sub("active")).status === 200, "update accepted");
+    ok((await call("GET", "/api/ws/me")).json.org.plan === "scale", "portal plan change reaches the workspace");
+    ok((await call("POST", "/api/ws/my-agents", { template: "research", name: "Scale research" })).status === 201, "active plan can hire");
+    ok((await sub("unpaid")).status === 200, "unpaid accepted");
+    const blocked = await call("POST", "/api/ws/my-agents", { template: "research", name: "Unpaid research" });
+    ok(blocked.status === 402 && blocked.json.error.code === "plan_inactive", blocked.text);
+    ok((await stripeEvent({ id: "evt_del", type: "customer.subscription.deleted", data: { object: { id: "sub_1", status: "canceled" } } })).status === 200, "deletion accepted");
+    ok((await sub("active")).status === 200 && (await call("GET", "/api/ws/me")).json.subscription.status === "cancelled", "a late update doesn't revive a cancelled plan");
+    const mine = (await call("GET", "/api/ws/my-agents")).json.agents.find((a) => a.name === "Scale research");
+    const run = await call("POST", `/api/ws/my-agents/${mine.id}/run`, { input: "Anything?" });
+    ok(run.status === 402 && /cancelled/.test(run.json.error.message), run.text);
+    ok(me.org.id, "workspace still readable after cancellation");
   });
 
   await check("audit log records actions; retention job runs", async () => {

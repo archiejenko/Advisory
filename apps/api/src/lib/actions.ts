@@ -23,20 +23,52 @@ export async function proposeEmail(env: Env, ctx: { orgId: string; agentId: stri
   const id = newId("act");
   await run(env, "INSERT INTO agent_action (id, org_id, agent_id, run_id, kind, title, payload, reason, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
     id, ctx.orgId, ctx.agentId, ctx.runId ?? null, "email", `Email ${to}: ${payload.subject}`, JSON.stringify(payload), p.reason?.slice(0, 500) ?? null, "proposed", nowIso());
-  if (await mayAutoSend(env, agent, payload)) {
+  const auto = await mayAutoSend(env, agent, payload, ctx.runId);
+  if (auto === true) {
     const r = await executeAction(env, ctx.orgId, id, "agent");
     return { action_id: id, status: r.status };
   }
-  return { action_id: id, status: "waiting_for_approval" };
+  return { action_id: id, status: "waiting_for_approval", ...(auto ? { note: auto } : {}) };
 }
 
-/** approve_first: follow-ups and second reminders go on their own once the first was approved. */
-async function mayAutoSend(env: Env, agent: any, p: EmailPayload) {
-  if (agent.autonomy === "auto") return true;
-  if (agent.autonomy !== "approve_first") return false;
-  if (p.invoice_id) return !!(await one(env, "SELECT id FROM invoice WHERE id = ? AND reminders >= 1", p.invoice_id));
-  if (p.lead_id) return !!(await one(env, "SELECT id FROM agent_action WHERE org_id = ? AND status = 'sent' AND json_extract(payload, '$.lead_id') = ?", agent.org_id, p.lead_id));
+/**
+ * Is `to` the person this email is about? Agents read text from strangers (inbound mail, web pages), so an
+ * instruction hidden there could ask for mail to any address. Without a person approving it, an email only
+ * goes to an address already tied to the record it names: the lead's own email (for a lead that existed
+ * before this run, so a lead saved from an injected page doesn't count), the invoice's customer email, or
+ * the sender of the inbox message being answered.
+ */
+export async function boundRecipient(env: Env, orgId: string, p: EmailPayload, runId?: string) {
+  const to = p.to.toLowerCase();
+  if (p.message_id) {
+    const m = await one<any>(env, "SELECT from_addr FROM inbox_message WHERE id = ? AND org_id = ?", p.message_id, orgId);
+    if (m && String(m.from_addr).toLowerCase() === to) return true;
+  }
+  if (p.invoice_id) {
+    const i = await one<any>(env, "SELECT email FROM invoice WHERE id = ? AND org_id = ?", p.invoice_id, orgId);
+    if (i?.email && String(i.email).toLowerCase() === to) return true;
+  }
+  if (p.lead_id) {
+    const l = await one<any>(env, "SELECT email, created_at FROM lead WHERE id = ? AND org_id = ?", p.lead_id, orgId);
+    if (l?.email && String(l.email).toLowerCase() === to) {
+      if (!runId) return true;
+      const r = await one<any>(env, "SELECT COALESCE(started_at, created_at) AS t FROM agent_run WHERE id = ?", runId);
+      if (!r || l.created_at < r.t) return true;
+    }
+  }
   return false;
+}
+
+const HELD = "Held for the owner's approval: emails only go out on their own to the lead, customer or sender this email is about.";
+
+/** auto: send when the recipient is bound. approve_first: follow-ups and second reminders go on their own once the first was approved. */
+async function mayAutoSend(env: Env, agent: any, p: EmailPayload, runId?: string): Promise<true | string | null> {
+  if (agent.autonomy !== "auto" && agent.autonomy !== "approve_first") return null;
+  if (!(await boundRecipient(env, agent.org_id, p, runId))) return HELD;
+  if (agent.autonomy === "auto") return true;
+  if (p.invoice_id && (await one(env, "SELECT id FROM invoice WHERE id = ? AND org_id = ? AND reminders >= 1", p.invoice_id, agent.org_id))) return true;
+  if (p.lead_id && (await one(env, "SELECT id FROM agent_action WHERE org_id = ? AND status = 'sent' AND json_extract(payload, '$.lead_id') = ? AND json_extract(payload, '$.to') = ?", agent.org_id, p.lead_id, p.to))) return true;
+  return null;
 }
 
 /** Send an approved action, once. */

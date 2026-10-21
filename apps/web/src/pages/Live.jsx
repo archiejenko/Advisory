@@ -571,7 +571,7 @@ export function LiveImport() {
               <label className={"file" + (file ? " has-file" : "")} htmlFor="imp-file">
                 <span>{file ? file.name : "Choose a CSV or Excel file"}</span>
                 <span className="file-btn">{file ? "Change" : "Browse"}</span>
-                <input id="imp-file" type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setFile(e.target.files[0] || null)} />
+                <input id="imp-file" type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files[0] || null)} />
               </label>
             </div>
             <button className="btn btn-sm" type="submit" disabled={act.busy}>{act.busy ? "Uploading…" : "Upload and match"}</button>

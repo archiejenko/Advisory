@@ -8,15 +8,9 @@ import { body, bad, notFound, HttpError } from "../lib/http";
 import { sendMail } from "../lib/mail";
 import { creditsCheckout } from "../lib/stripe";
 import { createOrg } from "../lib/orgs";
+import { limitIp, limitEmail } from "../lib/limits";
 
 export const pub = new Hono<{ Bindings: Env }>();
-
-async function limitIp(c: Context<{ Bindings: Env }>, action: string, max: number) {
-  const ip = c.req.header("CF-Connecting-IP") || "local";
-  const bucket = `ip:${action}:${ip}:${new Date().toISOString().slice(0, 13)}`;
-  const r = await one<any>(c.env, "INSERT INTO rate_window (bucket, count) VALUES (?,1) ON CONFLICT(bucket) DO UPDATE SET count = count + 1 RETURNING count", bucket);
-  if (r.count > max) throw new HttpError(429, "slow_down", "Too many requests from your network. Try again in an hour.");
-}
 
 async function turnstile(c: Context<{ Bindings: Env }>, token: string | null | undefined) {
   if (!c.env.TURNSTILE_SECRET) return;
@@ -39,7 +33,7 @@ pub.post("/health-checks", async (c) => {
   if (!f.success) throw bad("Add your name, a valid work email and your company name.");
   const file = form.get("file") as unknown as File | null;
   if (!file || typeof file === "string") throw bad("Attach your client list as a CSV or Excel file.");
-  if (!/\.(csv|xlsx|xls)$/i.test(file.name)) throw bad("Upload a CSV or Excel file.");
+  if (!/\.(csv|xlsx)$/i.test(file.name)) throw bad("Upload a CSV or Excel (.xlsx) file. For an older .xls file, save it as .xlsx or CSV first.");
   if (file.size > 10 * 1024 * 1024) throw bad("The file is larger than 10 MB.");
   const id = newId("hc"), token = randomToken(18);
   const key = `health-checks/${id}${file.name.match(/\.\w+$/)![0].toLowerCase()}`;
@@ -98,7 +92,8 @@ pub.post("/signup", async (c) => {
   const email = b.email.toLowerCase();
   const existing = await one<any>(c.env, "SELECT u.id FROM user u JOIN membership m ON m.user_id = u.id WHERE u.email = ? LIMIT 1", email);
   if (existing) {
-    // Already has a workspace: send a sign-in link instead of creating a second one.
+    // Already has a workspace: send a sign-in link instead of creating a second one (at most 3 an hour per address).
+    if (!(await limitEmail(c.env, "link", email, 3))) return c.json({ ok: true, message: "Check your email for a link to your workspace." }, 201);
     const token = randomToken();
     await run(c.env, "INSERT INTO magic_link (token_hash, email, expires_at) VALUES (?,?,?)", await sha256Hex(token), email, new Date(Date.now() + 15 * 60000).toISOString());
     await sendMail(c.env, { to: email, subject: "Your Agent House sign-in link", text: `You already have a workspace. Sign in: ${c.env.APP_URL}#/sign-in?token=${token}\n\nThis link works once and expires in 15 minutes.` });

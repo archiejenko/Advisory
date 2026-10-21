@@ -7,6 +7,7 @@ import { body, bad, notFound, HttpError } from "../lib/http";
 import { seal } from "../lib/crypto";
 import { sendMail } from "../lib/mail";
 import { builtin } from "../lib/tools";
+import { safeOutboundUrl } from "../lib/web";
 
 type V = { key: any };
 export const dev = new Hono<{ Bindings: Env; Variables: V }>();
@@ -53,8 +54,7 @@ const ToolIn = z.object({
   price_pence: z.number().int().min(1).max(500),
 });
 function checkEndpoint(env: Env, url: string) {
-  const u = new URL(url);
-  if (u.protocol !== "https:" && env.ALLOW_ANY_WEBHOOK_HOST !== "true") throw bad("The endpoint must use https.");
+  safeOutboundUrl(env, url, env.ALLOW_ANY_WEBHOOK_HOST === "true");
 }
 
 dev.post("/tools", async (c) => {

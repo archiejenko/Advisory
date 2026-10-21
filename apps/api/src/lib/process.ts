@@ -40,6 +40,7 @@ export async function processCompany(env: Env, number: string, eventId: string, 
 
   const watchers = await all<any>(env, `SELECT c.*, a.on_ AS agent_on, a.channel_id FROM client c
     JOIN agent_config a ON a.org_id = c.org_id AND a.agent = 'watch'
+    JOIN org o ON o.id = c.org_id AND o.cancelled_at IS NULL
     WHERE c.number = ? AND c.watch_on = 1`, number);
   let alerts = 0, findingsCount = 0;
   for (const w of watchers) {

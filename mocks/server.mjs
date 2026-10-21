@@ -54,6 +54,7 @@ const streamClients = new Map(); // stream -> Set(res)
 const backlog = []; // {stream, line, tp}
 const gazetteFeed = [];
 const captured = [];
+let claudeFailures = 0; // the next N Messages API calls answer 529 overloaded, to exercise retries
 let gazetteId = 900000;
 
 function emit(stream, number, kind) {
@@ -102,12 +103,15 @@ function toolResults(messages) {
   for (const m of messages) if (m.role === "user" && Array.isArray(m.content)) for (const blk of m.content) if (blk.type === "tool_result") { try { out.push(JSON.parse(blk.content)); } catch { out.push({ error: blk.content }); } }
   return out;
 }
-function mockClaude(b) {
+const textOf = (c) => typeof c === "string" ? c : Array.isArray(c) ? c.filter((x) => x.type === "text").map((x) => x.text).join("\n") : "";
+function mockClaude(raw) {
+  // The API takes system as a string or as cached text blocks; normalise both.
+  const b = { ...raw, system: textOf(raw.system) };
   const tpl = ((b.system || "").match(/TEMPLATE: ([\w-]+)/) || [])[1] || "adhoc";
   const H = toolResults(b.messages);
   const last = H[H.length - 1];
   const turn = b.messages.filter((m) => m.role === "assistant").length;
-  const userText = typeof b.messages[0].content === "string" ? b.messages[0].content : "";
+  const userText = textOf(b.messages[0].content);
   const use = (name, input) => ({ id: "msg_" + turn, type: "message", role: "assistant", content: [{ type: "text", text: `Next: ${name}.` }, { type: "tool_use", id: "toolu_" + Math.random().toString(36).slice(2, 12), name, input }], stop_reason: "tool_use", usage: { input_tokens: 1500, output_tokens: 120 } });
   const done = (text) => ({ id: "msg_" + turn, type: "message", role: "assistant", content: [{ type: "text", text }], stop_reason: "end_turn", usage: { input_tokens: 1800, output_tokens: 220 } });
   const has = (t) => (b.tools || []).some((x) => x.name === t);
@@ -259,7 +263,9 @@ const server = http.createServer(async (req, res) => {
     if (p === "/anthropic/v1/messages" && req.method === "POST") {
       if (req.headers["x-api-key"] !== "dev" || req.headers["anthropic-version"] !== "2023-06-01") return json(res, 401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } });
       const b = JSON.parse(await readBody(req));
-      captured.push({ target: "/anthropic", body: { model: b.model, tools: (b.tools || []).map((t) => t.name), turns: b.messages.length }, at: new Date().toISOString() });
+      if (claudeFailures > 0) { claudeFailures--; captured.push({ target: "/anthropic", body: { overloaded: true }, at: new Date().toISOString() }); return json(res, 529, { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }); }
+      const cached = Array.isArray(b.system) && !!b.system[0]?.cache_control && !!(b.tools || []).at(-1)?.cache_control;
+      captured.push({ target: "/anthropic", body: { model: b.model, tools: (b.tools || []).map((t) => t.name), turns: b.messages.length, cached }, at: new Date().toISOString() });
       return json(res, 200, mockClaude(b));
     }
     /* Brave-style web search */
@@ -294,6 +300,7 @@ const server = http.createServer(async (req, res) => {
       return c ? json(res, 200, { ok: true, timepoint }) : json(res, 404, { error: "no such company" });
     }
     if (p === "/control/captured") return json(res, 200, { captured });
+    if (p === "/control/claude-fail" && req.method === "POST") { claudeFailures = Number(JSON.parse(await readBody(req)).n || 0); return json(res, 200, { ok: true }); }
     if (p === "/control/companies") return json(res, 200, { companies: [...companies.values()].map((c) => ({ number: c.company_number, name: c.company_name, postcode: c.registered_office_address.postal_code })) });
     if (p === "/control/reset" && req.method === "POST") { seed(); captured.length = 0; backlog.length = 0; gazetteFeed.length = 0; return json(res, 200, { ok: true }); }
     if (p === "/health") return json(res, 200, { ok: true });

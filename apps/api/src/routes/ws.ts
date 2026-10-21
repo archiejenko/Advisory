@@ -84,7 +84,7 @@ ws.post("/imports", manager, async (c) => {
   const form = await c.req.formData();
   const file = form.get("file") as unknown as File | null;
   if (!file || typeof file === "string") throw bad("Attach a CSV or Excel file as 'file'.");
-  if (!/\.(csv|xlsx|xls)$/i.test(file.name)) throw bad("Upload a CSV or Excel file.");
+  if (!/\.(csv|xlsx)$/i.test(file.name)) throw bad("Upload a CSV or Excel (.xlsx) file. For an older .xls file, save it as .xlsx or CSV first.");
   if (file.size > 10 * 1024 * 1024) throw bad("The file is larger than 10 MB. Split it and upload the parts.");
   const id = newId("imp");
   const key = `imports/${c.get("orgId")}/${id}${file.name.match(/\.\w+$/)![0].toLowerCase()}`;

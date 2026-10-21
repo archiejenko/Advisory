@@ -24,26 +24,60 @@ export async function webSearch(env: Env, query: string, count = 8): Promise<Sea
 const decode = (s: string) => s.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 const strip = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
 
-export function allowedUrl(env: Env, raw: string): URL {
+/** Hostnames that are, or can resolve straight to, this machine or a private network. */
+export function privateHost(hostname: string) {
+  const h = hostname.toLowerCase().replace(/\.$/, "");
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal") || h.endsWith(".home.arpa")) return true;
+  if (h.startsWith("[") || h.includes(":")) return true;                          // IPv6 literals: refuse them all
+  if (/^\d+$/.test(h) || /^0x[0-9a-f]+$/i.test(h) || /^[0-9a-fx.]+$/i.test(h) && /(^|\.)0x|(^|\.)0\d/i.test(h)) return true; // 2130706433, 0x7f000001, 0177.0.0.1
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168) || (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19)) || a >= 224;
+}
+
+/** A URL we may call from the Worker: https to a public host. `devAllowed` (local development only) lifts both rules. */
+export function safeOutboundUrl(env: Env, raw: string, devAllowed = false): URL {
   let u: URL;
   try { u = new URL(raw); } catch { throw new HttpError(400, "invalid_url", "Give a full URL starting with https://."); }
-  const devHttp = env.ALLOW_HTTP_FETCH === "true";
-  if (u.protocol !== "https:" && !(devHttp && u.protocol === "http:")) throw new HttpError(400, "invalid_url", "Only https pages can be read.");
-  const h = u.hostname.toLowerCase();
-  const privateHost = h === "localhost" || h.endsWith(".local") || h.endsWith(".internal") || /^(10|127|0)\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^169\.254\./.test(h) || h.startsWith("[");
-  if (privateHost && !devHttp) throw new HttpError(400, "invalid_url", "That address isn't a public web page.");
+  if (devAllowed) { if (u.protocol !== "https:" && u.protocol !== "http:") throw new HttpError(400, "invalid_url", "Use an https URL."); return u; }
+  if (u.protocol !== "https:") throw new HttpError(400, "invalid_url", "The URL must use https.");
+  if (u.username || u.password) throw new HttpError(400, "invalid_url", "The URL can't contain a username or password.");
+  if (privateHost(u.hostname)) throw new HttpError(400, "invalid_url", "That address isn't on the public internet.");
   return u;
 }
 
+/** Pages the agents may read: https on a public host (http and local hosts too, in local development). */
+export function allowedUrl(env: Env, raw: string): URL {
+  const devHttp = env.ALLOW_HTTP_FETCH === "true";
+  let u: URL;
+  try { u = new URL(raw); } catch { throw new HttpError(400, "invalid_url", "Give a full URL starting with https://."); }
+  if (u.protocol !== "https:" && !(devHttp && u.protocol === "http:")) throw new HttpError(400, "invalid_url", "Only https pages can be read.");
+  if (!devHttp && (privateHost(u.hostname) || u.username || u.password)) throw new HttpError(400, "invalid_url", "That address isn't a public web page.");
+  return u;
+}
+
+const MAX_REDIRECTS = 5;
 /** Fetch one public page and return its readable text, capped at about 12,000 characters. */
 export async function readPage(env: Env, raw: string) {
-  const u = allowedUrl(env, raw);
+  let u = allowedUrl(env, raw);
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 8000);
   let res: Response;
-  try { res = await fetch(u.toString(), { headers: { "User-Agent": "AgentHouseBot/1.0 (+https://agenthouse.example/#/standards)", Accept: "text/html,text/plain" }, signal: ctl.signal, redirect: "follow" }); }
-  catch { throw new UpstreamError(u.hostname, 504, "The page didn't respond in time."); }
-  finally { clearTimeout(t); }
+  try {
+    // Follow redirects by hand, checking every hop: a public page must not be able to bounce us to a private address.
+    for (let hop = 0; ; hop++) {
+      res = await fetch(u.toString(), { headers: { "User-Agent": "AgentHouseBot/1.0 (+https://agenthouse.example/#/standards)", Accept: "text/html,text/plain" }, signal: ctl.signal, redirect: "manual" });
+      const loc = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+      if (!loc) break;
+      if (hop >= MAX_REDIRECTS) throw new HttpError(508, "too_many_redirects", "The page redirected too many times.");
+      u = allowedUrl(env, new URL(loc, u).toString());
+    }
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    throw new UpstreamError(u.hostname, 504, "The page didn't respond in time.");
+  } finally { clearTimeout(t); }
   if (!res.ok) throw new UpstreamError(u.hostname, res.status, `The page returned ${res.status}.`);
   const type = res.headers.get("content-type") || "";
   if (!/text\/html|text\/plain|application\/xhtml/.test(type)) throw new HttpError(415, "not_a_page", "That address isn't a readable web page.");

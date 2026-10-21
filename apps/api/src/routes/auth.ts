@@ -6,6 +6,7 @@ import { nowIso, randomToken, sha256Hex } from "../../../../packages/core/util";
 import { type Env, one, run, audit, Scoped } from "../lib/db";
 import { body, HttpError, forbidden } from "../lib/http";
 import { sendMail } from "../lib/mail";
+import { limitIp, limitEmail } from "../lib/limits";
 
 export type Vars = { user: { id: string; email: string; name: string | null }; orgId: string; role: "owner" | "manager" | "viewer"; db: Scoped };
 const COOKIE = "ah_session";
@@ -15,9 +16,11 @@ export const auth = new Hono<{ Bindings: Env; Variables: Vars }>();
 
 auth.post("/magic-link", async (c) => {
   const { email } = await body(c, z.object({ email: z.string().email() }));
+  // At most 10 requests an hour from one network, and 3 links an hour to one address, so nobody can flood an inbox.
+  await limitIp(c, "magic", 10);
   const user = await one<any>(c.env, "SELECT * FROM user WHERE email = ?", email.toLowerCase());
-  // Same response whether or not the address has an account, so nobody can probe for customers.
-  if (user) {
+  // Same response whether or not the address has an account (or has hit its limit), so nobody can probe for customers.
+  if (user && (await limitEmail(c.env, "link", user.email, 3))) {
     const token = randomToken();
     await run(c.env, "INSERT INTO magic_link (token_hash, email, expires_at) VALUES (?,?,?)", await sha256Hex(token), user.email, new Date(Date.now() + 15 * 60000).toISOString());
     await sendMail(c.env, { to: user.email, subject: "Your Agent House sign-in link", text: `Sign in to Agent House: ${c.env.APP_URL}#/sign-in?token=${token}\n\nThis link works once and expires in 15 minutes.` });
@@ -28,10 +31,12 @@ auth.post("/magic-link", async (c) => {
 auth.post("/session", async (c) => {
   const { token } = await body(c, z.object({ token: z.string().min(10) }));
   const hash = await sha256Hex(token);
-  const link = await one<any>(c.env, "SELECT * FROM magic_link WHERE token_hash = ?", hash);
-  if (!link || link.used_at || link.expires_at < nowIso()) throw new HttpError(400, "link_expired", "That sign-in link has expired or been used. Request a new one.");
-  await run(c.env, "UPDATE magic_link SET used_at = ? WHERE token_hash = ?", nowIso(), hash);
+  // Claim the link in one statement, so two requests racing with the same link can't both sign in.
+  const now = nowIso();
+  const link = await one<any>(c.env, "UPDATE magic_link SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? RETURNING email", now, hash, now);
+  if (!link) throw new HttpError(400, "link_expired", "That sign-in link has expired or been used. Request a new one.");
   const user = await one<any>(c.env, "SELECT * FROM user WHERE email = ?", link.email);
+  if (!user) throw new HttpError(400, "link_expired", "That sign-in link has expired or been used. Request a new one.");
   const m = await one<any>(c.env, "SELECT * FROM membership WHERE user_id = ? ORDER BY role = 'owner' DESC LIMIT 1", user.id);
   if (!m) throw forbidden("Your account isn't part of a workspace yet.");
   const sid = randomToken(32);

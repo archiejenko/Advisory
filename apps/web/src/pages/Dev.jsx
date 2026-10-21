@@ -4,7 +4,7 @@ import { Link, useRoute } from "../router.jsx";
 import { Page, PageHead, Section, SectionHead, CodePanel } from "../ui.jsx";
 import { Reveal, Glyph, Tile, Terminal, DarkBand } from "../kit.jsx";
 import { LIVE, ApiError, dateTimeOf, pounds } from "../api.js";
-import { TOOLS, AGENT_RUN_PENCE, pence } from "../catalogue.js";
+import { TOOLS, AGENT_RUN_STEP_PENCE, pence } from "../catalogue.js";
 import { HOST } from "./showcase.jsx";
 
 /* ---------- Developer API, authenticated with the key itself ---------- */
@@ -273,7 +273,7 @@ export function ForAgents() {
             <div className="tool-h">
               <span className="tool-n"><b>Run an agent</b><span className="mono muted">POST /v1/agents/run</span></span>
               <span className="tool-d">Hand over instructions and up to eight first-party tools; we run the agent loop and return its answer with every step, signed.</span>
-              <span className="tool-p"><b>{pence(AGENT_RUN_PENCE)}</b><span className="dt">flat, per run</span></span>
+              <span className="tool-p"><b>{pence(AGENT_RUN_STEP_PENCE)}</b><span className="dt">a step (max_steps, default 4)</span></span>
             </div>
           </article>
         </div>

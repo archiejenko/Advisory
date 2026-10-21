@@ -11,5 +11,7 @@ export const TOOLS = [
   ["uk-watch", "Watch UK companies", 10, "Companies", "Subscribe to changes on a set of companies; each change is posted to your webhook, signed."],
 ].map(([slug, name, pence, group, description]) => ({ slug, name, description, group, price: { pence }, publisher: "Agent House" }));
 
-export const AGENT_RUN_PENCE = 25;
+// Agent runs are priced per model step allowed (max_steps, default 4), and aren't covered by the free calls.
+export const AGENT_RUN_STEP_PENCE = 12;
+export const AGENT_RUN_DEFAULT_STEPS = 4;
 export const pence = (p) => (p < 100 ? `${p}p` : "£" + (p / 100).toFixed(2));

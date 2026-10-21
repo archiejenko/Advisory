@@ -10,7 +10,8 @@ import { sendMail } from "../lib/mail";
 import { verifyStripeSignature } from "../lib/crypto";
 import { pollGazette, reconcile, digests, monthly, retention } from "../lib/jobs";
 import { createOrg } from "../lib/orgs";
-import { dueAgents } from "../lib/agents";
+import { dueAgents, sweepRuns } from "../lib/agents";
+import { applyStripeEvent } from "../lib/billing";
 
 const bearer = (secretName: string) => async (c: Context<{ Bindings: Env }>, next: Next) => {
   const want = c.env[secretName];
@@ -108,7 +109,7 @@ admin.post("/company-index", async (c) => {
 
 admin.post("/run/:task", async (c) => {
   const t = c.req.param("task");
-  const r = t === "gazette" ? await pollGazette(c.env) : t === "reconcile" ? await reconcile(c.env) : t === "digests" ? await digests(c.env, new Date(c.req.query("at") || Date.now())) : t === "agents" ? await dueAgents(c.env, new Date(c.req.query("at") || Date.now())) : t === "monthly" ? await monthly(c.env) : t === "retention" ? await retention(c.env) : null;
+  const r = t === "gazette" ? await pollGazette(c.env) : t === "reconcile" ? await reconcile(c.env) : t === "digests" ? await digests(c.env, new Date(c.req.query("at") || Date.now())) : t === "agents" ? await dueAgents(c.env, new Date(c.req.query("at") || Date.now())) : t === "monthly" ? await monthly(c.env) : t === "retention" ? await retention(c.env) : t === "sweep" ? await sweepRuns(c.env, new Date(c.req.query("at") || Date.now())) : null;
   if (r === null) throw notFound("Task");
   return c.json({ task: t, result: r });
 });
@@ -122,21 +123,11 @@ hooks.post("/stripe", async (c) => {
   const payload = await c.req.text();
   if (!(await verifyStripeSignature(c.env.STRIPE_WEBHOOK_SECRET, c.req.header("Stripe-Signature"), payload))) throw new HttpError(400, "bad_signature", "Signature check failed.");
   const ev = JSON.parse(payload);
-  const fresh = await run(c.env, "INSERT INTO webhook_seen (source, event_id, at) VALUES ('stripe', ?, ?) ON CONFLICT DO NOTHING", ev.id, nowIso());
-  if (!fresh.meta.changes) return c.json({ received: true, duplicate: true });
-  const o = ev.data?.object || {};
-  if (ev.type === "checkout.session.completed" && o.mode === "subscription" && o.client_reference_id) {
-    await run(c.env, `INSERT INTO subscription (org_id, stripe_customer, stripe_subscription, status, updated_at) VALUES (?,?,?,'active',?)
-      ON CONFLICT(org_id) DO UPDATE SET stripe_customer=excluded.stripe_customer, stripe_subscription=excluded.stripe_subscription, status='active', updated_at=excluded.updated_at`,
-      o.client_reference_id, o.customer, o.subscription, nowIso());
-    if (["starter", "growth", "scale"].includes(o.metadata?.plan)) await run(c.env, "UPDATE org SET plan = ? WHERE id = ?", o.metadata.plan, o.client_reference_id);
-    await audit(c.env, o.client_reference_id, "stripe", "subscription_started", o.subscription);
-  } else if (ev.type === "checkout.session.completed" && o.mode === "payment" && o.metadata?.key_id) {
-    await run(c.env, "INSERT INTO credit_ledger (id, key_id, delta_pence, reason, ref, at) VALUES (?,?,?,?,?,?) ON CONFLICT(reason, ref) DO NOTHING", newId("cl"), o.metadata.key_id, o.amount_total, "purchase", o.id, nowIso());
-  } else if (ev.type === "customer.subscription.updated" || ev.type === "customer.subscription.deleted") {
-    const status = ev.type.endsWith("deleted") ? "cancelled" : o.status;
-    await run(c.env, "UPDATE subscription SET status = ?, updated_at = ? WHERE stripe_subscription = ?", status, nowIso(), o.id);
-    if (status === "cancelled") await run(c.env, "UPDATE org SET cancelled_at = ? WHERE id = (SELECT org_id FROM subscription WHERE stripe_subscription = ?)", nowIso(), o.id);
-  }
+  if (await one(c.env, "SELECT 1 AS x FROM webhook_seen WHERE source = 'stripe' AND event_id = ?", ev.id)) return c.json({ received: true, duplicate: true });
+  // Process first, record it as seen only once that succeeds. If processing throws, Stripe's retry gets a
+  // fresh attempt instead of being dropped as a duplicate. applyStripeEvent is idempotent, so a concurrent
+  // second delivery is harmless.
+  await applyStripeEvent(c.env, ev);
+  await run(c.env, "INSERT INTO webhook_seen (source, event_id, at) VALUES ('stripe', ?, ?) ON CONFLICT DO NOTHING", ev.id, nowIso());
   return c.json({ received: true });
 });

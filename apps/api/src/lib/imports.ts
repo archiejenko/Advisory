@@ -1,7 +1,7 @@
 // Client lists, for workspace imports and for public health checks. Processed in chunks so a
 // 500-row list survives the Companies House rate limit: a chunk that hits the limit is retried later.
-import * as XLSX from "xlsx";
 import { mapClientColumns, parseCsv } from "../../../../packages/core/csv";
+import { readXlsx } from "../../../../packages/core/xlsx";
 import { runChecks } from "../../../../packages/core/checks";
 import { findPostcode } from "../../../../packages/core/match";
 import { newId, nowIso } from "../../../../packages/core/util";
@@ -16,11 +16,8 @@ export async function readTable(env: Env, key: string): Promise<string[][]> {
   const obj = await env.FILES.get(key);
   if (!obj) throw new Error("Uploaded file not found");
   const buf = await obj.arrayBuffer();
-  if (/\.xlsx?$/i.test(key)) {
-    const wb = XLSX.read(new Uint8Array(buf), { type: "array" });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    return (XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" }) as string[][]).filter((r) => r.some((c) => String(c).trim()));
-  }
+  if (/\.xlsx$/i.test(key)) return readXlsx(buf);
+  if (/\.xls$/i.test(key)) throw new Error("Old .xls files aren't supported. Save it as .xlsx or CSV.");
   return parseCsv(new TextDecoder().decode(buf));
 }
 

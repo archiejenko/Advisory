@@ -1,7 +1,7 @@
 {
   "name": "agent-house",
   "version": "1.0.0",
-  "description": "Agent House: client book watch, new-client checks and prospect lists for UK MSPs, plus the UK Business Source of Truth API.",
+  "description": "Agent House: AI agents for small businesses, a tool catalogue for developers, and pay-per-call tools for agents (x402). One Cloudflare Worker.",
   "scripts": {
     "setup": "node scripts/dev-secrets.mjs && wrangler d1 migrations apply agent-house --local",
     "mocks": "node mocks/server.mjs",
@@ -26,9 +26,12 @@
   },
   "dependencies": {
     "hono": "^4.13.13",
-    "xlsx": "^0.18.5",
+    "postal-mime": "^2.7.6",
     "zod": "^3.25.76"
   },
   "private": true,
-  "type": "module"
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  }
 }

@@ -202,7 +202,7 @@ export const ENDPOINTS = [
     },
     …
   ],
-  "agents_run": { "call": "POST /v1/agents/run", "price": { "pence": 25 } },
+  "agents_run": { "call": "POST /v1/agents/run", "price": { "per_step_pence": 12, "default_steps": 4, "max_steps": 8 } },
   "payment": { "x402": { "version": 2, "network": "eip155:8453" },
                "api_key": { "free_calls_per_month": 100 } },
   "signing_key": "/.well-known/agent-house-key"
@@ -227,7 +227,7 @@ Content-Type: application/json
   "key_id": "ah-2026-10",
   "signature": "ed25519:…"
 }` },
-  { k: "agents", method: "POST", path: "/v1/agents/run", what: "Run an agent: instructions plus up to eight first-party tools. 25p a run.",
+  { k: "agents", method: "POST", path: "/v1/agents/run", what: "Run an agent: instructions plus up to eight first-party tools. 12p a step, for the steps you allow (default 4). Not covered by the free calls.",
     req: `POST https://api.example.com/v1/agents/run
 Authorization: Bearer ah_live_…
 Content-Type: application/json

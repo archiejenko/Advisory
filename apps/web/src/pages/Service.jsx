@@ -5,7 +5,7 @@ import { Page, PageHead, Section, SectionHead, SpecTable, QA, NextPrev, CtaBand,
 import { Reveal, Marquee, Terminal } from "../kit.jsx";
 import { ApiShowcase, TERM } from "./showcase.jsx";
 import { ENDPOINTS } from "../data.js";
-import { TOOLS, AGENT_RUN_PENCE, pence } from "../catalogue.js";
+import { TOOLS, AGENT_RUN_STEP_PENCE, pence } from "../catalogue.js";
 import { PLANS } from "../../../../packages/core/templates.ts";
 
 /* ---------- Shared form ---------- */
@@ -52,7 +52,7 @@ export function HealthCheck() {
     fd.append("file", file);
     if (ts.token) fd.append("cf-turnstile-response", ts.token);
     try { await api("POST", "/api/public/health-checks", fd); } catch (e) { ts.reset(); throw e; }
-  }, () => (!file ? "your customer list" : !/\.(csv|xlsx|xls)$/i.test(file.name) ? "a CSV or Excel file" : !ts.ready ? "the check that you're not a robot" : ""));
+  }, () => (!file ? "your customer list" : !/\.(csv|xlsx)$/i.test(file.name) ? "a CSV or Excel (.xlsx) file" : !ts.ready ? "the check that you're not a robot" : ""));
   const findings = [["Dissolved or being struck off", 1], ["Insolvency notices", 1], ["Accounts or confirmation statement overdue", 3], ["Director or registered office changed in 90 days", 2]];
   return (
     <Page title="Free customer check">
@@ -76,7 +76,7 @@ export function HealthCheck() {
                   <label className={"file" + (file ? " has-file" : "")} htmlFor="f-file">
                     <span>{file ? file.name : "Choose a CSV or Excel file"}</span>
                     <span className="file-btn">{file ? "Change" : "Browse"}</span>
-                    <input id="f-file" type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setFile(e.target.files[0] || null)} />
+                    <input id="f-file" type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files[0] || null)} />
                   </label>
                 </div>
                 {ts.needed && <div className="field" ref={ts.el} />}
@@ -157,7 +157,7 @@ export function Pricing() {
           <thead><tr><th>Tool</th><th className="hide-sm">What it returns</th><th className="num">Per call</th></tr></thead>
           <tbody>
             {TOOLS.map((t) => <tr key={t.slug}><td><b>{t.name}</b><br /><span className="mono muted">{t.slug}</span></td><td className="hide-sm muted">{t.description}</td><td className="num"><b>{pence(t.price.pence)}</b></td></tr>)}
-            <tr><td><b>Run an agent</b><br /><span className="mono muted">/v1/agents/run</span></td><td className="hide-sm muted">Instructions plus up to eight tools; we run the loop and sign the answer.</td><td className="num"><b>{pence(AGENT_RUN_PENCE)}</b></td></tr>
+            <tr><td><b>Run an agent</b><br /><span className="mono muted">/v1/agents/run</span></td><td className="hide-sm muted">Instructions plus up to eight tools; we run the loop and sign the answer.</td><td className="num"><b>{pence(AGENT_RUN_STEP_PENCE)}</b> a step</td></tr>
           </tbody>
         </table>
         <div className="grid-2 mt-l">
@@ -315,7 +315,7 @@ function KeyForm() {
 /* Dev mode tabs: what the user sees, or the code behind it */
 const DEV_TABS = [
   { k: "Run an agent", h: "An agent in one call", d: "Send instructions and the tools it may use. We run the loop on our side, call the tools, and return the answer with every step, signed.",
-    pts: ["Up to eight first-party tools a run", "25p a run, whatever it calls", "Every step returned, so you can audit it"],
+    pts: ["Up to eight first-party tools a run", "12p a step, for the steps you allow", "Every step returned, so you can audit it"],
     ui: () => (
       <div className="mini" style={{ width: "100%", maxWidth: 520, padding: 28 }}>
         <p className="dt">Agent run · agr_41c7e2</p>

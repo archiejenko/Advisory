@@ -1,16 +1,19 @@
-# Agent House test results, 2026-10-21
+# Agent House test results, 2026-10-21 (pre-launch hardening)
 
-Typecheck: clean (tsc -p .).
+Typecheck: clean (tsc -p .). `npm audit --omit=dev`: 0 vulnerabilities (the `xlsx` package is gone).
 
 ## Unit (vitest)
 ```
- ✓ tests/unit/core.test.ts (19 tests) 50ms
- ✓ tests/unit/agents.test.ts (6 tests) 27ms
- ✓ tests/unit/scoped.test.ts (3 tests) 8ms
- ✓ tests/unit/ratelimit.test.ts (2 tests) 4ms
- Test Files  4 passed (4)
-      Tests  30 passed (30)
+ ✓ tests/unit/inputs.test.ts (15 tests)      .xlsx reader, zip-bomb limit, MIME decoding, outbound URL and redirect checks, Claude retries and caching
+ ✓ tests/unit/hardening.test.ts (15 tests)   auto-send recipients, billing state, Stripe webhook retry, atomic credits and actions, purge, stuck runs, sign-in links
+ ✓ tests/unit/core.test.ts (19 tests)
+ ✓ tests/unit/agents.test.ts (6 tests)
+ ✓ tests/unit/scoped.test.ts (3 tests)
+ ✓ tests/unit/ratelimit.test.ts (2 tests)
+ Test Files  6 passed (6)
+      Tests  60 passed (60)
 ```
+The hardening suite runs the real SQL against Node's built-in SQLite with every migration applied (`tests/unit/d1.ts`).
 
 ## API end-to-end (tests/e2e/run.mjs)
 ```
@@ -43,14 +46,18 @@ Typecheck: clean (tsc -p .).
   pass  research and briefing agents; the scheduler runs what's due
   pass  agents are private to their business: another business can't see or approve them
   pass  tool gateway: catalogue and discovery; x402 or a key; every answer signed
-  pass  Agents API: one call runs an agent with catalogue tools, signed
+  pass  Agents API: priced per step, not free, paid before it runs; one call runs an agent with catalogue tools, signed
   pass  developer publishes a tool: review, then live in the catalogue and MCP; callers pay, publisher earns 80%
   pass  plan limits: the trial allows six agents; usage shows the allowance
+  pass  billing state: plan changes follow Stripe; past-due and cancelled workspaces stop their agents
   pass  audit log records actions; retention job runs
-All 33 end-to-end flows passed.
+All 34 end-to-end flows passed.
 ```
+The research flow now starts with Claude answering 529 twice; the run retries and completes. Every model call in the Agents API flow carries prompt-cache markers.
 
-## Browser (tests/e2e/ui.mjs, Chromium)
+## Browser (tests/e2e/ui.mjs, Chromium): from the previous run
+
+Not re-run for the hardening changes (Chromium couldn't be downloaded in this environment). CI runs the API suites; run this one locally before launch. The site changes are copy only: agent-run pricing per step, and `.xlsx`/CSV uploads.
 ```
   pass  public pages render for all three doors; signed-out header offers sign in
   pass  demo workspace: signed out, approve an email and ask the research agent

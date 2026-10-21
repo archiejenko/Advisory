@@ -4,6 +4,7 @@ import { type Env, one, run, audit } from "./db";
 import { checkInput } from "./truth";
 import { sendMail } from "./mail";
 import { wakeOnEvent } from "./agents";
+import PostalMime from "postal-mime";
 
 /** Pull the request out of a message: the subject, else the first non-empty body line. */
 export function requestFrom(subject: string, text: string): string {
@@ -13,9 +14,20 @@ export function requestFrom(subject: string, text: string): string {
   return (line || "").slice(0, 300);
 }
 
-function plainBody(raw: string): string {
-  const i = raw.search(/\r?\n\r?\n/);
-  return i >= 0 ? raw.slice(i).trim() : raw;
+const MAX_RAW = 5 * 1024 * 1024;
+
+/** Decode an HTML-only message into readable text. */
+export function htmlToText(html: string) {
+  return html.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, " ").replace(/<br\s*\/?>|<\/(p|div|li|h\d|tr)>/gi, "\n").replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/[ \t]+/g, " ").replace(/ ?\n\s*/g, "\n").trim();
+}
+
+/** Parse a raw message (MIME: multipart, base64, quoted-printable, HTML) into its subject and plain text. */
+export async function parseMessage(raw: ArrayBuffer | string): Promise<{ subject: string; text: string }> {
+  const m = await PostalMime.parse(raw);
+  const text = (m.text && m.text.trim()) || (m.html ? htmlToText(m.html) : "");
+  return { subject: m.subject || "", text: text.replace(/\r\n/g, "\n").trim() };
 }
 
 export function briefText(env: Env, b: any): string {
@@ -36,14 +48,16 @@ export async function onEmail(message: ForwardableEmailMessage, env: Env) {
   // Mail to <alias>@INBOUND_DOMAIN is a business's enquiries inbox: store it and wake its inbox agent.
   const local = (message.to || "").toLowerCase().split("@")[0];
   const org = local && local !== "check" ? await one<any>(env, "SELECT id FROM org WHERE inbox_alias = ?", local) : null;
+  if (message.rawSize > MAX_RAW) { message.setReject?.("Message too large"); return; }
   if (org) {
-    const raw = await new Response(message.raw).text();
-    const subject = message.headers.get("subject") || "";
+    const parsed = await parseMessage(await new Response(message.raw).arrayBuffer());
+    const subject = parsed.subject || message.headers.get("subject") || "";
+    const body = parsed.text;
     const id = newId("msg");
-    await run(env, "INSERT INTO inbox_message (id, org_id, from_addr, subject, body, received_at) VALUES (?,?,?,?,?,?)", id, org.id, from, subject.slice(0, 300), plainBody(raw).slice(0, 20000), nowIso());
+    await run(env, "INSERT INTO inbox_message (id, org_id, from_addr, subject, body, received_at) VALUES (?,?,?,?,?,?)", id, org.id, from, subject.slice(0, 300), body.slice(0, 20000), nowIso());
     // A reply from someone we emailed marks that lead as replied.
     await run(env, "UPDATE lead SET status = 'replied' WHERE org_id = ? AND email = ? AND status IN ('new','contacted')", org.id, from);
-    if (/^\s*(stop|unsubscribe)\b/i.test(plainBody(raw))) {
+    if (/^\s*(stop|unsubscribe)\b/i.test(body)) {
       await run(env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", from, "reply_stop", nowIso());
       await run(env, "UPDATE lead SET status = 'unsubscribed' WHERE org_id = ? AND email = ?", org.id, from);
     }
@@ -52,8 +66,8 @@ export async function onEmail(message: ForwardableEmailMessage, env: Env) {
   }
   const user = await one<any>(env, "SELECT u.id, u.email, m.org_id FROM user u JOIN membership m ON m.user_id = u.id WHERE u.email = ? LIMIT 1", from);
   if (!user) return; // not a customer: drop silently, never reply to strangers
-  const raw = await new Response(message.raw).text();
-  const input = requestFrom(message.headers.get("subject") || "", plainBody(raw));
+  const parsed = await parseMessage(await new Response(message.raw).arrayBuffer());
+  const input = requestFrom(parsed.subject || message.headers.get("subject") || "", parsed.text);
   if (input.length < 2) return;
   const b: any = await checkInput(env, input);
   await run(env, "INSERT INTO brief (id, org_id, input, number, body, response_id, created_by, created_at) VALUES (?,?,?,?,?,?,?,?)",

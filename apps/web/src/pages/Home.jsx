@@ -11,7 +11,7 @@ const WORK = [
   ["WATCH", "Administrators appointed · Ellacombe Print"], ["read-page", "1p · castlefielddental.example"], ["INBOX", "Reply drafted · Castlefield Dental"],
   ["BRIEFING", "Monday 07:00 · 14 runs · 6 sent"], ["company-research", "8p · key ah_live_7f…"], ["OUTREACH", "Lead saved · Ancoats Architects"],
   ["uk-vat-check", "3p · published by a developer"], ["TASKS", "Call Salford Quays Media"], ["CREDIT CONTROL", "Second reminder · auto"],
-  ["agents/run", "25p · 6 steps · signed"], ["INBOX", "Supplier offer · ignored"], ["WATCH", "Accounts overdue · Tarnbrook Logistics"],
+  ["agents/run", "72p · 6 steps · signed"], ["INBOX", "Supplier offer · ignored"], ["WATCH", "Accounts overdue · Tarnbrook Logistics"],
 ];
 const HOT = new Set([0, 6, 9, 14]);
 function Wall() {

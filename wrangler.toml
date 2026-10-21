@@ -34,6 +34,21 @@ max_batch_timeout = 2
 max_retries = 10
 dead_letter_queue = "agent-house-dead"
 
+# Agent runs get their own queue, one message per batch: a run can take minutes, and ten of them in one
+# batch would run past the consumer's time limit. A run never throws (failures are recorded on the run), and
+# the */15 sweep re-queues runs whose message was lost, so few retries are needed.
+[[queues.producers]]
+binding = "AGENT_JOBS"
+queue = "agent-house-agents"
+
+[[queues.consumers]]
+queue = "agent-house-agents"
+max_batch_size = 1
+max_batch_timeout = 1
+max_retries = 3
+max_concurrency = 20
+dead_letter_queue = "agent-house-dead"
+
 # Outbound email (MAIL_MODE = "cloudflare"). Uncomment once Cloudflare email sending is enabled on the account,
 # or set MAIL_MODE = "http" with MAIL_HTTP_URL and MAIL_HTTP_KEY for another provider.
 # [[send_email]]
@@ -63,3 +78,10 @@ STRIPE_BASE = "https://api.stripe.com"
 AGENT_MODEL = "claude-sonnet-5-5"
 INBOUND_DOMAIN = "in.agenthouse.example"   # route <alias>@ this domain to the Worker for business inboxes
 TURNSTILE_SITE_KEY = ""   # public site key; set TURNSTILE_SECRET as a secret to enforce it
+# Pricing, per deployment. Model prices are pence per million tokens; cache writes/reads are multiples of the input price.
+USDC_PER_PENNY = "0.0125"          # x402 conversion for per-tool prices (80p to the dollar)
+AGENT_RUN_STEP_PENCE = "12"        # /v1/agents/run: price per model step allowed (max_steps, default 4)
+AGENT_PRICE_IN_PENCE = "240"
+AGENT_PRICE_OUT_PENCE = "1200"
+AGENT_CACHE_WRITE_X = "1.25"
+AGENT_CACHE_READ_X = "0.1"

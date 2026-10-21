@@ -55,9 +55,10 @@ Opened straight from disk, `apps/web/dist/index.html` runs as an offline demo wi
 ## Tests
 
 ```bash
-npm test               # unit: matching, checks, signing, tenant isolation, rate limiting, scheduling, catalogue (30)
+npm test               # unit (60): matching, checks, signing, tenant isolation, rate limits, scheduling, catalogue,
+                       # plus the hardening suite run against real SQL (Node's built-in SQLite, every migration applied)
 npm run typecheck
-npm run test:e2e       # API: 33 flows against wrangler dev and the mocks
+npm run test:e2e       # API: 34 flows against wrangler dev and the mocks
 node tests/e2e/ui.mjs  # browser: 19 flows clicking through the real website in Chromium
 ```
 
@@ -80,7 +81,17 @@ Stop any running `npm run dev` or `npm run mocks` before the end-to-end suites; 
 | Ingest | `/api/internal/*` | Stream listener posts events here. |
 | Webhooks | `/api/webhooks/stripe` | Signature-checked, replay-protected. |
 
-Background work runs on the `JOBS` queue (agent runs, imports, baselines, alert delivery, digests, webhooks, customer checks). Crons (UTC): due agents every 15 minutes (schedules are kept in UK time); Gazette poll every 30 minutes; full reconciliation of every watched company Monday 06:00; digests 07:00; lead lists on the first working day of the month at 08:00; retention 03:00.
+Background work runs on two queues. `AGENT_JOBS` carries agent runs only, one per batch, because a run can take minutes. `JOBS` carries everything else (imports, baselines, alert delivery, digests, webhooks, customer checks, reconciliation batches, monthly prospect lists, workspace purges). Crons (UTC): every 15 minutes, the stuck-run sweep (runs "running" for 15 minutes are failed with their cost recorded; runs queued for 30 minutes are re-queued) and then due agents (schedules are kept in UK time); Gazette poll every 30 minutes; reconciliation of every watched company Monday 06:00, fanned out in batches of 50; digests 07:00; lead lists on the first working day of the month at 08:00, one queued job per business; retention 03:00.
+
+**Agent safety.** Text from inbound mail, web pages and search results is treated as information, never instructions. Without a person approving it, an agent's email only goes to an address already tied to the record it names: the lead's own address (for a lead saved before this run), the invoice's customer, or the sender of the inbox message being answered. Anything else waits in Approvals, whatever the agent's autonomy setting.
+
+**Usage and cost.** Each agent tool call is claimed atomically against both the plan's monthly actions and the agent's own cap, and written to usage as it happens. Model cost is updated on the run after every step, so a run that fails partway still shows what it cost. Claude calls retry 429, 529 and transient 5xx responses with backoff (honouring `retry-after`), and use prompt caching for the system prompt, tools and conversation so far.
+
+**Billing state.** Agents stop (hiring, manual runs, schedules and already-queued runs) when a workspace is cancelled, its trial has ended, or Stripe reports the subscription `unpaid`, `canceled`, `incomplete_expired` or `paused`; `past_due` gets 7 days' grace from the first failure. Plan changes in the Stripe customer portal update the workspace's plan by price id. Webhook events are recorded as seen only after they've been processed, so a failure is retried by Stripe instead of dropped.
+
+**Deletion.** Thirty days after cancellation, retention queues a purge of the workspace: every workspace table (agents, runs, actions, leads, invoices, inbox, tasks, usage, clients, alerts and the rest), agent transcripts, prospect lists and uploaded files in R2, and people who belong to no other workspace. The audit log keeps the actions with targets and details cleared.
+
+**Two engines for agents.** LLM agents (outreach, inbox, credit control, research, briefing) run through the tool registry in `lib/agents.ts` and `lib/tools.ts`. The register agents (customer watch, customer check, prospect finder) are the original MSP engines (`agent_config`, `lib/process.ts`, `lib/truth.ts`, briefs); hiring one switches its engine on. New capabilities go into the tool registry.
 
 Plans (in `packages/core/templates.ts`): a 14-day trial with six agents and 1,500 actions, then Starter £49 (2 agents, 300 actions), Growth £149 (6, 1,500) and Scale £399 (12, 5,000). An action is one tool call by an agent. When the month's actions are used, agents pause until the 1st; there are no overage charges. When the trial ends, agents stop until a plan is chosen.
 
@@ -91,6 +102,7 @@ wrangler d1 create agent-house           # put the id in wrangler.toml
 wrangler kv namespace create CACHE       # put the id in wrangler.toml
 wrangler r2 bucket create agent-house-files
 wrangler queues create agent-house-jobs
+wrangler queues create agent-house-agents
 wrangler queues create agent-house-dead
 wrangler d1 migrations apply agent-house --remote
 ```
@@ -103,7 +115,9 @@ node -e "crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']).then
 for s in SIGNING_JWK CHANNEL_KEY CH_API_KEY FCA_EMAIL FCA_KEY STRIPE_SECRET STRIPE_WEBHOOK_SECRET INGEST_SECRET ADMIN_TOKEN OPERATOR_EMAIL TURNSTILE_SECRET ANTHROPIC_API_KEY SEARCH_API_KEY; do wrangler secret put $s; done
 ```
 
-`CHANNEL_KEY` is 32 random bytes, base64url. `TURNSTILE_SECRET` is optional; set `TURNSTILE_SITE_KEY` in vars alongside it. `ANTHROPIC_API_KEY` runs the agents (model from `AGENT_MODEL`; costs are recorded per run using `AGENT_PRICE_IN_PENCE` and `AGENT_PRICE_OUT_PENCE` per million tokens). `SEARCH_API_KEY` is a Brave Search API key for the web research tools.
+`CHANNEL_KEY` is 32 random bytes, base64url. `TURNSTILE_SECRET` is optional; set `TURNSTILE_SITE_KEY` in vars alongside it. `ANTHROPIC_API_KEY` runs the agents (model from `AGENT_MODEL`; costs are recorded per run using `AGENT_PRICE_IN_PENCE` and `AGENT_PRICE_OUT_PENCE` per million tokens, with cache writes and reads at `AGENT_CACHE_WRITE_X` and `AGENT_CACHE_READ_X` of the input price).
+
+Pricing for callers is set in `wrangler.toml` too: `USDC_PER_PENNY` converts per-tool prices for x402 (default 0.0125), `X402_PRICES` (JSON) overrides the four original endpoints, and `AGENT_RUN_STEP_PENCE` prices `/v1/agents/run` per model step the caller allows (`max_steps`, default 4, at most 8). Agent runs aren't covered by the 100 free calls; credits are taken before the run and refunded if it fails, and x402 is settled before the run starts. `SEARCH_API_KEY` is a Brave Search API key for the web research tools.
 
 `SENDS_LIVE` is `"false"` in production config, so Teams, Slack and webhooks are recorded but not sent until you switch it on. Turn it on after a dry run with a pilot.
 
@@ -123,6 +137,8 @@ These are built to the published documentation but have only been run against th
 - **FCA register:** the search-by-company-number path and response fields (`fcaStatus`). Failures are reported as "FCA register unavailable", never as "not listed".
 - **Companies House streaming:** event shapes in `apps/stream-listener/listener.mjs` against the live stream, and the stream key's connection limits.
 - **x402:** the facilitator's `/verify` and `/settle` field names, and the USDC amounts in `pay.ts`.
+- **Stripe events:** the webhook needs `checkout.session.completed`, `customer.subscription.updated` and `customer.subscription.deleted`. Check the portal's plan switch sends the new price on `items.data[0].price.id`.
+- **Spreadsheets:** `.xlsx` is read by a small built-in reader (`packages/core/xlsx.ts`) instead of the `xlsx` package; old `.xls` files are refused with a request to save as `.xlsx` or CSV. Try a few real customer exports before launch.
 - **Outbound email:** the Cloudflare send binding shape on your account (commented in `wrangler.toml`), or use `MAIL_MODE = "http"`.
 - **Stripe:** create one recurring price per plan (Starter, Growth, Scale) and set their ids.
 - **Claude and web search:** agent runs are tested against a scripted mock of the Messages API and Brave Search. Run each agent once against the real model with a test business before inviting customers, and review its drafts.
