@@ -188,7 +188,7 @@ export const ORG_TABLES = [
   "client", "import_row", "import", "agent_config", "channel", "alert", "delivery", "brief",
   "agent", "agent_run", "agent_action", "lead", "task", "invoice", "inbox_message",
   "usage_event", "api_key", "session", "membership",
-  "swarm", "work_item", "swarm_event", "contact", "deal", "activity",
+  "swarm", "work_item", "swarm_event", "contact", "deal", "activity", "agent_task",
 ] as const;
 
 async function deletePrefix(env: Env, prefix: string) {

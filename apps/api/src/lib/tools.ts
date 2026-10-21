@@ -10,6 +10,7 @@ import { proposeEmail } from "./actions";
 import { notifyChannel } from "./delivery";
 import { unseal } from "./crypto";
 import { SWARM_TOOL_DEFS } from "./swarmtools";
+import { ORG_TOOL_DEFS } from "./orgtools";
 import { logActivity } from "./crm";
 import { syncSwarm } from "./swarm";
 import type { ToolDef } from "./llm";
@@ -255,7 +256,7 @@ const BUSINESS: Tool[] = [
   },
 ];
 
-const BUILTIN = new Map([...PUBLIC, ...BUSINESS, ...SWARM_TOOL_DEFS].map((t) => [t.slug, t]));
+const BUILTIN = new Map([...PUBLIC, ...BUSINESS, ...SWARM_TOOL_DEFS, ...ORG_TOOL_DEFS].map((t) => [t.slug, t]));
 
 /* ---------- Developer tools: proxied with a signed request ---------- */
 async function hmacHex(secret: string, msg: string) {

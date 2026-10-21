@@ -70,7 +70,7 @@ describe("spinning up a swarm", () => {
     const r = await createSwarm(env, org.id, org.user, preset("sales-floor")!.blueprint, { preset: "sales-floor" });
     expect(r).toMatchObject({ hired: 3, reused: 1 });
     const agents = raw.prepare("SELECT swarm_key, template, tools FROM agent WHERE swarm_id = ? ORDER BY swarm_key").all(r.id) as any[];
-    expect(agents.map((a) => a.swarm_key)).toEqual(["briefing", "inbox", "outreach", "prospector"]);
+    expect(agents.map((a) => a.swarm_key)).toEqual(["briefing", "inbox", "orchestrator", "outreach", "prospector"]);
     expect(JSON.parse(agents.find((a) => a.swarm_key === "prospector").tools)).toContain("find-companies");
     expect((raw.prepare("SELECT swarm_id FROM agent WHERE id = ?").get(inbox) as any).swarm_id).toBe(r.id);
     const cards = Object.fromEntries((raw.prepare("SELECT ref_id, stage FROM work_item WHERE swarm_id = ?").all(r.id) as any[]).map((c) => [c.ref_id, c.stage]));

@@ -9,10 +9,11 @@ import { Glyph } from "../kit.jsx";
 import { Shell, Loading, Failed, Notice } from "./Live.jsx";
 import { since } from "./Ws.jsx";
 import { useVoice, speakText, stopSpeaking, voiceSupported } from "../voice.js";
+import { OrgView } from "./Org.jsx";
 
 const POLL_MS = 4000;
 const STATE = { idle: "Idle", queued: "Starting", working: "Thinking", tool: "Using a tool", needs_you: "Needs you", failed: "Stopped", paused: "Paused" };
-const TPL_GLYPH = { outreach: "send", inbox: "inbox", "credit-control": "pound", "customer-watch": "watch", "customer-check": "check", "lead-finder": "prospect", research: "search", briefing: "bell", custom: "spark" };
+const TPL_GLYPH = { outreach: "send", inbox: "inbox", "credit-control": "pound", "customer-watch": "watch", "customer-check": "check", "lead-finder": "prospect", research: "search", briefing: "bell", custom: "spark", orchestrator: "org" };
 const fmt = (unit, v) => unit === "pence" ? "£" + Math.round(v / 100).toLocaleString("en-GB") : unit === "days" ? `${v} ${v === 1 ? "day" : "days"}` : Number(v).toLocaleString("en-GB");
 const money = (p) => (p ? "£" + Math.round(p / 100).toLocaleString("en-GB") : null);
 const RHYTHM = { weekdays: "Every weekday", daily: "Every day", weekly: "Every Monday", monthly: "Monthly", on_demand: "When asked", on_event: "When something arrives" };
@@ -241,7 +242,7 @@ export function FloorView({ id }) {
           <span className="fl-sub"><span className={"fl-live" + (sw.status === "paused" ? " is-paused" : "")} aria-hidden="true" />{sw.status === "paused" ? "Paused" : "Live"} · {s.stations.length} agents · updated {Math.max(0, Math.round((Date.now() - polledAt) / 1000))}s ago</span>
         </div>
         <nav className="fl-views" aria-label="Views">
-          {[["floor", "Floor", "floor"], ["board", "Board", "board"], ["companies", "Companies", "building"]].map(([k, t, g]) => (
+          {[["floor", "Floor", "floor"], ["org", "Org", "org"], ["board", "Board", "board"], ["companies", "Companies", "building"]].map(([k, t, g]) => (
             <button key={k} className={view === k ? "is-on" : ""} aria-pressed={view === k} onClick={() => setView(k)}><Glyph name={g} size={16} />{t}</button>
           ))}
         </nav>
@@ -252,10 +253,12 @@ export function FloorView({ id }) {
         )}
       </header>
 
-      <Kpis kpis={s.kpis} usage={s.usage} />
+      {(narrow || view !== "org") && <Kpis kpis={s.kpis} usage={s.usage} />}
 
       {narrow ? (
-        <MobileFloor {...props} view={view} waiting={waiting} decide={decide} reload={load} />
+        <MobileFloor {...props} view={view} waiting={waiting} decide={decide} reload={load} swarmId={sw.id} />
+      ) : view === "org" ? (
+        <div className="fl-body fl-body-org"><OrgView swarmId={sw.id} can={can} onChanged={load} /></div>
       ) : (
         <div className="fl-body">
           <main className="fl-main">
@@ -651,16 +654,17 @@ function StationPanel({ st, s, can, setStatus, reload }) {
 }
 
 /* ---------- Phones: a list, the desk first, the mic within reach ---------- */
-function MobileFloor({ s, fx, can, view, waiting, decide, onStation, onCard, reload }) {
+function MobileFloor({ s, fx, can, view, waiting, decide, onStation, onCard, reload, swarmId }) {
   const [tab, setTab] = useState(waiting ? "desk" : "agents");
   return (
     <div className="mf">
       <nav className="mf-tabs" aria-label="Sections">
-        {[["desk", `Desk${waiting ? ` (${waiting})` : ""}`], ["agents", "Agents"], ["board", "Board"], ["companies", "Companies"]].map(([k, t]) => <button key={k} className={tab === k ? "is-on" : ""} aria-pressed={tab === k} onClick={() => setTab(k)}>{t}</button>)}
+        {[["desk", `Desk${waiting ? ` (${waiting})` : ""}`], ["agents", "Agents"], ["org", "Org"], ["board", "Board"], ["companies", "Companies"]].map(([k, t]) => <button key={k} className={tab === k ? "is-on" : ""} aria-pressed={tab === k} onClick={() => setTab(k)}>{t}</button>)}
       </nav>
       <div className="mf-body">
         {tab === "desk" && <Desk s={s} can={can} decide={decide} onFailed={(r) => navigate("/workspace/runs/" + r.id)} />}
         {tab === "agents" && <ul className="mf-list">{s.stations.map((st) => <li key={st.id}><Station st={st} fx={fx} onClick={() => onStation(st)} /></li>)}</ul>}
+        {tab === "org" && <OrgView swarmId={swarmId} can={can} onChanged={reload} />}
         {tab === "board" && <Board s={s} can={can} onCard={onCard} reload={reload} />}
         {tab === "companies" && <Companies can={can} onOpen={(id) => onCard({ ref_kind: "lead", ref_id: id })} />}
       </div>

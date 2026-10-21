@@ -558,12 +558,12 @@ async function main() {
     const over = await call("POST", "/api/ws/swarms", { blueprint: sw.recruit }, { cookie: hb });
     ok(over.status === 409 && over.json.error.code === "plan_limit", over.text);
     const mine = (await call("GET", "/api/ws/my-agents", undefined, { cookie: hb })).json.agents;
-    ok(mine.length === 4 && mine.every((a) => a.swarm_id === swarm), "only the sales floor's agents exist: " + mine.length);
+    ok(mine.length === 5 && mine.every((a) => a.swarm_id === swarm) && mine.some((a) => a.template === "orchestrator"), "the sales floor's agents and its orchestrator: " + mine.length);
     for (const a of mine) sw[a.name.toLowerCase()] = a.id;
     ok(mine.find((a) => a.template === "custom").role.startsWith("Finds companies"), "custom role hired");
     const f = (await call("GET", "/api/ws/swarms/" + swarm, undefined, { cookie: hb })).json;
-    ok(f.stations.length === 4 && f.kpis.length === 4 && f.blueprint.stages.length === 5 && f.events.some((e) => e.kind === "created") && f.cursor > 0, JSON.stringify(f).slice(0, 300));
-    ok((await call("GET", "/api/ws/swarms", undefined, { cookie: hb })).json.swarms[0].agents === 4, "listed");
+    ok(f.stations.length === 5 && f.kpis.length === 4 && f.blueprint.stages.length === 5 && f.events.some((e) => e.kind === "created") && f.cursor > 0, JSON.stringify(f).slice(0, 300));
+    ok((await call("GET", "/api/ws/swarms", undefined, { cookie: hb })).json.swarms[0].agents === 5, "listed");
   });
 
   await check("the Floor: the prospector finds a company, saves it as a card and hands it to outreach, which wakes", async () => {
@@ -634,6 +634,46 @@ async function main() {
     const f = (await call("GET", "/api/ws/swarms/" + swarm, undefined, { cookie: hb })).json;
     ok(f.items.find((i) => i.id === sw.card.id).stage === "won" && f.kpis.find((k) => k.key === "won_month").value === 1, "the card is won on the Floor");
     ok((await call("POST", "/api/ws/crm/notes", { lead_id: "lead_nope", summary: "x" }, { cookie: hb })).status === 404, "unknown company");
+  });
+
+  await check("org chart: badges and reporting lines saved; the orchestrator assigns work; goals and owner tasks", async () => {
+    const o = (await call("GET", `/api/ws/swarms/${swarm}/org`, undefined, { cookie: hb })).json;
+    ok(o.root && o.agents.length === 5 && o.agents.filter((a) => a.reports_to === o.root).length === 4 && o.limits.agents_used === 4, JSON.stringify(o).slice(0, 300));
+    const bad = await call("PATCH", `/api/ws/swarms/${swarm}/org`, { changes: [{ op: "skill", agent: sw.outreach, value: "planning" }] }, { cookie: hb });
+    ok(bad.status === 409 && /Planning is for the orchestrator and Lead/.test(bad.json.error.message), bad.text);
+    const r = await call("PATCH", `/api/ws/swarms/${swarm}/org`, { changes: [
+      { op: "skill", agent: sw.outreach, value: "registers" },
+      { op: "hire", id: "new-1", role: "analyst", name: "Researcher" },
+      { op: "reports_to", agent: "new-1", value: sw.prospector },
+      { op: "autonomy", agent: sw.inbox, value: "approve_first" },
+    ] }, { cookie: hb });
+    ok(r.status === 200 && r.json.applied.length === 4, r.text);
+    const researcher = r.json.agents.find((a) => a.name === "Researcher");
+    ok(researcher && researcher.reports_to === sw.prospector && r.json.agents.find((a) => a.id === sw.prospector).role === "lead", JSON.stringify(r.json.agents).slice(0, 400));
+    const outRow = (await call("GET", `/api/ws/my-agents/${sw.outreach}`, undefined, { cookie: hb })).json.agent;
+    ok(outRow.template === "custom" && outRow.name === "Outreach", "outreach keeps its name as a custom role");
+    ok((await call("PATCH", `/api/ws/swarms/${swarm}/org`, { changes: [{ op: "role", agent: sw.inbox, value: "writer" }] }, { cookie: false })).status === 401, "needs a session");
+    // The orchestrator plans: one task to a free agent, which runs it and reports back.
+    const run = await waitRun((await call("POST", `/api/ws/my-agents/${o.root}/run`, {}, { cookie: hb })).json.run_id, hb);
+    ok(run.status === "done" && /Assigned/.test(run.summary), JSON.stringify(run));
+    const tasks = await waitFor(async () => { const t = (await call("GET", `/api/ws/swarms/${swarm}/org`, undefined, { cookie: hb })).json.tasks; return t.length && t.every((x) => x.status !== "doing") && t; }, "task settled", 60000);
+    ok(tasks[0].from === "Orchestrator" && tasks[0].status === "done", JSON.stringify(tasks));
+    // Owner task to the new custom role: it reports back with finish-task.
+    const ot = await call("POST", `/api/ws/swarms/${swarm}/tasks`, { agent_id: researcher.id, title: "Who are Peel Street's partners?" }, { cookie: hb });
+    ok(ot.status === 201 && ot.json.run_id, ot.text);
+    await waitRun(ot.json.run_id, hb);
+    const done = (await call("GET", `/api/ws/swarms/${swarm}/org`, undefined, { cookie: hb })).json.tasks.find((t) => t.id === ot.json.task_id);
+    ok(done.status === "done" && done.result === "Done: drafted what was asked." && done.from === "You", JSON.stringify(done));
+    // A goal from the command bar wakes the orchestrator.
+    const g = (await call("POST", `/api/ws/swarms/${swarm}/ask`, { text: "goal: five law firms talking to us by December" }, { cookie: hb })).json;
+    ok(g.type === "instruct" && g.agent.name === "Orchestrator" && g.run_id, JSON.stringify(g));
+    await waitRun(g.run_id, hb);
+    ok((await call("GET", `/api/ws/swarms/${swarm}/org`, undefined, { cookie: hb })).json.swarm.goals.includes("five law firms talking to us by December"), "goal kept");
+    const ev = (await call("GET", `/api/ws/swarms/${swarm}/events`, undefined, { cookie: hb })).json.events;
+    ok(ev.some((e) => e.kind === "org") && ev.some((e) => e.kind === "task") && ev.some((e) => e.kind === "goal"), "org, task and goal events on the Floor");
+    await call("POST", "/api/auth/magic-link", { email: "owner@other.example" }, { cookie: false });
+    const other = await signIn("owner@other.example");
+    ok((await call("GET", `/api/ws/swarms/${swarm}/org`, undefined, { cookie: other })).status === 404, "another business can't see the team");
   });
 
   await check("swarms are private, viewers can't drive them, and removing one removes its agents", async () => {

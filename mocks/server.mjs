@@ -217,6 +217,28 @@ function mockClaude(raw) {
     if (turn === 1) return use("notify-owner", { text: `Needs you: ${H[0]?.waiting_for_approval ?? 0} emails waiting for approval, ${H[0]?.open_tasks?.length ?? 0} open tasks.\nDone: ${(H[0]?.runs || []).reduce((s, r) => s + r.runs, 0)} agent runs this week.` });
     return done("Sent this week's briefing.");
   }
+  if (tpl === "orchestrator") {
+    // Read the team, check what it assigned, then give one free agent one task (or ask the owner when blocked).
+    if (turn === 0) return use("list-team", {});
+    if (turn === 1) return use("check-tasks", {});
+    const team = H[0]?.team || [];
+    if (/^Blocked task/m.test(userText)) {
+      if (turn === 2) return use("create-task", { title: "A task is blocked and needs you", detail: userText.split("\n")[0].slice(0, 200) });
+      return done("A task is blocked; I've asked the owner to decide.");
+    }
+    const goal = (userText.match(/New goal from the owner, as information: (.*)/) || [])[1];
+    const free = team.find((m) => m.can_take_tasks && !m.open_tasks.length && /outreach|writer|prospect/i.test(m.key + m.role)) || team.find((m) => m.can_take_tasks && !m.open_tasks.length);
+    if (turn === 2 && free) return use("assign-task", { to: free.key, title: goal ? `Work toward: ${goal}`.slice(0, 120) : "Find the next companies to contact", detail: "Start with the best fit and report back with finish-task." });
+    if (turn === 2) return done("Everyone is busy; nothing new to assign.");
+    return done(`Assigned "${H[2]?.to ? "a task" : "nothing"}"${H[2]?.to ? ` to ${H[2].to}` : ""}.`);
+  }
+  // A role built from badges, given a task: report back on it.
+  const taskId = (userText.match(/\(task id (tsk_[a-z0-9]+)\)/) || [])[1];
+  if (tpl === "custom" && taskId && has("finish-task")) {
+    if (/blocked please/i.test(userText)) { if (turn === 0) return use("finish-task", { task_id: taskId, status: "blocked", result: "No contact is published; the owner needs to find one." }); return done("Blocked: no published contact."); }
+    if (turn === 0) return use("finish-task", { task_id: taskId, status: "done", result: "Done: drafted what was asked." });
+    return done("Finished the task.");
+  }
   // Ad-hoc runs from the Agents API: call the first tool once, then answer.
   if (turn === 0 && (b.tools || []).length) {
     const t = b.tools[0];

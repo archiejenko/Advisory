@@ -6,6 +6,7 @@ import { HttpError } from "./http";
 import { claude, modelCost, type Msg, type Block } from "./llm";
 import { accessError, orgAccess, trialOver, TRIAL_DAYS } from "./billing";
 import { specFor, emit, swarmContext, syncSwarm } from "./swarm";
+import { settleTasksForRun } from "./orgbase";
 import type { Blueprint } from "../../../../packages/core/swarms";
 import { getTool, runTool, toolDefs, type Tool, type ToolCtx } from "./tools";
 import { notifyChannel } from "./delivery";
@@ -68,6 +69,8 @@ export type HireInput = {
   template: string; name?: string; brief?: string; rhythm?: string; run_hour?: number; autonomy?: string; channel_id?: string | null; settings?: Record<string, unknown>;
   /** Swarm membership, and a custom role's standing orders and tools (template "custom"). */
   swarm_id?: string; swarm_key?: string; role?: string; instructions?: string; tools?: string[];
+  /** The org chart: role and skills (badges), and who it reports to. */
+  badges?: { role: string; skills: string[] }; reports_to?: string | null;
 };
 
 export async function hireAgent(env: Env, orgId: string, userId: string, h: HireInput) {
@@ -82,16 +85,22 @@ export async function hireAgent(env: Env, orgId: string, userId: string, h: Hire
   const { org, problem } = await orgAccess(env, orgId);
   if (problem) throw accessError(problem);
   const plan = PLANS[org.plan] || PLANS.trial;
-  const count = (await one<any>(env, "SELECT COUNT(*) AS n FROM agent WHERE org_id = ?", orgId)).n as number;
-  if (count >= plan.agents) throw new HttpError(409, "plan_limit", `Your ${plan.name} plan includes ${plan.agents} ${plan.agents === 1 ? "agent" : "agents"}. Move to a bigger plan to hire more.`);
+  if (t.key === "orchestrator") {
+    if (!h.swarm_id) throw new HttpError(400, "invalid_request", "An orchestrator leads a swarm; it's added when the swarm is set up.");
+    if (await one(env, "SELECT id FROM agent WHERE swarm_id = ? AND template = 'orchestrator'", h.swarm_id)) throw new HttpError(409, "already_hired", "This swarm already has an orchestrator.");
+  }
+  // The orchestrator comes with every swarm and doesn't use one of the plan's agents.
+  const count = (await one<any>(env, "SELECT COUNT(*) AS n FROM agent WHERE org_id = ? AND template != 'orchestrator'", orgId)).n as number;
+  if (t.key !== "orchestrator" && count >= plan.agents) throw new HttpError(409, "plan_limit", `Your ${plan.name} plan includes ${plan.agents} ${plan.agents === 1 ? "agent" : "agents"}. Move to a bigger plan to hire more.`);
   const rhythm = h.rhythm && ["weekdays", "daily", "weekly", "monthly", "on_demand", "on_event"].includes(h.rhythm) ? h.rhythm : t.rhythm;
   const hour = Number.isInteger(h.run_hour) && h.run_hour! >= 0 && h.run_hour! <= 23 ? h.run_hour! : 8;
   const id = newId("agt");
-  await run(env, `INSERT INTO agent (id, org_id, template, name, brief, settings, rhythm, run_hour, autonomy, channel_id, next_run_at, created_by, created_at, swarm_id, swarm_key, role, instructions, tools) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  await run(env, `INSERT INTO agent (id, org_id, template, name, brief, settings, rhythm, run_hour, autonomy, channel_id, next_run_at, created_by, created_at, swarm_id, swarm_key, role, instructions, tools, badges, reports_to) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     id, orgId, t.key, (h.name || t.name).slice(0, 80), (h.brief || t.brief({ name: org.name, ...JSON.parse(org.profile || "{}") })).slice(0, 4000),
     JSON.stringify(h.settings || {}), rhythm, hour, ["approve_all", "approve_first", "auto"].includes(h.autonomy || "") ? h.autonomy : "approve_all",
     h.channel_id || null, t.engine === "llm" ? nextRunAt(rhythm, hour) : null, userId, nowIso(),
-    h.swarm_id ?? null, h.swarm_key ?? null, h.role?.slice(0, 120) ?? null, custom ? h.instructions!.slice(0, 4000) : null, custom ? JSON.stringify(h.tools || []) : null);
+    h.swarm_id ?? null, h.swarm_key ?? null, h.role?.slice(0, 120) ?? null, custom ? h.instructions!.slice(0, 4000) : null, custom ? JSON.stringify(h.tools || []) : null,
+    h.badges ? JSON.stringify(h.badges) : null, h.reports_to ?? null);
   // The register agents keep their own engines: switching one on here switches it on there.
   const engineKey = { watch: "watch", check: "check", prospect: "prospect" }[t.engine as string];
   if (engineKey) await run(env, "UPDATE agent_config SET on_ = 1, channel_id = COALESCE(?, channel_id) WHERE org_id = ? AND agent = ?", h.channel_id || null, orgId, engineKey);
@@ -246,8 +255,12 @@ export async function runAgent(env: Env, runId: string) {
   if (agent?.swarm_id) {
     const sw = await one<any>(env, "SELECT blueprint FROM swarm WHERE id = ?", agent.swarm_id);
     if (sw) {
-      const names = Object.fromEntries((await all<any>(env, "SELECT swarm_key, name FROM agent WHERE swarm_id = ?", agent.swarm_id)).map((x) => [x.swarm_key, x.name]));
-      swarmLines = swarmContext(JSON.parse(sw.blueprint) as Blueprint, agent.swarm_key, names);
+      const mates = await all<any>(env, "SELECT id, swarm_key, name, template, reports_to FROM agent WHERE swarm_id = ?", agent.swarm_id);
+      const names = Object.fromEntries(mates.map((x) => [x.swarm_key, x.name]));
+      const orch = mates.find((x) => x.template === "orchestrator");
+      const boss = agent.template === "orchestrator" ? null : mates.find((x) => x.id === agent.reports_to) || orch;
+      const team = agent.template === "orchestrator" ? mates.filter((x) => x.id !== agent.id) : mates.filter((x) => x.reports_to === agent.id);
+      swarmLines = swarmContext(JSON.parse(sw.blueprint) as Blueprint, agent.swarm_key, names, { boss: boss ? `${boss.name} (${boss.swarm_key})` : null, team: team.map((x) => `${x.swarm_key} (${x.name})`) });
     }
     await swarmEv("run_started", `${agent.name} started${r.trigger === "event" ? " on a handoff" : r.trigger === "manual" ? " (asked)" : ""}`);
   }
@@ -269,6 +282,7 @@ export async function runAgent(env: Env, runId: string) {
     const waiting = (await one<any>(env, "SELECT COUNT(*) AS n FROM agent_action WHERE run_id = ? AND status = 'proposed'", runId)).n as number;
     await settleRun(env, org.id, runId, out, { status: waiting ? "waiting" : "done", summary: out.text.slice(0, 4000), transcript_key: key });
     await run(env, "UPDATE agent SET last_run_at = ? WHERE id = ?", nowIso(), agent.id);
+    if (agent.swarm_id) await settleTasksForRun(env, org.id, runId, waiting ? "waiting" : "done", out.text);
     if (agent.swarm_id) {
       await swarmEv("run_done", out.text ? out.text.split("\n")[0].slice(0, 200) : `${agent.name} finished`, { waiting });
       try { await syncSwarm(env, r.org_id, agent.swarm_id, { force: true }); } catch (e) { console.error("sync after run failed", e); }
@@ -279,6 +293,7 @@ export async function runAgent(env: Env, runId: string) {
     const key = out.steps ? await saveTranscript(env, r.org_id, runId, out) : null;
     await settleRun(env, r.org_id, runId, out, { status: "failed", summary: out.text ? out.text.slice(0, 4000) : null, error: String(e.message || e).slice(0, 500), transcript_key: key });
     await swarmEv("run_failed", `${agent?.name || "Agent"} stopped: ${String(e.message || e).slice(0, 160)}`);
+    if (agent?.swarm_id) { try { await settleTasksForRun(env, r.org_id, runId, "failed", String(e.message || e)); } catch (err) { console.error("task settle failed", err); } }
     console.error("agent run failed", runId, e);
     return "failed";
   }

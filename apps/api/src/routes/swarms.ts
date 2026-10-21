@@ -9,7 +9,8 @@ import { body, bad, notFound, HttpError } from "../lib/http";
 import { requireRole, type Vars } from "./auth";
 import { setAgentStatus } from "../lib/agents";
 import { floorState, loadSwarm, syncSwarm, syncOrgSwarms, emit } from "../lib/swarm";
-import { createSwarm, removeSwarm, planBlueprint, previewFor, ask, briefText } from "../lib/engine";
+import { createSwarm, removeSwarm, planBlueprint, previewFor, ask, briefText, setGoal } from "../lib/engine";
+import { orgState, applyOrg, ownerTask } from "../lib/org";
 import { companies, companyView, saveContact, saveDeal, logActivity } from "../lib/crm";
 import { transcribe, speak, voiceAvailable } from "../lib/voice";
 import { hit } from "../lib/limits";
@@ -91,6 +92,40 @@ export function registerSwarmRoutes(ws: App) {
   ws.post("/swarms/:id/ask", manager, async (c) => {
     const b = await body(c, z.object({ text: z.string().min(1).max(1000), voice: z.boolean().optional() }));
     return c.json(await ask(c.env, c.get("orgId"), c.req.param("id")!, b.text, { userId: c.get("user").id, email: c.get("user").email, voice: b.voice }));
+  });
+
+  /* ---------- The org chart ---------- */
+  ws.get("/swarms/:id/org", async (c) => c.json(await orgState(c.env, c.get("orgId"), c.req.param("id")!)));
+
+  const Id = z.string().min(1).max(60);
+  const Change = z.union([
+    z.object({ op: z.enum(["role", "unskill", "autonomy", "rhythm", "reports_to"]), agent: Id, value: z.string().max(40) }),
+    z.object({ op: z.literal("skill"), agent: Id, value: z.string().max(40), from: Id.optional() }),
+    z.object({ op: z.literal("hire"), id: Id, role: z.string().max(40), name: z.string().min(1).max(40).optional(), reports_to: Id.optional() }),
+    z.object({ op: z.literal("remove"), agent: Id }),
+  ]);
+  ws.patch("/swarms/:id/org", manager, async (c) => {
+    const b = await body(c, z.object({ changes: z.array(Change).min(1).max(40) }));
+    return c.json(await applyOrg(c.env, c.get("orgId"), c.req.param("id")!, c.get("user"), b.changes as any));
+  });
+
+  ws.post("/swarms/:id/goals", manager, async (c) => {
+    const b = await body(c, z.object({ text: z.string().min(3).max(200) }));
+    return c.json(await setGoal(c.env, c.get("orgId"), c.req.param("id")!, b.text, { userId: c.get("user").id, email: c.get("user").email }));
+  });
+
+  ws.post("/swarms/:id/tasks", manager, async (c) => {
+    const b = await body(c, z.object({ agent_id: Id, title: z.string().min(2).max(200), detail: z.string().max(1500).optional() }));
+    return c.json(await ownerTask(c.env, c.get("orgId"), c.req.param("id")!, c.get("user"), b.agent_id, b.title, b.detail), 201);
+  });
+
+  ws.patch("/tasks/:id", manager, async (c) => {
+    const b = await body(c, z.object({ status: z.enum(["done", "dropped"]) }));
+    const t = await c.get("db").one("SELECT * FROM agent_task WHERE org_id = ?1 AND id = ?2", c.req.param("id"));
+    if (!t) throw notFound("Task");
+    await c.get("db").run("UPDATE agent_task SET status = ?3, result = COALESCE(result, ?4), updated_at = ?5 WHERE org_id = ?1 AND id = ?2", t.id, b.status, b.status === "done" ? "Marked done by you." : "Dropped by you.", nowIso());
+    await emit(c.env, { orgId: c.get("orgId"), swarmId: t.swarm_id, agentId: t.agent_id, kind: b.status === "done" ? "task_done" : "task_dropped", summary: `You ${b.status === "done" ? "closed" : "dropped"}: ${t.title}` });
+    return c.json({ ok: true });
   });
 
   ws.post("/swarms/:id/brief", async (c) => c.json({ text: await briefText(c.env, c.get("orgId"), c.req.param("id")!) }));

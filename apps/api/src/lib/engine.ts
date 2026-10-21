@@ -2,7 +2,7 @@
 // and the command bar (typed or spoken) is routed to the right agent.
 import { newId, nowIso } from "../../../../packages/core/util";
 import { TEMPLATES, PLANS } from "../../../../packages/core/templates";
-import { PRESETS, KPIS, CUSTOM_TOOLS, SWARM_TOOLS, estimateActions, nearestPreset, type Blueprint } from "../../../../packages/core/swarms";
+import { PRESETS, KPIS, CUSTOM_TOOLS, SWARM_TOOLS, estimateActions, nearestPreset, withOrchestrator, type Blueprint } from "../../../../packages/core/swarms";
 import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
 import { claude, modelCost, type Msg } from "./llm";
@@ -11,6 +11,7 @@ import { orgAccess, accessError } from "./billing";
 import { checkBlueprint, emit, syncSwarm, specFor, loadSwarm, kpi } from "./swarm";
 import { builtin } from "./tools";
 import { hit } from "./limits";
+import { defaultBadges, PLANNING_TOOLS } from "../../../../packages/core/badges";
 
 /* ---------- Creating a swarm ---------- */
 
@@ -27,15 +28,17 @@ async function adoptions(env: Env, orgId: string, bp: Blueprint) {
 }
 
 /** What a blueprint will cost and whether it fits the plan, for the preview. */
-export async function previewFor(env: Env, orgId: string, bp: Blueprint) {
+export async function previewFor(env: Env, orgId: string, raw: Blueprint) {
+  const bp = withOrchestrator(raw);
   const org = await one<any>(env, "SELECT plan FROM org WHERE id = ?", orgId);
   const plan = PLANS[org?.plan || "trial"] || PLANS.trial;
-  const existing = Number((await one<any>(env, "SELECT COUNT(*) AS n FROM agent WHERE org_id = ?", orgId))?.n || 0);
+  const existing = Number((await one<any>(env, "SELECT COUNT(*) AS n FROM agent WHERE org_id = ? AND template != 'orchestrator'", orgId))?.n || 0);
   const adopt = await adoptions(env, orgId, bp);
-  const hires = bp.agents.length - Object.keys(adopt).length;
+  const counted = bp.agents.filter((a) => a.template !== "orchestrator");
+  const hires = counted.length - Object.keys(adopt).length;
   const actions = estimateActions(bp);
   return {
-    agents: bp.agents.length, reuses: Object.entries(adopt).map(([key, a]) => ({ key, agent: a.name })), new_agents: hires,
+    agents: counted.length, orchestrator: true, reuses: Object.entries(adopt).map(([key, a]) => ({ key, agent: a.name })), new_agents: hires,
     plan: plan.name, plan_agents: plan.agents, agents_after: existing + hires, fits: existing + hires <= plan.agents,
     actions_a_month: actions, allowance: plan.actions, within_allowance: actions <= plan.actions,
     needs: bp.needs,
@@ -45,7 +48,7 @@ export async function previewFor(env: Env, orgId: string, bp: Blueprint) {
 export async function createSwarm(env: Env, orgId: string, userId: string, raw: unknown, opts: { preset?: string | null; description?: string | null; monthly_cap?: number | null } = {}) {
   const checked = checkBlueprint(raw);
   if (!checked.ok) throw new HttpError(400, "invalid_blueprint", "This swarm's blueprint has problems: " + checked.errors.join("; "), { errors: checked.errors });
-  const bp = checked.blueprint;
+  const bp = withOrchestrator(checked.blueprint);
   if (bp.needs.length) throw new HttpError(409, "needs_connection", `This swarm needs ${bp.needs.join(" and ")} before it can start.`);
   const { problem } = await orgAccess(env, orgId);
   if (problem) throw accessError(problem);
@@ -66,6 +69,17 @@ export async function createSwarm(env: Env, orgId: string, userId: string, raw: 
         hired.push(await hireAgent(env, orgId, userId, { template: a.template, name: a.name, rhythm: a.rhythm, run_hour: a.run_hour, swarm_id: id, swarm_key: a.key, role: a.role, instructions: a.instructions, tools: a.tools }));
       }
     }
+    // Reporting lines: by key in the blueprint; everyone else reports to the orchestrator (stored as null).
+    const ids = Object.fromEntries((await all<any>(env, "SELECT id, swarm_key FROM agent WHERE swarm_id = ? AND org_id = ?", id, orgId)).map((x) => [x.swarm_key, x.id]));
+    for (const a of bp.agents) {
+      const boss = a.reports_to && bp.agents.find((x) => x.key === a.reports_to);
+      // Only a custom role can become a Lead here (it needs the planning tools); others stay under the orchestrator.
+      if (boss && boss.template === "custom" && ids[a.key] && ids[boss.key]) {
+        await run(env, "UPDATE agent SET reports_to = ? WHERE id = ? AND org_id = ?", ids[boss.key], ids[a.key], orgId);
+        const b = defaultBadges({ template: "custom", tools: boss.tools || [], engine: "llm" });
+        await run(env, "UPDATE agent SET badges = ?, tools = ? WHERE id = ? AND org_id = ?", JSON.stringify({ role: "lead", skills: [...new Set([...b.skills, "planning"])] }), JSON.stringify([...new Set([...(boss.tools || []), ...PLANNING_TOOLS])]), ids[boss.key], orgId);
+      }
+    }
   } catch (e) {
     // Undo what was done, so a failure leaves no half-built swarm.
     for (const h of hired) await run(env, "DELETE FROM agent WHERE id = ? AND org_id = ?", h, orgId);
@@ -76,7 +90,9 @@ export async function createSwarm(env: Env, orgId: string, userId: string, raw: 
   await emit(env, { orgId, swarmId: id, kind: "created", summary: `${bp.name} spun up with ${bp.agents.length} agents` });
   await syncSwarm(env, orgId, id, { force: true, quiet: true });
   await audit(env, orgId, userId, "swarm_created", id, { preset: opts.preset ?? null, agents: bp.agents.length, reused: adopted.length });
-  return { id, hired: hired.length, reused: adopted.length };
+  // The orchestrator comes with every swarm; it isn't counted against the plan.
+  const counted = (await all<any>(env, "SELECT template FROM agent WHERE id IN (" + (hired.map(() => "?").join(",") || "''") + ")", ...hired)).filter((x) => x.template !== "orchestrator").length;
+  return { id, hired: counted, reused: adopted.length, orchestrator: true };
 }
 
 /** Remove a swarm. Its agents are paused and removed; agents it reused go back to working on their own. */
@@ -91,7 +107,7 @@ export async function removeSwarm(env: Env, orgId: string, swarmId: string, user
       await run(env, "DELETE FROM agent WHERE id = ? AND org_id = ?", a.id, orgId);
     } else await run(env, "UPDATE agent SET swarm_id = NULL, swarm_key = NULL, role = NULL WHERE id = ? AND org_id = ?", a.id, orgId);
   }
-  await env.DB.batch(["work_item", "swarm_event"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE swarm_id = ? AND org_id = ?`).bind(swarmId, orgId)));
+  await env.DB.batch(["work_item", "swarm_event", "agent_task"].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE swarm_id = ? AND org_id = ?`).bind(swarmId, orgId)));
   await run(env, "DELETE FROM swarm WHERE id = ? AND org_id = ?", swarmId, orgId);
   await audit(env, orgId, userId, "swarm_removed", swarmId);
 }
@@ -109,7 +125,7 @@ function plannerSystem(plan: { name: string; agents: number }, existing: number)
 You design a swarm of AI agents that runs part of a small UK business inside Agent House. Reply with ONE JSON object and nothing else.
 
 The JSON has: name, sector, goals (up to 5 short strings), agents, stages, handoffs, kpis, skin ("floor", "calm" or "terminal"), needs.
-- agents: 2 to ${Math.max(2, Math.min(6, plan.agents - existing))} agents. Each: key (lowercase-hyphen), name (2 words max), role (one line), template, rhythm (weekdays, daily, weekly, monthly, on_demand, on_event), optional run_hour.
+- agents: 2 to ${Math.max(2, Math.min(6, plan.agents - existing))} agents. Every swarm gets an orchestrator at the top automatically: don't add one. Optional reports_to: another agent's key, to put a Lead over a small team (at most two levels). Each: key (lowercase-hyphen), name (2 words max), role (one line), template, rhythm (weekdays, daily, weekly, monthly, on_demand, on_event), optional run_hour.
   template is one of these catalogue agents, used as-is:
 ${tpl}
   or "custom" for a role the catalogue doesn't have: then also give instructions (numbered standing orders, at least 3 steps, under 1200 characters) and tools (only from the list below).
@@ -186,6 +202,7 @@ export async function ask(env: Env, orgId: string, swarmId: string, text: string
   const agents = await all<any>(env, "SELECT id, name, swarm_key, template, tools, instructions, swarm_id, status, role FROM agent WHERE swarm_id = ? AND org_id = ?", swarmId, orgId);
   await emit(env, { orgId, swarmId, kind: "ask", summary: `${by.voice ? "You said" : "You asked"}: ${q.slice(0, 200)}` });
 
+  let m: RegExpMatchArray | null;
   const instruct = async (a: any, input: string): Promise<AskResult> => {
     const spec = specFor(a);
     if (!spec || spec.engine !== "llm") return { type: "answer", say: `${a.name} works from the registers on its own schedule, so it can't take instructions.` };
@@ -195,8 +212,8 @@ export async function ask(env: Env, orgId: string, swarmId: string, text: string
   };
 
   // Fast paths that need no model call.
-  let m: RegExpMatchArray | null;
   if (/^(brief me|briefing|what('?s| has) (happened|changed)|catch me up)\b/i.test(q)) return { type: "brief", say: await briefText(env, orgId, swarmId) };
+  if ((m = q.match(/^\/?(?:new\s+)?goal\s*[:\-]?\s+(.{3,})$/is))) return setGoal(env, orgId, swarmId, m[1], by);
   if ((m = q.match(/^\/?(pause|resume)\s+(.+)$/i))) {
     const a = find(agents, m[2]);
     if (!a) return { type: "answer", say: `There's no agent called ${m[2]} in this swarm.` };
@@ -235,6 +252,23 @@ Recent: ${recent.map((r) => r.summary).join(" | ")}`;
     if (a) return { type: "change", say: `${j.action === "pause" ? "Pause" : "Resume"} ${a.name}? Confirm on screen.`, change: { action: j.action, agent_id: a.id, agent: a.name } };
   }
   return { type: "answer", say: String(j.answer || "I couldn't work out which agent should do that. Try starting with an agent's name, like @outreach.").slice(0, 600) };
+}
+
+/* ---------- Goals ---------- */
+/** A new goal for the swarm: kept on the blueprint (the latest 5) and handed to the orchestrator to plan. */
+export async function setGoal(env: Env, orgId: string, swarmId: string, text: string, by: { userId: string; email: string }): Promise<AskResult> {
+  const s = await loadSwarm(env, orgId, swarmId);
+  const goal = text.trim().replace(/\s+/g, " ").slice(0, 120);
+  if (goal.length < 3) throw new HttpError(400, "invalid_request", "Say what the goal is.");
+  const goals = [...s.blueprint.goals.filter((g) => g.toLowerCase() !== goal.toLowerCase()), goal].slice(-5);
+  await run(env, "UPDATE swarm SET blueprint = ? WHERE id = ? AND org_id = ?", JSON.stringify({ ...s.blueprint, goals }), swarmId, orgId);
+  await emit(env, { orgId, swarmId, kind: "goal", summary: `New goal: ${goal}` });
+  await audit(env, orgId, by.userId, "swarm_goal", swarmId, { goal });
+  const o = await one<any>(env, "SELECT id, name, status FROM agent WHERE swarm_id = ? AND org_id = ? AND template = 'orchestrator'", swarmId, orgId);
+  if (!o) return { type: "answer", say: `Goal saved. This swarm has no orchestrator yet; add one on the Org tab to plan it.` };
+  if (o.status !== "running") return { type: "answer", say: `Goal saved. ${o.name} is paused; resume it to plan the work.` };
+  const runId = await startRun(env, orgId, o.id, "manual", `New goal from the owner, as information: ${goal}\nPlan the work for it now.`);
+  return { type: "instruct", say: `Goal saved. ${o.name} is planning the work.`, run_id: runId, agent: { id: o.id, name: o.name } };
 }
 
 /* ---------- The brief ---------- */

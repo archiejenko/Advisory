@@ -19,6 +19,7 @@ export type BlueprintAgent = {
   tools?: string[];            // custom only: tool slugs from the registry
   rhythm: Rhythm;
   run_hour?: number;
+  reports_to?: string;         // another agent's key; none = reports to the orchestrator
 };
 export type BlueprintStage = { key: string; name: string; group?: string; agent: string; rule?: StageRule; done?: boolean };
 export type Blueprint = {
@@ -49,7 +50,7 @@ export const KPIS: Record<string, { label: string; unit: "count" | "pence" | "da
 };
 
 /** Tools every swarm agent gets on top of its own: the work board, handoffs and the CRM. */
-export const SWARM_TOOLS = ["list-work", "track-work", "hand-off", "save-contact", "update-deal", "log-activity"];
+export const SWARM_TOOLS = ["list-work", "track-work", "hand-off", "save-contact", "update-deal", "log-activity", "finish-task"];
 
 /** Business-side tools a generated custom role may be given. */
 export const CUSTOM_TOOLS = [
@@ -182,4 +183,10 @@ export function nearestPreset(description: string): Preset {
 /** Expected actions a month for a blueprint, for the preview. */
 export function estimateActions(b: Pick<Blueprint, "agents">) {
   return b.agents.reduce((n, a) => n + RUNS_A_MONTH[a.rhythm] * ACTIONS_PER_RUN, 0);
+}
+
+/** Every swarm is led by an orchestrator. Blueprints without one get this one at the top. */
+export const ORCHESTRATOR_AGENT: BlueprintAgent = { key: "orchestrator", name: "Orchestrator", role: "Breaks goals into tasks, assigns them and checks they finish", template: "orchestrator", rhythm: "weekdays", run_hour: 8 };
+export function withOrchestrator(b: Blueprint): Blueprint {
+  return b.agents.some((a) => a.template === "orchestrator") ? b : { ...b, agents: [ORCHESTRATOR_AGENT, ...b.agents] };
 }

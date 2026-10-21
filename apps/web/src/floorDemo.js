@@ -1,7 +1,8 @@
 // The demo Floor: a simulated swarm for Brightwork Cleaning, answered from memory. Each poll moves the simulation
 // on a step: agents pick up work, call tools, hand cards on and draft emails for the desk. Approving an email in the
 // demo moves its lead, exactly as it would for real, because cards take their stage from the record.
-import { PRESETS, preset, stageFor, nearestPreset, estimateActions, KPIS } from "../../../packages/core/swarms.ts";
+import { PRESETS, preset, stageFor, nearestPreset, estimateActions, KPIS, withOrchestrator } from "../../../packages/core/swarms.ts";
+import { applyOrgChanges, defaultBadges, toolsFor, role as roleOf } from "../../../packages/core/badges.ts";
 import { PLANS } from "../../../packages/core/templates.ts";
 
 const SIM = { swarms: [], seq: 1000 };
@@ -20,6 +21,7 @@ const TOOLS = {
   briefing: ["recent-activity", "notify-owner"],
   credit: ["list-invoices", "propose-email", "log-activity"],
   watch: ["uk-check"],
+  orchestrator: ["list-team", "check-tasks", "assign-task"],
 };
 
 function agentFor(s, a) {
@@ -35,9 +37,22 @@ function agentFor(s, a) {
 
 function createSwarm(s, key, name) {
   const p = preset(key);
-  const sw = { id: "swm_demo" + (SIM.seq++), name: name || p.blueprint.name, preset: key, bp: p.blueprint, status: "running", created_at: now(), events: [], stages: {}, sim: {}, last_brief_at: null };
-  sw.agents = p.blueprint.agents.map((a) => ({ ...agentFor(s, a), swarm_id: sw.id }));
+  const bp = withOrchestrator(JSON.parse(JSON.stringify(p.blueprint)));
+  const sw = { id: "swm_demo" + (SIM.seq++), name: name || bp.name, preset: key, bp, status: "running", created_at: now(), events: [], stages: {}, sim: {}, last_brief_at: null, tasks: [] };
+  sw.agents = bp.agents.map((a) => ({ ...agentFor(s, a), swarm_id: sw.id }));
   for (const a of sw.agents) { const real = s.agents.find((x) => x.id === a.id); if (real) real.swarm_id = sw.id; }
+  const root = sw.agents.find((a) => a.template === "orchestrator");
+  for (const a of sw.agents) {
+    const b = defaultBadges({ template: a.template, tools: bp.agents.find((x) => x.key === a.swarm_key)?.tools || [], engine: a.template === "customer-watch" ? "watch" : "llm" });
+    Object.assign(a, { badge_role: b.role, skills: b.skills, reports_to: a === root ? null : root?.id || null, locked: a.template === "customer-watch" });
+  }
+  const by = (k) => agentOf(sw, k);
+  const task = (k, title, status, from, mins) => by(k) && sw.tasks.push({ id: "tsk_d" + (SIM.seq++), agent_id: by(k).id, assigned_by: from === "You" ? "owner" : root?.id, from, title, status, result: status === "done" ? "Done: drafted and sent for approval." : null, created_at: ago(mins * 60000), updated_at: ago(mins * 60000) });
+  task("prospector", "Find law firms in M2", "doing", "Orchestrator", 20);
+  task("outreach", "Follow up Peel Street Accountants", "todo", "Orchestrator", 35);
+  task("inbox", "Reply to the quote request from Salford Media", "done", "You", 90);
+  task("credit", "Chase INV-1047", "doing", "Orchestrator", 15);
+  if (!bp.goals.length) bp.goals = ["Get paid on time"];
   SIM.swarms.unshift(sw);
   event(sw, { kind: "created", summary: `${sw.name} spun up with ${sw.agents.length} agents` });
   derive(s, sw, true);
@@ -94,6 +109,18 @@ function tick(s, sw) {
 
 function finish(s, sw, a) {
   const k = a.swarm_key;
+  const mine = (sw.tasks || []).find((t) => t.agent_id === a.id && t.status === "doing");
+  if (mine) { mine.status = "done"; mine.result = "Done."; mine.updated_at = now(); event(sw, { kind: "task_done", agent_id: a.id, summary: `${a.name} finished: ${mine.title}` }); }
+  if (a.template === "orchestrator") {
+    const free = sw.agents.filter((x) => x !== a && !x.locked && x.status !== "paused" && !sw.tasks.some((t) => t.agent_id === x.id && ["todo", "doing"].includes(t.status)));
+    const to = pick(free.length ? free : [null]);
+    if (!to) return event(sw, { kind: "run_done", agent_id: a.id, summary: "Everyone is busy; nothing new to assign" });
+    const title = pick({ prospector: ["Find dental practices in M3", "Qualify two architects in Ancoats"], outreach: ["Write to the newest qualified lead", "Follow up last week's emails"], inbox: ["Clear the inbox before noon"], credit: ["Chase anything over 30 days"], briefing: ["Draft Monday's note"] }[to.swarm_key] || ["Take the next most useful step"]);
+    sw.tasks.unshift({ id: "tsk_d" + (SIM.seq++), agent_id: to.id, assigned_by: a.id, from: a.name, title, status: "doing", result: null, created_at: now(), updated_at: now() });
+    event(sw, { kind: "task", agent_id: a.id, summary: `${a.name} gave ${to.name}: ${title}`, detail: { from_agent: a.id, to_agent: to.id } });
+    sw.sim[to.id] = { state: "working", left: 2 + Math.floor(Math.random() * 2) };
+    return;
+  }
   if (k === "prospector") {
     const fresh = NEW_COMPANIES.find(([c]) => !s.leads.some((l) => l.company === c));
     if (!fresh) return event(sw, { kind: "run_done", agent_id: a.id, summary: "No new companies matched today" });
@@ -173,10 +200,25 @@ function brief(s, sw) {
   return `Since your last brief, your agents found ${s.leads.filter((l) => l.created_at >= ago(864e5)).length} new leads and moved ${sw.events.filter((e) => e.kind === "moved" || e.kind === "handoff").length} cards on. ${waiting ? `${waiting} emails are waiting for your approval.` : "Nothing is waiting for your approval."} New leads this week: ${kpi(s, "new_leads_week")}.`;
 }
 
+function orgOf(s, sw) {
+  const used = s.agents.filter((a) => a.template !== "orchestrator").length;
+  const stagesOf = (a) => sw.bp.stages.filter((x) => x.agent === a.swarm_key).map((x) => x.name);
+  return {
+    swarm: { id: sw.id, name: sw.name, goals: sw.bp.goals, skin: sw.bp.skin },
+    root: sw.agents.find((a) => a.template === "orchestrator")?.id || null,
+    agents: sw.agents.map((a) => {
+      const real = s.agents.find((x) => x.id === a.id) || a;
+      return { id: a.id, key: a.swarm_key, name: a.name, template: a.template, engine: a.locked ? "watch" : "llm", role: a.badge_role, skills: a.skills, autonomy: real.autonomy || "approve_all", rhythm: a.rhythm, reports_to: a.reports_to, locked: !!a.locked, stages: stagesOf(a), status: real.status || "running", tools: a.locked ? 0 : toolsFor(a.badge_role, a.skills).length + 7 };
+    }),
+    tasks: sw.tasks,
+    limits: { agents_used: used, agents_allowed: (PLANS[s.org.plan] || PLANS.trial).agents + 4, plan: (PLANS[s.org.plan] || PLANS.trial).name },
+  };
+}
+
 const previewOf = (s, bp) => {
   const reuse = bp.agents.filter((a) => a.template !== "custom" && s.agents.some((x) => x.template === a.template && !x.swarm_id)).length;
   const after = s.agents.length + bp.agents.length - reuse, plan = PLANS[s.org.plan] || PLANS.trial, actions = estimateActions(bp);
-  return { agents: bp.agents.length, reuses: [], new_agents: bp.agents.length - reuse, plan: plan.name, plan_agents: plan.agents + 4, agents_after: after, fits: true, actions_a_month: actions, allowance: plan.actions, within_allowance: actions <= plan.actions, needs: bp.needs };
+  return { agents: bp.agents.length, orchestrator: true, reuses: [], new_agents: bp.agents.length - reuse, plan: plan.name, plan_agents: plan.agents + 4, agents_after: after, fits: true, actions_a_month: actions, allowance: plan.actions, within_allowance: actions <= plan.actions, needs: bp.needs };
 };
 
 /** Answer a Floor request in the demo, or return undefined for paths that aren't the Floor's. */
@@ -203,11 +245,52 @@ export function floorDemo(method, p, q, body, s, fail) {
     if (body?.status) { sw.status = body.status; for (const a of sw.agents) { const r = s.agents.find((x) => x.id === a.id); if (r) r.status = body.status; } event(sw, { kind: "ask", summary: body.status === "paused" ? "You paused the swarm" : "You resumed the swarm" }); }
     return { ok: true };
   }
+  if (method === "GET" && (m = p.match(/^\/swarms\/([^/]+)\/org$/))) return orgOf(s, find(m[1]));
+  if (method === "PATCH" && (m = p.match(/^\/swarms\/([^/]+)\/org$/))) {
+    const sw = find(m[1]), before = orgOf(s, sw);
+    const r = applyOrgChanges(before.agents, body?.changes || [], before.limits);
+    if (!r.ok) fail(409, r.error);
+    const ids = {};
+    for (const a of r.agents) {
+      let ag = sw.agents.find((x) => x.id === a.id);
+      if (!ag) {
+        const role = roleOf(a.role);
+        ag = { id: "agt_d" + (SIM.seq++), template: a.role === "orchestrator" ? "orchestrator" : "custom", name: a.name, status: "running", rhythm: a.rhythm, autonomy: a.autonomy, created_at: now(), engine: "llm", glyph: "spark", category: "Run", settings: {}, monthly_cap: 300, brief: role.about, swarm_id: sw.id, swarm_key: role.key + "-" + SIM.seq, role: role.about };
+        ids[a.id] = ag.id; s.agents.push(ag); sw.agents.push(ag);
+      }
+      const real = s.agents.find((x) => x.id === ag.id);
+      Object.assign(ag, { badge_role: a.role, skills: a.skills, rhythm: a.rhythm, name: a.name });
+      if (real) real.autonomy = a.autonomy;
+    }
+    for (const a of r.agents) { const ag = sw.agents.find((x) => x.id === (ids[a.id] || a.id)); ag.reports_to = a.reports_to ? ids[a.reports_to] || a.reports_to : null; }
+    const keep = new Set(r.agents.map((a) => ids[a.id] || a.id));
+    for (const a of sw.agents.filter((x) => !keep.has(x.id))) { const i = s.agents.findIndex((x) => x.id === a.id); if (i >= 0) s.agents.splice(i, 1); }
+    sw.agents = sw.agents.filter((x) => keep.has(x.id));
+    event(sw, { kind: "org", summary: r.summaries.length === 1 ? r.summaries[0] : `You changed the team: ${r.summaries.length} changes` });
+    return { ...orgOf(s, sw), applied: r.summaries };
+  }
+  if (method === "POST" && (m = p.match(/^\/swarms\/([^/]+)\/goals$/))) {
+    const sw = find(m[1]), goal = String(body?.text || "").trim().slice(0, 120);
+    sw.bp.goals = [...sw.bp.goals.filter((g) => g !== goal), goal].slice(-5);
+    event(sw, { kind: "goal", summary: `New goal: ${goal}` });
+    const o = sw.agents.find((a) => a.template === "orchestrator");
+    if (o) sw.sim[o.id] = { state: "working", left: 2 };
+    return { type: "instruct", say: `Goal saved. ${o?.name || "The orchestrator"} is planning the work.` };
+  }
+  if (method === "POST" && (m = p.match(/^\/swarms\/([^/]+)\/tasks$/))) {
+    const sw = find(m[1]), a = sw.agents.find((x) => x.id === body?.agent_id) || fail(404, "Agent not found.");
+    const t = { id: "tsk_d" + (SIM.seq++), agent_id: a.id, assigned_by: "owner", from: "You", title: body.title, status: "doing", result: null, created_at: now(), updated_at: now() };
+    sw.tasks.unshift(t); sw.sim[a.id] = { state: "working", left: 3 };
+    event(sw, { kind: "task", agent_id: a.id, summary: `You gave ${a.name}: ${body.title}` });
+    return { task_id: t.id, run_id: null };
+  }
   if (method === "POST" && (m = p.match(/^\/swarms\/([^/]+)\/brief$/))) return { text: brief(s, find(m[1])) };
   if (method === "POST" && (m = p.match(/^\/swarms\/([^/]+)\/ask$/))) {
     const sw = find(m[1]), t = String(body?.text || "").trim();
     event(sw, { kind: "ask", summary: `You asked: ${t.slice(0, 120)}` });
     if (/^(brief me|briefing|what('?s| has) (happened|changed)|catch me up)/i.test(t)) return { type: "brief", say: brief(s, sw) };
+    const gm = t.match(/^\/?(?:new\s+)?goal\s*[:\-]?\s+(.{3,})$/i);
+    if (gm) return floorDemo("POST", `/swarms/${sw.id}/goals`, {}, { text: gm[1] }, s, fail);
     let mm;
     if ((mm = t.match(/^\/?(pause|resume)\s+(.+)$/i))) {
       const a = sw.agents.find((x) => x.name.toLowerCase().startsWith(mm[2].toLowerCase()) || x.swarm_key === mm[2].toLowerCase());

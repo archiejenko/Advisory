@@ -4,6 +4,7 @@ import { z } from "zod";
 import { newId, nowIso } from "../../../../packages/core/util";
 import { template, TEMPLATES, PLANS } from "../../../../packages/core/templates";
 import { KPIS, SWARM_TOOLS, CUSTOM_TOOLS, stageFor, type Blueprint, type SourceKind } from "../../../../packages/core/swarms";
+import { PLANNING_TOOLS, toolsFor } from "../../../../packages/core/badges";
 import { type Env, one, all, run } from "./db";
 import { HttpError } from "./http";
 
@@ -22,8 +23,8 @@ export const BlueprintSchema = z.object({
   agents: z.array(z.object({
     key: Key, name: z.string().min(1).max(40), role: z.string().min(3).max(120), template: z.string().max(40),
     instructions: z.string().max(4000).optional(), tools: z.array(z.string().max(40)).max(20).optional(),
-    rhythm: Rhythm, run_hour: z.number().int().min(0).max(23).optional(),
-  })).min(1).max(12),
+    rhythm: Rhythm, run_hour: z.number().int().min(0).max(23).optional(), reports_to: Key.optional(),
+  })).min(1).max(13),
   stages: z.array(z.object({ key: Key, name: z.string().min(1).max(30), group: z.string().max(30).optional(), agent: Key, rule: Rule.optional(), done: z.boolean().optional() })).min(2).max(10),
   handoffs: z.array(z.object({ from: Key, to: Key, when: z.string().min(2).max(160) })).max(12).default([]),
   kpis: z.array(z.string()).min(1).max(6),
@@ -52,6 +53,17 @@ export function checkBlueprint(raw: unknown): { ok: true; blueprint: Blueprint }
       else if (t.key === "research" && a.rhythm !== "on_demand") errors.push(`agents.${a.key}: the research template only runs on demand`);
     }
   }
+  const orchestrators = b.agents.filter((a) => a.template === "orchestrator");
+  if (orchestrators.length > 1) errors.push("agents: a swarm has one orchestrator");
+  if (b.agents.filter((a) => a.template !== "orchestrator").length > 12) errors.push("agents: at most 12 agents besides the orchestrator");
+  const byKey = new Map(b.agents.map((a) => [a.key, a]));
+  for (const a of b.agents) {
+    if (!a.reports_to) continue;
+    const boss = byKey.get(a.reports_to);
+    if (!boss) { errors.push(`agents.${a.key}: reports_to "${a.reports_to}" isn't an agent in the swarm`); continue; }
+    if (boss.key === a.key) errors.push(`agents.${a.key}: can't report to itself`);
+    else if (boss.template !== "orchestrator" && boss.reports_to && byKey.get(boss.reports_to)?.template !== "orchestrator") errors.push(`agents.${a.key}: teams go at most two levels below the orchestrator`);
+  }
   const stageKeys = new Set<string>();
   for (const s of b.stages) {
     if (stageKeys.has(s.key)) errors.push(`stages: the key "${s.key}" is used twice`);
@@ -72,16 +84,21 @@ export type AgentSpec = { key: string; name: string; engine: string; tools: stri
 const dedupe = (a: string[]) => [...new Set(a)];
 
 /** The template behind an agent, or its custom role. Swarm agents also get the work board, handoffs and the CRM. */
-export function specFor(a: { template: string; name?: string; tools?: string | null; instructions?: string | null; swarm_id?: string | null }): AgentSpec | null {
+export function specFor(a: { template: string; name?: string; tools?: string | null; instructions?: string | null; swarm_id?: string | null; badges?: string | null }): AgentSpec | null {
   const extra = a.swarm_id ? SWARM_TOOLS : [];
   if (a.template === "custom") {
-    let tools: string[] = [];
+    let tools: string[] = [], roleKey = "";
     try { tools = JSON.parse(a.tools || "[]"); } catch {}
-    return { key: "custom", name: a.name || "Custom agent", engine: "llm", tools: dedupe([...tools.filter((t) => CUSTOM_TOOLS.includes(t)), ...extra]), instructions: a.instructions || "", kickoff: "Do your work.", glyph: "spark", category: "Run", needsInput: false };
+    try { roleKey = JSON.parse(a.badges || "{}").role || ""; } catch {}
+    // Planning tools only for a Lead (a team under the orchestrator), and only inside a swarm.
+    const allowed = (t: string) => CUSTOM_TOOLS.includes(t) || (!!a.swarm_id && roleKey === "lead" && PLANNING_TOOLS.includes(t));
+    return { key: "custom", name: a.name || "Custom agent", engine: "llm", tools: dedupe([...tools.filter(allowed), ...extra]), instructions: a.instructions || "", kickoff: "Do your work.", glyph: roleKey === "lead" ? "split" : "spark", category: "Run", needsInput: false };
   }
   const t = template(a.template);
   if (!t) return null;
-  return { key: t.key, name: t.name, engine: t.engine, tools: t.engine === "llm" ? dedupe([...t.tools, ...extra]) : [], instructions: t.instructions || "", kickoff: t.kickoff || "Do your work.", glyph: t.glyph, category: t.category, needsInput: t.key === "research" };
+  let own = t.tools;
+  if (t.key === "orchestrator" && a.badges) { try { const b = JSON.parse(a.badges); if (b?.skills) own = toolsFor("orchestrator", b.skills); } catch {} }
+  return { key: t.key, name: t.name, engine: t.engine, tools: t.engine === "llm" ? dedupe([...own, ...extra]) : [], instructions: t.instructions || "", kickoff: t.kickoff || "Do your work.", glyph: t.glyph, category: t.category, needsInput: t.key === "research" };
 }
 
 /* ---------- Events ---------- */
@@ -117,10 +134,12 @@ export async function loadSwarm(env: Env, orgId: string, swarmId: string) {
 }
 
 /** The lines added to a swarm agent's system prompt: who else is in the swarm, the stages, its handoffs. */
-export function swarmContext(bp: Blueprint, agentKey: string, agentNames: Record<string, string>) {
+export function swarmContext(bp: Blueprint, agentKey: string, agentNames: Record<string, string>, org?: { boss?: string | null; team?: string[] }) {
   const mine = bp.stages.filter((s) => s.agent === agentKey).map((s) => s.key);
   const outs = bp.handoffs.filter((h) => h.from === agentKey);
   return [
+    ...(bp.goals.length ? [`The swarm's goals: ${bp.goals.join("; ")}.`] : []),
+    ...(org ? [`You report to ${org.boss || "the owner"}.${org.team?.length ? ` Your team: ${org.team.join(", ")}.` : ""} When you are given a task, finish-task with its id and a one-line result.`] : []),
     `You work in the "${bp.name}" swarm (${bp.sector}) with: ${bp.agents.map((a) => `${a.key} (${agentNames[a.key] || a.name}: ${a.role})`).join("; ")}.`,
     `Stages, in order: ${bp.stages.map((s) => `${s.key}${s.done ? " (done)" : ""}`).join(" > ")}. You own: ${mine.join(", ") || "no stage"}.`,
     outs.length ? `You may hand work to: ${outs.map((h) => `${h.to} when ${h.when}`).join("; ")}. Use hand-off with the card's id and a short note.` : "You don't hand work to other agents.",

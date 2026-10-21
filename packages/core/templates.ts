@@ -1,3 +1,4 @@
+import { ROLES } from "./badges";
 // The agent catalogue. One source for the API (what an agent may do) and the website (what we say it does).
 
 export type Profile = { what?: string; customers?: string; area?: string; tone?: string; sign_off?: string; website?: string };
@@ -163,7 +164,21 @@ Write the answer in plain English: a two-sentence answer first, then up to 6 sho
   },
 ];
 
-export const template = (key: string) => TEMPLATES.find((t) => t.key === key);
+/** The orchestrator leads a swarm. It is part of every swarm and isn't hired from the catalogue. */
+export const ORCHESTRATOR: Template = {
+  key: "orchestrator", name: "Orchestrator", category: "Run", glyph: "split",
+  short: "Breaks the swarm's goals into tasks, assigns them and checks they finish.",
+  description: "Sits at the top of a swarm. It reads the goals and the team, assigns tasks to the agent whose role fits, follows up what stalls, and brings you only the decisions.",
+  does: ["Reads the swarm's goals and the team", "Assigns tasks to the right agent", "Checks they finish and follows up what's blocked", "Brings you the decisions"],
+  needs: "Goals for the swarm",
+  status: "live", engine: "llm", rhythm: "weekdays",
+  tools: ["business-profile", "list-team", "assign-task", "check-tasks", "create-task", "recent-activity"],
+  instructions: ROLES.find((r) => r.key === "orchestrator")!.orders, // one source with the Orchestrator role badge
+  kickoff: "Plan today's work for the team.",
+  brief: (p) => `Keep ${p.name}'s agents working on what matters most.`,
+};
+
+export const template = (key: string) => TEMPLATES.find((t) => t.key === key) || (key === "orchestrator" ? ORCHESTRATOR : undefined);
 export const RHYTHM_LABEL: Record<Template["rhythm"], string> = {
   weekdays: "Every weekday", daily: "Every day", weekly: "Every Monday", monthly: "First working day of the month", on_demand: "When you ask", on_event: "When something arrives",
 };

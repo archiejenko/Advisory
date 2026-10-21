@@ -57,6 +57,8 @@ export const GLYPHS = {
   pause: <><path d="M9 5.5v13M15 5.5v13" {...P} /></>,
   play: <path d="M7.5 5.5v13l11-6.5z" {...P} />,
   close: <path d="m6 6 12 12M18 6 6 18" {...P} />,
+  org: <><rect x="9" y="3" width="6" height="5" rx="1.5" {...P} /><rect x="3" y="16" width="6" height="5" rx="1.5" {...P} /><rect x="15" y="16" width="6" height="5" rx="1.5" {...P} /><path d="M12 8v4M6 16v-4h12v4" {...P} /></>,
+  plus: <><path d="M12 5v14M5 12h14" {...P} /></>,
   board: <><rect x="3.5" y="4.5" width="17" height="15" rx="2.5" {...P} /><path d="M9.5 4.5v15M15 4.5v15" {...P} /></>,
   floor: <><circle cx="6.5" cy="7" r="2.5" {...P} /><circle cx="17.5" cy="7" r="2.5" {...P} /><circle cx="12" cy="17" r="2.5" {...P} /><path d="M8.5 8.5 10.5 15M15.5 8.5 13.5 15M9 7h6" {...P} /></>,
   building: <><path d="M4.5 20.5V5l8-2v17.5M12.5 8.5h7v12M3 20.5h18" {...P} /><path d="M7.5 8h2M7.5 11.5h2M7.5 15h2M15.5 12h1.5M15.5 15.5h1.5" {...P} /></>,
