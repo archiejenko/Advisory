@@ -4,7 +4,7 @@ import { Link } from "../router.jsx";
 import { reduced } from "../ui.jsx";
 import { Reveal, Editor, useInView } from "../kit.jsx";
 
-export const HOST = typeof location !== "undefined" && /^https?:$/.test(location.protocol) ? location.origin : "https://agenthouse.example";
+export const HOST = typeof location !== "undefined" && /^https?:$/.test(location.protocol) && !__DEMO_BUILD__ ? location.origin : "https://agenthouse.example";
 
 const pad = (s, n) => s + " ".repeat(Math.max(1, n - s.length));
 export const TERM = [

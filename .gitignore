@@ -5,3 +5,4 @@ dist
 apps/web/dist
 *.log
 ui-shots
+apps/web/dist-demo

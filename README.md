@@ -103,6 +103,10 @@ Background work runs on two queues. `AGENT_JOBS` carries agent runs only, one pe
 
 Plans (in `packages/core/templates.ts`): a 14-day trial with six agents and 1,500 actions, then Starter £49 (2 agents, 300 actions), Growth £149 (6, 1,500) and Scale £399 (12, 5,000). An action is one tool call by an agent. When the month's actions are used, agents pause until the 1st; there are no overage charges. When the trial ends, agents stop until a plan is chosen.
 
+## A walkthrough demo on its own
+
+`npm --prefix apps/web run build:demo` builds the website into `apps/web/dist-demo/index.html` with the demo forced on, so it needs no API and can be hosted anywhere static. `apps/web/vercel.json` deploys it on Vercel with `apps/web` as the root directory; on Cloudflare Pages use the same build command and output directory. The real product still deploys as the Worker below.
+
 ## Deploy to Cloudflare
 
 ```bash

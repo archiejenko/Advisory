@@ -3,9 +3,13 @@
 import { build } from "esbuild";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
+// DEMO=1 builds a stand-alone demo (no API needed) into dist-demo/, for static hosting such as Vercel or Cloudflare Pages.
+const DEMO = process.env.DEMO === "1";
+const OUT = DEMO ? "dist-demo" : "dist";
+
 const out = await build({
   entryPoints: ["src/main.jsx"], bundle: true, minify: true, format: "iife", write: false,
-  jsx: "automatic", loader: { ".js": "jsx" }, define: { "process.env.NODE_ENV": '"production"' }, target: "es2020",
+  jsx: "automatic", loader: { ".js": "jsx" }, define: { "process.env.NODE_ENV": '"production"', __DEMO_BUILD__: DEMO ? "true" : "false" }, target: "es2020",
 });
 const js = out.outputFiles[0].text.replace(/<\/script/g, "<\\/script");
 const css = ["src/styles.css", "src/theme.css", "src/floor.css"].map((f) => readFileSync(f, "utf8")).join("\n");
@@ -26,6 +30,6 @@ const html = `<!doctype html>
 <script>${js}</script>
 </body>
 </html>`;
-mkdirSync("dist", { recursive: true });
-writeFileSync("dist/index.html", html);
-console.log(`dist/index.html ${Math.round(html.length / 1024)} KB`);
+mkdirSync(OUT, { recursive: true });
+writeFileSync(`${OUT}/index.html`, html);
+console.log(`${OUT}/index.html ${Math.round(html.length / 1024)} KB`);
