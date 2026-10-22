@@ -29,8 +29,8 @@ export default function UseCases() {
         lede={`Scored 1 to 5 for small-business owners, developers and other agents, and marked honestly: ${count("Live")} work today, ${count("Partial")} partly, ${count("Not yet")} not yet. Any sector: every job is built from the same twelve building blocks.`} />
       <Section tight>
         <div className="uc-controls">
-          <div className="uc-row"><span className="dt">Rank for</span>{LENSES.map(([k, t]) => <button key={k} className={"seg-btn" + (lens === k ? " is-on" : "")} aria-pressed={lens === k} onClick={() => setLens(k)}>{t}</button>)}</div>
-          <div className="uc-row"><span className="dt">Job</span>{["All", ...FUNCS].map((f) => <button key={f} className={"seg-btn seg-s" + (fn === f ? " is-on" : "")} aria-pressed={fn === f} onClick={() => setFn(f)}>{f}</button>)}</div>
+          <div className="uc-row uc-scroll"><span className="dt">Rank for</span>{LENSES.map(([k, t]) => <button key={k} className={"seg-btn" + (lens === k ? " is-on" : "")} aria-pressed={lens === k} onClick={() => setLens(k)}>{t}</button>)}</div>
+          <div className="uc-row uc-scroll"><span className="dt">Job</span>{["All", ...FUNCS].map((f) => <button key={f} className={"seg-btn seg-s" + (fn === f ? " is-on" : "")} aria-pressed={fn === f} onClick={() => setFn(f)}>{f}</button>)}</div>
           <div className="uc-row">
             <span className="dt">Today</span>{["All", ...TODAY].map((f) => <button key={f} className={"seg-btn seg-s" + (today === f ? " is-on" : "")} aria-pressed={today === f} onClick={() => setToday(f)}>{f}</button>)}
             <label className="sr-only" htmlFor="uc-q">Search use cases</label>
@@ -44,13 +44,13 @@ export default function UseCases() {
             <tbody>
               {rows.map((u, i) => (
                 <tr key={u.id}>
-                  <td className="muted mono">{i + 1}</td>
-                  <td><b>{u.use_case}</b><br /><span className="muted">{u.what}</span><br /><span className="dt">{u.function}</span></td>
+                  <td className="muted mono uc-n">{i + 1}</td>
+                  <td className="uc-job"><b>{u.use_case}</b><br /><span className="muted">{u.what}</span><br /><span className="dt">{u.function}</span></td>
                   <td className="hide-sm"><span className="uc-prims">{u.primitives ? u.primitives.split(",").map((p) => <i key={p}>{p.trim()}</i>) : <i>Marketplace</i>}</span></td>
-                  <td><Dots n={u.owner} label="Owners" /></td>
-                  <td><Dots n={u.dev} label="Developers" /></td>
-                  <td><Dots n={u.agent} label="Agents" /></td>
-                  <td><span className={"st " + ST[u.today]}>{u.today}</span></td>
+                  <td className="uc-meta" data-l="Owners"><Dots n={u.owner} label="Owners" /></td>
+                  <td className="uc-meta" data-l="Devs"><Dots n={u.dev} label="Developers" /></td>
+                  <td className="uc-meta" data-l="Agents"><Dots n={u.agent} label="Agents" /></td>
+                  <td className="uc-meta"><span className={"st " + ST[u.today]}>{u.today}</span></td>
                   <td className="hide-sm muted">{u.needs || "Nothing more"}</td>
                 </tr>
               ))}
@@ -79,11 +79,11 @@ export function LensTable({ lens, n = 8, label }) {
         <thead><tr><th>#</th><th>Job</th><th className="hide-sm">Built from</th><th>{label}</th><th>Today</th></tr></thead>
         <tbody>{rows.map((u, i) => (
           <tr key={u.id}>
-            <td className="muted mono">{i + 1}</td>
-            <td><b>{u.use_case}</b><br /><span className="muted">{u.what}</span></td>
+            <td className="muted mono uc-n">{i + 1}</td>
+            <td className="uc-job"><b>{u.use_case}</b><br /><span className="muted">{u.what}</span></td>
             <td className="hide-sm"><span className="uc-prims">{u.primitives ? u.primitives.split(",").map((p) => <i key={p}>{p.trim()}</i>) : <i>Marketplace</i>}</span></td>
-            <td><Dots n={u[lens]} label={label} /></td>
-            <td><span className={"st " + ST[u.today]}>{u.today}</span>{u.today !== "Live" && u.needs && <><br /><span className="dt">Needs {u.needs.toLowerCase()}</span></>}</td>
+            <td className="uc-meta" data-l={label}><Dots n={u[lens]} label={label} /></td>
+            <td className="uc-meta"><span className={"st " + ST[u.today]}>{u.today}</span>{u.today !== "Live" && u.needs && <><br /><span className="dt">Needs {u.needs.toLowerCase()}</span></>}</td>
           </tr>
         ))}</tbody>
       </table>

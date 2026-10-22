@@ -428,3 +428,29 @@
 .mf-body .org-main { padding: 12px; }
 .mf-body .org-tray { border-left: 0; border-top: 1px solid var(--f-line); }
 @media (prefers-reduced-motion: reduce) { .org-card, .obd, .org-toast, .ot-doing i { animation: none !important; transition: none !important; } }
+
+/* Phones: a compact header and one scrolling row of KPIs, so the work fills the screen. */
+@media (max-width: 860px) {
+  .fl-top { flex-wrap: nowrap; }
+  .fl-title { flex: 1 1 auto; }
+  .fl-title b { font-size: 16px; }
+  .fl-btn { flex: none; width: 44px; height: 44px; justify-content: center; padding: 0; }
+  .fl-btn .fl-btn-t { display: none; }
+  .fl-x { width: 44px; height: 44px; flex: none; }
+  .fl-kpis { display: flex; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; scroll-padding-inline: 16px; }
+  .fl-kpis::-webkit-scrollbar { display: none; }
+  .fl-kpi { flex: 0 0 150px; padding: 8px 12px 10px; scroll-snap-align: start; align-content: space-between; }
+  .fl-kpi span { font-size: 12px; line-height: 1.3; }
+  .fl-kpi b { font-size: 18px; }
+  .mf-tabs button { min-height: 40px; }
+  .co-bar { flex-wrap: wrap; }
+  .co-bar input { flex: 1 1 100%; max-width: none; min-height: 44px; }
+  .co-t.m-cards, .co-t.m-cards tbody { display: block; width: 100%; }
+  .co-t.m-cards thead { display: none; }
+  .co-t.m-cards tr { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 20px; padding: 12px 0; border-bottom: 1px solid var(--f-line); }
+  .co-t.m-cards td { display: block; padding: 0 !important; border: 0 !important; text-align: left !important; min-width: 0; }
+  .co-t.m-cards td:first-child { flex: 1 1 100%; }
+  .co-t.m-cards td:not(:first-child)[data-l]::before { content: attr(data-l); display: block; font-size: 12px; margin-bottom: 2px; }
+  .fl .m-cards tr { border-bottom-color: var(--f-line); }
+  .fl .m-cards td:not(:first-child)[data-l]::before { color: var(--f-dim); }
+}

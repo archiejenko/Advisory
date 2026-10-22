@@ -6,6 +6,9 @@ import { api } from "../api.js";
 import { Glyph } from "../kit.jsx";
 import { ROLES, SKILLS, AUTONOMY, RHYTHMS, applyOrgChanges, toolsFor, role as roleOf, skill as skillOf, depthOf } from "../../../../packages/core/badges.ts";
 
+/** Touch screens get tap instructions; dragging is for a mouse. */
+const COARSE = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
+
 const BADGE_LABEL = {
   role: (k) => roleOf(k)?.label || k, skill: (k) => skillOf(k)?.label || k,
   autonomy: (k) => AUTONOMY.find((x) => x.key === k)?.label || k, rhythm: (k) => RHYTHMS.find((x) => x.key === k)?.label || k,
@@ -143,7 +146,7 @@ export function OrgView({ swarmId, can, onChanged }) {
               <button className="btn btn-sm" onClick={applyAll} disabled={saving}>{saving ? "Saving…" : "Apply changes"}</button>
             </div>
           ) : (
-            <p className="dt org-hint">{manager ? "Drag a badge onto an agent, or tap a badge and then an agent. Drag one agent onto another to change who it reports to." : "You can see the team. A manager or owner can change it."}</p>
+            <p className="dt org-hint">{manager ? (COARSE ? "Tap a badge, then tap an agent to give it. Tap a badge on an agent to move it or take it off, and use Reports to to change who leads whom." : "Drag a badge onto an agent, or tap a badge and then an agent. Drag one agent onto another to change who it reports to.") : "You can see the team. A manager or owner can change it."}</p>
           )}
           {sel && (
             <div className="org-sel">
@@ -237,7 +240,7 @@ function AgentCard({ a, level, view, isNew, root, agents, tasks, sel, canDrop, f
       aria-label={`${a.name}, ${roleOf(a.role)?.label}${boss ? `, reports to ${boss.name}` : ""}`}>
       <div className="org-head">
         <span className="org-av" aria-hidden="true">{initials(a.name)}</span>
-        <div className="org-name"><b>{a.name}</b><span>{isRoot ? "Top of the swarm" : `${roleOf(a.role)?.label}${level === 2 && boss ? ` · team of ${boss.name}` : ""}`}{paused ? " · paused" : ""}{isNew ? " · new" : ""}</span></div>
+        <div className="org-name"><b>{a.name}</b><span>{isRoot ? "Top of the team" : `${roleOf(a.role)?.label}${level === 2 && boss ? ` · team of ${boss.name}` : ""}`}{paused ? " · paused" : ""}{isNew ? " · new" : ""}</span></div>
         {manager && !isRoot && <button className="org-x" aria-label={`Remove ${a.name}`} title={`Remove ${a.name}`} onClick={(e) => { e.stopPropagation(); onRemove(); }}><Glyph name="close" size={14} /></button>}
       </div>
       <div className="org-badges">

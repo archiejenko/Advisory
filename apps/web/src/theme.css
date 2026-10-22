@@ -943,3 +943,68 @@ button.row-link { font: inherit; font-weight: 500; text-align: left; padding: 0;
 @media (max-width: 760px) { .std td + td { padding-left: 0; } }
 .split > * { min-width: 0; }
 @media (max-width: 560px) { .otree-big .otree-root { min-width: 0; } }
+
+/* ======================= Phones ======================= */
+@media (max-width: 700px) {
+  /* The hero sits under the transparent header: keep the headline clear of it. */
+  .hx { min-height: 0; }
+  .hx .hx-copy.wrap { padding-top: 128px; padding-bottom: 64px; }
+  .hx-sub { margin-top: 24px; }
+  .hx .actions { margin-top: 32px; }
+
+  /* Readable chips and badges. */
+  .ob { font-size: 12px; padding: 3px 8px; }
+  .uc-prims i { font-size: 12.5px; }
+
+  /* Chip rows with many options scroll sideways instead of filling the screen. */
+  .uc-row.uc-scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: -20px; padding: 2px 20px; scroll-snap-type: x proximity; }
+  .uc-row.uc-scroll::-webkit-scrollbar { display: none; }
+  .uc-row.uc-scroll > * { flex: none; scroll-snap-align: start; }
+  .uc-q { flex: 1 1 100%; max-width: none; height: 44px; }
+
+  /* Use-case tables become cards: the job on top, scores and status on one line under it. */
+  .uc-table-box { overflow: visible; }
+  .uc-table { min-width: 0; }
+  .uc-table thead { display: none; }
+  .uc-table, .uc-table tbody { display: block; width: 100%; }
+  .uc-table tr { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 16px; border-bottom: 1px solid var(--line); }
+  .uc-table tr:last-child { border-bottom: 0; }
+  .uc-table td { display: block; padding: 0 !important; border: 0 !important; }
+  .uc-table td.uc-n { flex: 0 0 22px; align-self: flex-start; padding-top: 2px !important; }
+  .uc-table td.uc-job { flex: 1 1 calc(100% - 40px); min-width: 0; }
+  .uc-table td.uc-n ~ td.hide-sm + td.uc-meta { margin-left: 36px; }
+  .uc-table td.uc-meta { display: inline-flex; align-items: center; gap: 6px; }
+  .uc-table td.hide-sm { display: none !important; }
+  .uc-table td.uc-meta[data-l]::before { content: attr(data-l); font-size: 12.5px; color: var(--graphite); }
+  .uc-table td.uc-meta .dt { display: none; }
+  .uc-table td.uc-meta br { display: none; }
+  .uc-dots i { width: 6px; height: 12px; }
+
+  /* Workspace tables become labelled cards (main.jsx copies each column's heading onto its cells). */
+  table.ledger.m-cards, .m-cards tbody { display: block; width: 100%; }
+  .m-cards thead { display: none; }
+  .m-cards tr { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 20px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .m-cards td { display: block; padding: 0 !important; border: 0 !important; text-align: left !important; min-width: 0; }
+  .m-cards td:first-child { flex: 1 1 100%; }
+  .m-cards td.hide-sm { display: none; }
+  .m-cards td:not(:first-child)[data-l]::before { content: attr(data-l); display: block; font-size: 12px; color: var(--graphite); margin-bottom: 2px; font-weight: 400; }
+  .m-cards td select { min-height: 40px; }
+
+  /* Footer links get room to tap. */
+  .ftr-col { gap: 6px; }
+  .ftr-col a { display: block; padding: 8px 0; }
+}
+
+/* Touch screens: every link and chip is at least 44px tall to tap, without changing how it looks. */
+@media (pointer: coarse), (max-width: 700px) {
+  .link, .card-link, .crumbs a, .ftr-fine a, .np { position: relative; }
+  .link::after, .card-link::after, .crumbs a::after, .ftr-fine a::after { content: ""; position: absolute; left: -6px; right: -6px; top: 50%; height: 44px; transform: translateY(-50%); }
+  .seg-btn { min-height: 44px; }
+  .btn-sm { min-height: 40px; }
+}
+
+/* The phone menu: one link per row, each a full-width tap target. */
+.mnav-group { display: flex; flex-direction: column; }
+.mnav-group > b { display: block; margin-bottom: 4px; }
+.mnav-group > a:not(.btn) { display: flex; align-items: center; min-height: 48px; padding: 4px 0; }
+@media (max-width: 480px) { .browser-in { height: 380px; } .browser-scale { transform: scale(.34); width: 294%; } }

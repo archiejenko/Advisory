@@ -112,7 +112,7 @@ function Doors() {
   return (
     <section className="band" style={{ paddingTop: 96 }}>
       <div className="wrap">
-        <Reveal as="h2" className="display" style={{ marginBottom: 88 }}>One set of skills. Three ways in.</Reveal>
+        <Reveal as="h2" className="display" style={{ marginBottom: 88 }}>One catalogue. Three ways in.</Reveal>
         <div className="pgrid">
           {DOORS.map(([t, d, to, Vis], i) => (
             <Reveal key={t} delay={i * 90}>
@@ -348,7 +348,7 @@ function Examples() {
           <div className="browser">
             <div className="browser-in">
               <div className="browser-top">{e.url} · example data</div>
-              <div className="browser-stage" aria-hidden="true"><div className="browser-scale api-fade" key={e.t}><S /></div></div>
+              <div className="browser-stage" aria-hidden="true"><div className="api-fade" key={e.t}><div className="browser-scale"><S /></div></div></div>
               <Link to={e.cta[1]} className="preview-pill"><Glyph name="expand" size={20} />Preview</Link>
             </div>
           </div>

@@ -209,9 +209,9 @@ export function AgentPage({ slug }) {
             <table className="ledger ws-table uc-table">
               <thead><tr><th>Job</th><th>Owners</th><th className="hide-sm">Developers</th><th className="hide-sm">Agents</th><th>Today</th></tr></thead>
               <tbody>{covers.map((u) => (
-                <tr key={u.id}><td><b>{u.use_case}</b><br /><span className="muted">{u.what}</span></td>
-                  <td>{u.owner} of 5</td><td className="hide-sm">{u.dev} of 5</td><td className="hide-sm">{u.agent} of 5</td>
-                  <td><span className={"st " + ST[u.today]}>{u.today}</span>{u.needs && u.today !== "Live" && <><br /><span className="dt">Needs {u.needs.toLowerCase()}</span></>}</td></tr>
+                <tr key={u.id}><td className="uc-job"><b>{u.use_case}</b><br /><span className="muted">{u.what}</span></td>
+                  <td className="uc-meta" data-l="Owners">{u.owner} of 5</td><td className="hide-sm">{u.dev} of 5</td><td className="hide-sm">{u.agent} of 5</td>
+                  <td className="uc-meta"><span className={"st " + ST[u.today]}>{u.today}</span>{u.needs && u.today !== "Live" && <><br /><span className="dt">Needs {u.needs.toLowerCase()}</span></>}</td></tr>
               ))}</tbody>
             </table>
           </div>

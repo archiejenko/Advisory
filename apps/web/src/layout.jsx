@@ -117,7 +117,7 @@ export function Header() {
           {Object.values(MENUS).map((m) => (
             <div key={m.label} className="mnav-group">
               <b>{m.label}</b>
-              {m.items.map(([, t, , to]) => <Link key={to} to={to}>{t}</Link>)}
+              {m.items.map(([, t, , to]) => <Link key={t} to={to}>{t}</Link>)}
             </div>
           ))}
           <div className="mnav-group"><Link to="/pricing">Pricing</Link><Link to={account[1]}>{account[0]}</Link></div>

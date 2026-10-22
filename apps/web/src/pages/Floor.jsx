@@ -247,8 +247,8 @@ export function FloorView({ id }) {
           ))}
         </nav>
         {can("manager") && (
-          <button className="fl-btn" onClick={async () => { await api("PATCH", `/api/ws/swarms/${sw.id}`, { status: sw.status === "paused" ? "running" : "paused" }); load(); }}>
-            <Glyph name={sw.status === "paused" ? "play" : "pause"} size={16} />{sw.status === "paused" ? "Resume all" : "Pause all"}
+          <button className="fl-btn" aria-label={sw.status === "paused" ? "Resume all agents" : "Pause all agents"} onClick={async () => { await api("PATCH", `/api/ws/swarms/${sw.id}`, { status: sw.status === "paused" ? "running" : "paused" }); load(); }}>
+            <Glyph name={sw.status === "paused" ? "play" : "pause"} size={16} /><span className="fl-btn-t">{sw.status === "paused" ? "Resume all" : "Pause all"}</span>
           </button>
         )}
       </header>
