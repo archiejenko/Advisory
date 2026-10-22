@@ -119,7 +119,8 @@ export function registerSwarmRoutes(ws: App) {
     return c.json(await ownerTask(c.env, c.get("orgId"), c.req.param("id")!, c.get("user"), b.agent_id, b.title, b.detail), 201);
   });
 
-  ws.patch("/tasks/:id", manager, async (c) => {
+  /** Close or drop a task an agent was given. (Owner to-dos are /tasks/:id, in routes/agents.ts.) */
+  ws.patch("/agent-tasks/:id", manager, async (c) => {
     const b = await body(c, z.object({ status: z.enum(["done", "dropped"]) }));
     const t = await c.get("db").one("SELECT * FROM agent_task WHERE org_id = ?1 AND id = ?2", c.req.param("id"));
     if (!t) throw notFound("Task");

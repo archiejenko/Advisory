@@ -2,8 +2,9 @@
 
 One place for everything agentic, with three doors:
 
-- **For businesses:** hire agents that run parts of a small business (outreach, inbox, credit control, customer and supplier watch, company checks, lead lists, research, a weekly briefing). They work from the business profile, use catalogue tools, record every step, and ask before anything is sent.
+- **For businesses:** a team of agents for any small business, led by an orchestrator. Ready-made roles (outreach, inbox, credit control, customer and supplier watch, company checks, lead lists, research, a weekly briefing) or roles you describe, all built from the same twelve building blocks. They work from the business profile, use catalogue tools, record every step, and ask before anything is sent. The lead offer is "check before you trust or pay": customers and suppliers checked on the registers and watched daily.
 - **The Floor:** describe the business (typed or spoken) and Claude designs a swarm of agents for it, or start from a preset (Sales floor, Back office; Markets desk is shown but locked until market data is connected). The swarm runs on a live Floor: a station per agent showing what it's doing, work cards moving through stages, handoffs between agents, KPIs, a desk of things waiting for you, a CRM (companies, contacts, deals, timeline), and a command bar you can talk to from your phone.
+- **The org chart:** an orchestrator at the top of every team turns goals into tasks (`assign-task`, `check-tasks`), roles below it (up to two levels) do the work and report back (`finish-task`), and badges (role, skills, autonomy, rhythm) set what each agent is. Shaped by drag and drop on the Floor's Org tab; the rules live in `packages/core/badges.ts` so the UI and the API agree.
 - **For developers:** call the tool catalogue over REST or MCP, run a whole agent in one call (`/v1/agents/run`), or publish an API as a tool and earn 80% of every paid call.
 - **For agents:** discover the catalogue (`/.well-known/agent-house.json`, `/v1/tools`, `/llms.txt`, `/mcp`) and pay per call with x402. Every answer is Ed25519-signed.
 
@@ -56,10 +57,10 @@ Opened straight from disk, `apps/web/dist/index.html` runs as an offline demo wi
 ## Tests
 
 ```bash
-npm test               # unit (78): matching, checks, signing, tenant isolation, rate limits, scheduling, catalogue, swarms,
+npm test               # unit (88): matching, checks, signing, tenant isolation, rate limits, scheduling, catalogue, swarms, org chart,
                        # plus the hardening and swarm suites run against real SQL (Node's built-in SQLite, every migration applied)
 npm run typecheck
-npm run test:e2e       # API: 41 flows against wrangler dev and the mocks
+npm run test:e2e       # API: 42 flows against wrangler dev and the mocks
 node tests/e2e/ui.mjs  # browser: 20 flows clicking through the real website in Chromium
 ```
 
@@ -69,9 +70,10 @@ Stop any running `npm run dev` or `npm run mocks` before the end-to-end suites; 
 
 | Area | Routes | Notes |
 |---|---|---|
-| Website | `/` | Hash routes. Workspace pages show the live workspace when signed in and the demo when not. |
+| Website | `/` | Hash routes. Workspace pages show the live workspace when signed in and the demo when not. The site's story comes from `packages/core/usecases.ts`: 80 SMB use cases scored for owners, developers and agents, the twelve building blocks, and sector packs (`/#/use-cases`). The wordmark is type only, as outlines in `packages/core/brand.ts`, with the "ah" favicon in `apps/web/src/brand/`. |
 | Sign-in | `/api/auth/*` | Email magic links. Session is an HttpOnly cookie. |
 | Workspace | `/api/ws/*` | Overview, agent catalogue and hiring, runs, approvals, leads, tasks, invoices, inbox, alerts, customers, imports, briefs, channels, usage and plan, team, audit, billing. Roles: owner, manager, viewer. Every query is forced through an org filter. |
+| Org chart | `/api/ws/swarms/:id/org`, `/api/ws/swarms/:id/goals`, `/api/ws/swarms/:id/tasks`, `/api/ws/agent-tasks/:id` | Read the tree, badges and tasks; apply a list of changes all or nothing; set a goal (wakes the orchestrator); give an agent a task; close or drop one. Owner to-dos stay at `/api/ws/tasks`. |
 | Swarms and the Floor | `/api/ws/swarm-presets`, `/api/ws/swarms*`, `/api/ws/work-items/:id` | Plan a blueprint from a description, preview its cost against the plan, spin it up, poll the Floor (`GET /swarms/:id?since=<cursor>`), ask the command bar, brief, pause all, remove. `/#/floor` and `/#/floor/:id`. |
 | CRM | `/api/ws/crm/*` | Companies (leads), contacts, deals and an activity timeline written by agents and people. |
 | Voice | `/api/ws/voice/transcribe`, `/api/ws/voice/speak` | Speech to text (Whisper) and text to speech (Deepgram Aura) on Workers AI. The browser's own speech is the fallback; dictation keyboards like Wispr Flow type into the command bar with nothing extra. |
@@ -121,7 +123,7 @@ node -e "crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']).then
 for s in SIGNING_JWK CHANNEL_KEY CH_API_KEY FCA_EMAIL FCA_KEY STRIPE_SECRET STRIPE_WEBHOOK_SECRET INGEST_SECRET ADMIN_TOKEN OPERATOR_EMAIL TURNSTILE_SECRET ANTHROPIC_API_KEY SEARCH_API_KEY; do wrangler secret put $s; done
 ```
 
-Voice uses the Workers AI binding (`[ai] binding = "AI"` in `wrangler.toml`, set `VOICE_SPEAKER` and `VOICE_LANGUAGE` in vars). Workers AI always runs remotely, so local dev and the tests point `VOICE_HTTP_URL` at the mock instead; leave it unset in production. Without either, voice routes answer 503 `voice_off` and the Floor uses the browser's speech. Apply migration `0004_swarms.sql` before deploying the Floor.
+Voice uses the Workers AI binding (`[ai] binding = "AI"` in `wrangler.toml`, set `VOICE_SPEAKER` and `VOICE_LANGUAGE` in vars). Workers AI always runs remotely, so local dev and the tests point `VOICE_HTTP_URL` at the mock instead; leave it unset in production. Without either, voice routes answer 503 `voice_off` and the Floor uses the browser's speech. Apply migrations `0004_swarms.sql` and `0005_org.sql` before deploying the Floor and the org chart.
 
 `CHANNEL_KEY` is 32 random bytes, base64url. `TURNSTILE_SECRET` is optional; set `TURNSTILE_SITE_KEY` in vars alongside it. `ANTHROPIC_API_KEY` runs the agents (model from `AGENT_MODEL`; costs are recorded per run using `AGENT_PRICE_IN_PENCE` and `AGENT_PRICE_OUT_PENCE` per million tokens, with cache writes and reads at `AGENT_CACHE_WRITE_X` and `AGENT_CACHE_READ_X` of the input price).
 

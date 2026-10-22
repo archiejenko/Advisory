@@ -1,5 +1,6 @@
 // The health-check report: a self-contained page in the site's design system, served only after approval.
 import { longDate } from "../../../../packages/core/util";
+import { wordmarkSvg } from "../../../../packages/core/brand";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -12,7 +13,7 @@ export function renderReport(hc: { company: string; created_at: string }, rows: 
   for (const r of flagged) for (const f of JSON.parse(r.extra).findings) counts[f.title] = (counts[f.title] || 0) + 1;
   const summary = { sent: rows.length, matched: matched.length, confirm: confirm.length, unmatched: none.length, flagged: flagged.length, counts };
   const html = `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Client book health check, ${esc(hc.company)}</title>
+<title>Customer check, ${esc(hc.company)}</title>
 <style>
 :root{--paper:#fff;--stone:#F3F3F0;--rule:#D8D8D3;--graphite:#5E6166;--ink:#121417;--signal:#C8361E}
 *{box-sizing:border-box}body{margin:0;font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:var(--ink);background:var(--paper);line-height:1.5}
@@ -22,8 +23,10 @@ main{max-width:960px;margin:0 auto;padding:48px 24px 80px}h1{font-size:40px;lett
 table{width:100%;border-collapse:collapse;border-top:1px solid var(--ink);font-size:15px}th,td{text-align:left;padding:10px 12px 10px 0;border-bottom:1px solid var(--rule);vertical-align:top}
 th{font-weight:400;color:var(--graphite);font-size:13px}.crit{color:var(--signal);font-weight:700}.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .note{font-size:13px;color:var(--graphite);margin-top:40px}@media(max-width:600px){.stats{grid-template-columns:1fr 1fr}h1{font-size:30px}}
+.brand{display:block;margin-bottom:40px}
 </style></head><body><main>
-<p class="sub">Client book health check</p><h1>${esc(hc.company)}</h1><p class="sub">Run ${esc(longDate(hc.created_at))}. Every finding names the register it came from.</p>
+<a class="brand" href="/">${wordmarkSvg(22)}</a>
+<p class="sub">Customer check</p><h1>${esc(hc.company)}</h1><p class="sub">Run ${esc(longDate(hc.created_at))}. Every finding names the register it came from.</p>
 <div class="stats"><div><span class="sub">Clients sent</span><b>${summary.sent}</b></div><div><span class="sub">Matched</span><b>${summary.matched}</b></div><div><span class="sub">For you to confirm</span><b>${summary.confirm}</b></div><div><span class="sub">Flagged</span><b class="s">${summary.flagged}</b></div></div>
 <h2>Findings</h2>
 ${flagged.length ? `<table><thead><tr><th>Client</th><th>Company no.</th><th>Finding</th><th>Source</th></tr></thead><tbody>

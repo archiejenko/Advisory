@@ -15,8 +15,9 @@ const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent House</title>
-<meta name="description" content="Agent House: agents that run your business, tools developers publish for them, and a catalogue any agent can pay to use per call with x402.">
+<meta name="description" content="Agent House: a team of agents for any small business, led by an orchestrator and built from twelve building blocks. Check who you deal with before you pay them. Signed tools for developers, paid per call by agents with x402.">
 <meta name="theme-color" content="#FFFFFF">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(readFileSync("src/brand/favicon.svg", "utf8"))}">
 <style>${css}</style>
 </head>
 <body>

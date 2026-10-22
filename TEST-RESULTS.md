@@ -1,4 +1,6 @@
-# Agent House test results, 2026-10-21 (swarms, the Floor, CRM and voice; on top of pre-launch hardening)
+# Agent House test results, 2026-10-22 (site overhaul, wordmark and org chart; on top of swarms and pre-launch hardening)
+
+This run: typecheck clean; unit 88 passed (8 files, `org.test.ts` added); API end-to-end 42 passed (the org chart flow now also drops an agent's task); browser 20 passed, with the public pages checked for the new copy (home, roles, how it works, use cases, for agents, the customer check). The sections below are from the swarms run unless a count says otherwise.
 
 Typecheck: clean (tsc -p .). `npm audit --omit=dev`: 0 vulnerabilities (the `xlsx` package is gone).
 

@@ -159,7 +159,7 @@ export function OrgView({ swarmId, can, onChanged }) {
         <div className="org-canvas" ref={canvas}>
           {!root && manager && (
             <div className="org-noroot">
-              <b>This swarm has no orchestrator.</b>
+              <b>This team has no orchestrator.</b>
               <span className="dt">Add one to plan goals into tasks and keep the team on them. It doesn't use a place on your plan.</span>
               <button className="btn btn-sm" onClick={() => propose({ op: "hire", id: `new-${nextId.current++}`, role: "orchestrator" })}>Add an orchestrator</button>
             </div>

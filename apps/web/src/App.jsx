@@ -5,6 +5,7 @@ import Home from "./pages/Home.jsx";
 import { AgentsIndex, AgentPage } from "./pages/Agents.jsx";
 import { Start, Unsubscribe } from "./pages/Start.jsx";
 import Method from "./pages/Method.jsx";
+import UseCases from "./pages/UseCases.jsx";
 import { WsOverview, WsAgents, WsHire, WsAgent, WsRun, WsApprovals, WsActivity, WsLeads, WsInbox, WsInvoices, WsTasks } from "./pages/Ws.jsx";
 import { WsUsage, WsSettings } from "./pages/Account.jsx";
 import { HealthCheck, Pricing, Standards, Developers, BookCall, NotFound } from "./pages/Service.jsx";
@@ -23,6 +24,7 @@ const ROUTES = [
   ["/start", Start],
   ["/unsubscribe", Unsubscribe],
   ["/how-it-works", Method],
+  ["/use-cases", UseCases],
   ["/method", Method],
   ["/workspace", ws(WsOverview)],
   ["/workspace/approvals", ws(WsApprovals)],

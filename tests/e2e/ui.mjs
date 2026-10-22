@@ -75,10 +75,11 @@ async function main() {
   console.log("Flows:");
   await check("public pages render for all three doors; signed-out header offers sign in", async () => {
     await go("/");
-    await text("Agents that run your business");
+    await text("A team of agents for any business");
+    await text("Twelve building blocks. Any business.");
     await page.locator(".hdr-right").getByText("Sign in", { exact: true }).waitFor();
     await shot("01-home");
-    for (const [p, t] of [["/agents", "Agents for every part"], ["/agents/outreach", "Follows up once"], ["/agents/client-book-watch", "Customer and supplier watch"], ["/agents/bookings", "Coming soon"], ["/how-it-works", "From sign-up to a working team"], ["/pricing", "Pay per call"], ["/trust", "Agents you can leave alone"], ["/developers", "Customers for your tools"], ["/for-agents", "Discover, pay, verify"]]) {
+    for (const [p, t] of [["/agents", "Ready-made roles for your team"], ["/agents/outreach", "Where it fits among the use cases"], ["/agents/client-book-watch", "Customer and supplier watch"], ["/agents/bookings", "Coming soon"], ["/how-it-works", "Get a team that reports to you"], ["/use-cases", "80 jobs an agent can do"], ["/pricing", "Pay per call"], ["/trust", "Agents you can leave alone"], ["/developers", "Customers for your tools"], ["/for-agents", "Facts your agent can cite"], ["/health-check", "who are you about to pay"]]) {
       await go(p); await text(t);
     }
     await shot("02-for-agents");
@@ -269,7 +270,7 @@ async function main() {
     await go("/floor");
     await page.locator("#fh-desc").waitFor();
     await page.fill("#fh-desc", "We're a recruitment agency in Manchester placing accountants with growing firms.");
-    await btn("Design my swarm");
+    await btn("Design my team");
     await text("Recruitment desk");
     await text("Job scout");
     await shot("15a-floor-preview");

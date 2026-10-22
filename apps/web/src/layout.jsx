@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { Link, useRoute, navigate } from "./router.jsx";
 import { LIVE, api } from "./api.js";
-import { Mark, Glyph, Tile } from "./kit.jsx";
+import { Wordmark, Glyph, Tile } from "./kit.jsx";
 
 /* The signed-in session, shared by the header and the workspace. */
 export const WsCtx = createContext(null);
@@ -25,20 +25,21 @@ const MENUS = {
   business: {
     label: "For businesses",
     items: [
-      ["send", "Outreach", "Finds customers and drafts the first email", "/agents/outreach"],
-      ["inbox", "Inbox", "Sorts enquiries and drafts replies", "/agents/inbox"],
-      ["pound", "Credit control", "Chases unpaid invoices, politely", "/agents/credit-control"],
-      ["watch", "Customer watch", "Warns you before a customer goes under", "/agents/customer-watch"],
-      ["method", "How it works", "Profile, agents, tools, approvals", "/how-it-works"],
+      ["floor", "The Floor", "Describe your business, get a team", "/floor"],
+      ["org", "Org chart", "An orchestrator, roles and tasks you shape", "/how-it-works?s=team"],
+      ["verify", "Check before you pay", "Customers and suppliers on the registers", "/health-check"],
+      ["board", "Use cases", "Every job, scored, and what works today", "/use-cases"],
+      ["agent", "All agents", "Outreach, inbox, credit control and more", "/agents"],
       ["workspace", "Demo workspace", "Click through a business run by agents", "/workspace"],
     ],
-    foot: ["See all twelve agents", "/agents"],
+    foot: ["How it works", "/how-it-works"],
   },
   developers: {
     label: "For developers",
     items: [
       ["api", "Tools API", "Every tool in the catalogue, one POST", "/developers?s=reference"],
       ["agent", "Agents API", "Run a whole agent in one call", "/developers?s=reference"],
+      ["verify", "Verify API", "Signed UK company checks", "/developers?s=verify"],
       ["tools", "Publish a tool", "Earn 80% of every call", "/developers/dashboard"],
       ["mcp", "MCP server", "The catalogue in Claude or any client", "/developers?s=mcp"],
     ],
@@ -93,7 +94,7 @@ export function Header() {
   return (
     <header className={"hdr" + (over ? " is-over" : "") + (open ? " is-open" : "")}>
       <div className="wrap hdr-in">
-        <Link to="/" className="wordmark" aria-label="Agent House home"><Mark />Agent House</Link>
+        <Link to="/" className="wordmark" aria-label="Agent House home"><Wordmark /></Link>
         <nav className="hdr-nav" aria-label="Main">
           {Object.entries(MENUS).map(([k, m]) => (
             <div key={k} className="nav-item" onMouseEnter={() => enter(k)} onMouseLeave={leave}>
@@ -130,7 +131,7 @@ export function Header() {
 export function Footer() {
   const { me } = useWs();
   const cols = [
-    ["For businesses", [["All agents", "/agents"], ["How it works", "/how-it-works"], ["Free customer check", "/health-check"], ["Demo workspace", "/workspace"], ["Pricing", "/pricing"]]],
+    ["For businesses", [["The Floor", "/floor"], ["Use cases", "/use-cases"], ["All agents", "/agents"], ["How it works", "/how-it-works"], ["Free customer check", "/health-check"], ["Demo workspace", "/workspace"], ["Pricing", "/pricing"]]],
     ["For developers", [["Developers", "/developers"], ["Publish a tool", "/developers/dashboard"], ["MCP server", "/developers?s=mcp"], ["Get an API key", "/developers?s=key"]]],
     ["For agents", [["Tool catalogue", "/for-agents?s=catalogue"], ["x402 payments", "/for-agents?s=x402"], ["Verifying answers", "/developers?s=verify"]]],
     ["Company", [["Trust", "/trust"], ["Book a call", "/book-a-call"], [me ? "Workspace" : "Sign in", me ? "/workspace" : "/sign-in"]]],
@@ -144,7 +145,7 @@ export function Footer() {
               <nav key={h} className="ftr-col" aria-label={h}><b>{h}</b>{links.map(([t, to]) => <Link key={t} to={to}>{t}</Link>)}</nav>
             ))}
           </div>
-          <Link to="/" className="wordmark" style={{ "--mark-ink": "#0B0C0E" }} aria-label="Agent House home"><Mark />Agent House</Link>
+          <Link to="/" className="wordmark" aria-label="Agent House home"><Wordmark /></Link>
         </div>
         <div className="ftr-fine">
           <span>© 2026 Agent House. Built in Manchester. Register data from Companies House and The Gazette under the Open Government Licence v3.0, and the FCA Financial Services Register.</span>

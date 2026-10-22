@@ -6,6 +6,7 @@ import { Reveal, Glyph, Tile, Terminal, DarkBand } from "../kit.jsx";
 import { LIVE, ApiError, dateTimeOf, pounds } from "../api.js";
 import { TOOLS, AGENT_RUN_STEP_PENCE, pence } from "../catalogue.js";
 import { HOST } from "./showcase.jsx";
+import { LensTable } from "./UseCases.jsx";
 
 /* ---------- Developer API, authenticated with the key itself ---------- */
 const KEY = "ah-dev-key";
@@ -236,7 +237,7 @@ export function ForAgents() {
   const term = AGENT_TERM(HOST);
   return (
     <Page title="For agents">
-      <PageHead label="For agents" title="Tools your agent pays for, one call at a time." lede="No account and no subscription. Your agent finds the catalogue, pays per call in USDC with x402, and gets an answer signed by us. Prefer invoices? Use an API key with prepaid credits."
+      <PageHead label="For agents" title="Facts your agent can cite, paid one call at a time." lede="Check a UK company before your agent pays, signs or onboards. Research the web with sources. No account and no subscription: your agent finds the catalogue, pays per call in USDC with x402, and gets an answer signed by us."
         actions={<><a href="#/for-agents?s=catalogue" className="btn btn-lg">See the catalogue</a><Link to="/developers/dashboard" className="btn btn-lg btn-line">Publish a tool</Link></>} />
       <section className="band" style={{ paddingTop: 72 }}>
         <div className="wrap split">
@@ -251,6 +252,11 @@ export function ForAgents() {
           <Reveal delay={120}><Terminal title="agent — x402" lines={term} /></Reveal>
         </div>
       </section>
+
+      <Section id="jobs">
+        <SectionHead label="What agents pay for" title="Checks first, then research" lede="From our map of 80 small-business jobs, scored for how likely another agent is to pay per call for each one. The top of the list is verification: stateless, quick and worth citing. Coming next: asking a business for a quote or a booking, and paying it." more={["All use cases", "/use-cases"]} />
+        <LensTable lens="agent" label="Agents" n={8} />
+      </Section>
 
       <Section id="catalogue" stone>
         <SectionHead label="Catalogue" title="Every tool, priced per call" lede={`First-party tools from Agent House and tools published by developers, who earn 80% of each call. Prices are in pence; x402 settles the same amount in USDC.`} />

@@ -6,12 +6,27 @@ import { Page, PageHead, Section, SectionHead, SpecTable, QA, NextPrev, CtaBand,
 import { Reveal, Glyph, Tile } from "../kit.jsx";
 import { useWs } from "../layout.jsx";
 import { TEMPLATES, RHYTHM_LABEL, PLANS } from "../../../../packages/core/templates.ts";
+import { USE_CASES } from "../../../../packages/core/usecases.ts";
+import { defaultBadges, role as roleOf, skill as skillOf } from "../../../../packages/core/badges.ts";
 import { SAMPLE_CHECKS, PROSPECTS } from "../data.js";
 import { NotFound } from "./Service.jsx";
 
 export const CATS = [["Grow", "Win more work"], ["Run", "Keep the day running"], ["Get paid", "Get paid on time"], ["Protect", "Avoid bad debts"], ["Know", "Know what's going on"]];
 const SENDS = new Set(["outreach", "inbox", "credit-control"]);
 const ALIAS = { "client-book-watch": "customer-watch", "new-client-check": "customer-check", "prospect-finder": "lead-finder" };
+
+/* Which building blocks each ready-made role uses, and which of the scored use cases it covers. */
+export const BLOCKS = {
+  outreach: ["Find", "Research", "Write", "Chase"], inbox: ["Converse", "Write", "Record"], "credit-control": ["Chase", "Write"],
+  "customer-watch": ["Watch", "Verify"], "customer-check": ["Verify"], "lead-finder": ["Find"], research: ["Research", "Report"],
+  briefing: ["Report"], bookings: ["Schedule", "Converse"], reviews: ["Watch", "Write"], social: ["Write"], bookkeeping: ["Record", "Transact"],
+};
+const COVERS = {
+  outreach: ["S1", "S3", "S4"], inbox: ["C1", "C2", "S5"], "credit-control": ["F1"], "customer-watch": ["R1"], "customer-check": ["F6", "F7"],
+  "lead-finder": ["S1"], research: ["K1", "S11"], briefing: ["K2"], bookings: ["C5", "C6"], reviews: ["S9", "M4"], social: ["M1"], bookkeeping: ["F3", "F4"],
+};
+const ST = { Live: "st-done", Partial: "st-running", "Not yet": "st-paused" };
+const Blocks = ({ k }) => <span className="uc-prims">{(BLOCKS[k] || []).map((b) => <i key={b}>{b}</i>)}</span>;
 
 function useHire() {
   const { me } = useWs() || {};
@@ -23,9 +38,28 @@ export function AgentsIndex() {
   const hire = useHire();
   return (
     <Page title="Agents">
-      <PageHead crumbs={[["Agents"]]} label="For businesses" title="Agents for every part of a small business" lede="Each agent does one job well. They work from your business profile, use tools from the Agent House catalogue, show every step, and ask before anything goes out in your name."
-        actions={<><Link to="/start" className="btn btn-lg">Start free</Link><Link to="/workspace" className="btn btn-lg btn-line">Try the demo</Link></>} />
+      <PageHead crumbs={[["Agents"]]} label="For businesses" title="Ready-made roles for your team" lede="Start from these, or describe a role we don't have and your team gets it, built from the same twelve building blocks. Every role works under an orchestrator, shows every step, and asks before anything goes out in your name."
+        actions={<><Link to="/start" className="btn btn-lg">Start free</Link><Link to="/floor" className="btn btn-lg btn-line">See a team at work</Link></>} />
       <Section tight>
+        <div className="cat-group">
+          <h2 className="cat-h cat-h-l">Lead<span>Included with every team</span></h2>
+          <div className="cat-grid cat-grid-l">
+            <article className="cat-card cat-lead">
+              <span className="ac-top"><span className="tile tile-agent"><Glyph name="org" /></span><span className="dt">Leads every team</span></span>
+              <h3 className="ac-name"><Link to="/how-it-works?s=team" className="card-link">Orchestrator</Link></h3>
+              <p className="cat-d">Turns your goals into tasks, gives each to the right role, follows them up and brings you what only you can decide.</p>
+              <span className="uc-prims"><i>Coordinate</i><i>Report</i></span>
+              <div className="cat-act"><Link to="/how-it-works?s=team" className="link link-s">How the team works</Link></div>
+            </article>
+            <article className="cat-card cat-own">
+              <span className="ac-top"><span className="tile tile-agent"><Glyph name="spark" /></span><span className="dt">Any rhythm you choose</span></span>
+              <h3 className="ac-name"><Link to="/floor" className="card-link">A role you describe</Link></h3>
+              <p className="cat-d">Tell us the job in a sentence. We give it standing orders and the skills it needs, from the tools below. You can reshape it by moving badges.</p>
+              <span className="uc-prims"><i>Any building block that's live</i></span>
+              <div className="cat-act"><Link to="/floor" className="btn btn-sm btn-line">Describe a role</Link></div>
+            </article>
+          </div>
+        </div>
         {CATS.map(([cat, line]) => (
           <div key={cat} className="cat-group">
             <h2 className="cat-h cat-h-l">{cat}<span>{line}</span></h2>
@@ -36,6 +70,7 @@ export function AgentsIndex() {
                   <h3 className="ac-name"><Link to={"/agents/" + t.key} className="card-link">{t.name}</Link></h3>
                   <p className="cat-d">{t.short}</p>
                   {t.status === "next" && <p className="dt">Needs {t.needs}</p>}
+                  <Blocks k={t.key} />
                   <div className="cat-act">
                     {t.status === "live" && <Link to={hire(t.key)} className="btn btn-sm btn-line">Hire</Link>}
                     <Link to={"/agents/" + t.key} className="link link-s">How it works</Link>
@@ -47,11 +82,11 @@ export function AgentsIndex() {
         ))}
       </Section>
       <Section stone>
-        <SectionHead label="How they work" title="Four rules every agent follows" lede="The same rules hold whichever agent you hire, and whichever tools it uses." />
+        <SectionHead label="How they work" title="Four rules every role follows" lede="The same rules hold for a ready-made role and one you describe, whichever skills it has." />
         <ol className="rules">
-          {[["workspace", "It knows your business", "Every agent reads your business profile first: what you do, who you serve, where, and how you write."],
+          {[["org", "It works in a team", "The orchestrator gives it tasks and follows them up. Work it can't finish goes back with the reason, never quietly dropped."],
             ["tools", "It uses real tools", "Register checks, web research and page reading from the Agent House catalogue. It never invents a fact, a figure or an email address."],
-            ["send", "It asks before it sends", "Emails wait in Approvals until you say yes. You can let follow-ups go on their own once you trust it."],
+            ["send", "It asks before it sends", "Emails wait on your desk until you say yes. Once you trust a role, let its follow-ups go on their own."],
             ["method", "It shows its work", "Every run is recorded step by step: each tool it called, what it sent, what came back."]].map(([g, t, d], i) => (
             <Reveal as="li" key={t} delay={i * 80}><Tile name={g} /><b>{t}</b><p>{d}</p></Reveal>
           ))}
@@ -136,18 +171,22 @@ export function AgentPage({ slug }) {
   const V = VISUAL[t.key];
   const prev = TEMPLATES[(i + TEMPLATES.length - 1) % TEMPLATES.length], next = TEMPLATES[(i + 1) % TEMPLATES.length];
   const live = t.status === "live";
+  const badges = live ? defaultBadges({ template: t.key, tools: t.tools, engine: t.engine }) : null;
+  const covers = (COVERS[t.key] || []).map((id) => USE_CASES.find((u) => u.id === id)).filter(Boolean);
   const spec = [
     ["Runs", RHYTHM_LABEL[t.rhythm]],
+    ["Built from", (BLOCKS[t.key] || []).join(", ")],
+    ...(badges && t.engine === "llm" ? [["Badges", [roleOf(badges.role)?.label, ...badges.skills.map((k) => skillOf(k)?.label)].filter(Boolean).join(", ")]] : []),
     ["You provide", t.needs],
     ...(SENDS.has(t.key) ? [["Before it sends", "Asks you first, by default. You can let follow-ups go on their own."]] : []),
     ...(t.engine === "llm" && t.tools.length ? [["Tools it can use", t.tools.join(", ")]] : []),
     ["Price", live ? `Included in every plan, from £${PLANS.starter.price} a month` : "Not yet available"],
   ];
   const faq = [
-    ...(SENDS.has(t.key) ? [["Will it send anything without asking?", "Not unless you tell it to. By default every email waits in Approvals. You can edit it, approve it or reject it, and replies come straight back to you, not to us."]] : []),
+    ...(SENDS.has(t.key) ? [["Will it send anything without asking?", "Not unless you tell it to. By default every email waits on your desk. You can edit it, approve it or reject it, and replies come straight back to you, not to us."]] : []),
     ["Where does its information come from?", t.engine === "llm" ? "Your business profile, the data you give it (leads, invoices, messages) and the tools it calls: Companies House, The Gazette, web search and the pages it reads. It's told never to invent facts or email addresses, and every step is recorded." : "Companies House, The Gazette and the FCA register, read directly and cited on every fact. It never guesses which company you meant; uncertain matches come back to you."],
     ["What does it cost?", `Every agent is included in every plan. Plans differ in how many agents work at once and how many actions they take a month. Starter is £${PLANS.starter.price} a month for two agents.`],
-    ["Can I change what it does?", t.engine === "llm" ? "Yes. Each agent has a brief in plain English that you can edit, plus when it runs, where it reports, and a monthly limit." : "You choose which companies it covers and where its alerts go: Slack, Teams or email."],
+    ["Can I change what it does?", t.engine === "llm" ? "Yes. Edit its brief in plain English, or move badges on the org chart: give it a skill, take one away, change when it runs or how much it does on its own. Changes wait until you apply them." : "You choose which companies it covers and where its alerts go: Slack, Teams or email."],
   ];
   return (
     <Page title={t.name}>
@@ -163,6 +202,21 @@ export function AgentPage({ slug }) {
           <div className="agent-vis">{V ? <V /> : <div className="panel next-panel"><Tile name={t.glyph} /><h3 className="h-small mt-s">Coming soon</h3><p className="body mt-s">{t.name} needs a connection to {t.needs}. We're building it now. Tell us you'd use it and we'll let you know the day it's ready.</p></div>}</div>
         </div>
       </Section>
+      {covers.length > 0 && (
+        <Section>
+          <SectionHead label="Jobs it covers" title="Where it fits among the use cases" lede="Scored 1 to 5 for small-business owners, developers and other agents, with what works today." more={["All use cases", "/use-cases"]} />
+          <div className="uc-table-box">
+            <table className="ledger ws-table uc-table">
+              <thead><tr><th>Job</th><th>Owners</th><th className="hide-sm">Developers</th><th className="hide-sm">Agents</th><th>Today</th></tr></thead>
+              <tbody>{covers.map((u) => (
+                <tr key={u.id}><td><b>{u.use_case}</b><br /><span className="muted">{u.what}</span></td>
+                  <td>{u.owner} of 5</td><td className="hide-sm">{u.dev} of 5</td><td className="hide-sm">{u.agent} of 5</td>
+                  <td><span className={"st " + ST[u.today]}>{u.today}</span>{u.needs && u.today !== "Live" && <><br /><span className="dt">Needs {u.needs.toLowerCase()}</span></>}</td></tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </Section>
+      )}
       <Section stone>
         <SectionHead label="Questions" title={`About ${t.name.toLowerCase()}`} />
         <QA items={faq} />

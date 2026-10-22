@@ -664,6 +664,13 @@ async function main() {
     await waitRun(ot.json.run_id, hb);
     const done = (await call("GET", `/api/ws/swarms/${swarm}/org`, undefined, { cookie: hb })).json.tasks.find((t) => t.id === ot.json.task_id);
     ok(done.status === "done" && done.result === "Done: drafted what was asked." && done.from === "You", JSON.stringify(done));
+    // The owner can drop an agent's task; owner to-dos keep their own route.
+    const extra = (await call("POST", `/api/ws/swarms/${swarm}/tasks`, { agent_id: researcher.id, title: "Find Peel Street's office manager" }, { cookie: hb })).json;
+    await waitRun(extra.run_id, hb);
+    const drop = await call("PATCH", `/api/ws/agent-tasks/${extra.task_id}`, { status: "dropped" }, { cookie: hb });
+    ok(drop.status === 200, drop.text);
+    ok((await call("GET", `/api/ws/swarms/${swarm}/org`, undefined, { cookie: hb })).json.tasks.find((t) => t.id === extra.task_id).status === "dropped", "task dropped");
+    ok((await call("PATCH", `/api/ws/agent-tasks/${extra.task_id}`, { status: "dropped" }, { cookie: false })).status === 401, "needs a session");
     // A goal from the command bar wakes the orchestrator.
     const g = (await call("POST", `/api/ws/swarms/${swarm}/ask`, { text: "goal: five law firms talking to us by December" }, { cookie: hb })).json;
     ok(g.type === "instruct" && g.agent.name === "Orchestrator" && g.run_id, JSON.stringify(g));

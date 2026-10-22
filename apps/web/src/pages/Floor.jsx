@@ -32,7 +32,7 @@ export function FloorHome() {
   const can = useCan();
   const swarms = useApi("/api/ws/swarms");
   const presets = useApi("/api/ws/swarm-presets");
-  const [desc, setDesc] = useState("");
+  const [desc, setDesc] = useState(() => { try { return localStorage.getItem("ah:start-desc") || ""; } catch { return ""; } });
   const [plan, setPlan] = useState(null);
   const act = useAction();
   const voice = useVoice({ serverVoice: presets.data?.voice, onText: (t) => setDesc((d) => (d ? d + " " : "") + t), onError: act.setError });
@@ -61,7 +61,7 @@ export function FloorHome() {
       <div className="fh">
         {(swarms.data?.swarms || []).length > 0 && (
           <section className="fh-mine">
-            <h2 className="h-sub">Your swarms</h2>
+            <h2 className="h-sub">Your teams</h2>
             <div className="fh-grid">
               {swarms.data.swarms.map((w) => (
                 <Link key={w.id} to={"/floor/" + w.id} className="fh-swarm">
@@ -75,7 +75,7 @@ export function FloorHome() {
         )}
 
         <section className="fh-hero">
-          <p className="label">Spin up a swarm</p>
+          <p className="label">Spin up a team</p>
           <h1 className="fh-h">Describe your business. We'll staff it with agents.</h1>
           <p className="body">Say what you do, who you sell to and what eats your time. You'll see the agents, how work moves between them and what it will use of your plan before anything starts.</p>
           {can("manager") ? (
@@ -89,10 +89,10 @@ export function FloorHome() {
                   </button>
                 )}
                 <span className="dt">{voice.state === "listening" ? "Listening… tap to stop" : voice.state === "thinking" ? "Writing that down…" : "Type, or tap the mic and talk"}</span>
-                <button className="btn btn-sm" disabled={act.busy}>{act.busy ? "Designing…" : "Design my swarm"}</button>
+                <button className="btn btn-sm" disabled={act.busy}>{act.busy ? "Designing…" : "Design my team"}</button>
               </div>
             </form>
-          ) : <Notice>Only a manager or owner can spin up a swarm.</Notice>}
+          ) : <Notice>Only a manager or owner can spin up a team.</Notice>}
           {act.error && <p className="form-err" role="alert">{act.error}</p>}
         </section>
 
@@ -160,7 +160,7 @@ const SwarmPreview = React.forwardRef(function SwarmPreview({ plan, busy, onSpin
         <div><dt>Sending</dt><dd>Every email waits for you<small>Change it per agent later</small></dd></div>
       </dl>
       {plan.locked && <Notice signal>{plan.locked}</Notice>}
-      {pv.fits === false && <Notice signal>This swarm needs more agents than your plan includes. Remove agents you don't need, or move to a bigger plan in Usage and plan.</Notice>}
+      {pv.fits === false && <Notice signal>This team needs more agents than your plan includes. Remove agents you don't need, or move to a bigger plan in Usage and plan.</Notice>}
       {can && <div className="actions"><button className="btn" onClick={onSpin} disabled={busy || !!blocked}>{busy ? "Spinning up…" : "Spin it up"}</button><span className="dt">Opens the Floor. Agents start on their schedules; nothing is sent without you.</span></div>}
     </section>
   );
@@ -226,7 +226,7 @@ export function FloorView({ id }) {
   const decide = async (actionId, verb) => { await api("POST", `/api/ws/actions/${actionId}/${verb}`, {}); await load(); };
   const setStatus = async (agentId, status) => { await api("PATCH", `/api/ws/my-agents/${agentId}`, { status }); await load(); };
 
-  if (err && !s) return <div className="fl fl-loading"><Failed error={err} retry={load} /><Link to="/floor" className="link">Back to your swarms</Link></div>;
+  if (err && !s) return <div className="fl fl-loading"><Failed error={err} retry={load} /><Link to="/floor" className="link">Back to your teams</Link></div>;
   if (!s) return <div className="fl fl-loading" aria-busy="true"><span className="fl-boot" aria-hidden="true">{[0, 1, 2, 3].map((i) => <i key={i} style={{ "--i": i }} />)}</span><p>Opening the Floor…</p></div>;
 
   const sw = s.swarm;
@@ -414,7 +414,7 @@ function Desk({ s, can, decide, onFailed }) {
   return (
     <aside className="desk" aria-label="Your desk">
       <h2 className="desk-h">Your desk<b>{n}</b></h2>
-      {n === 0 && <p className="desk-empty">Nothing needs you. The swarm will put drafts and decisions here.</p>}
+      {n === 0 && <p className="desk-empty">Nothing needs you. The team will put drafts and decisions here.</p>}
       {s.desk.approvals.length > 0 && <h3 className="desk-sh">To approve</h3>}
       {s.desk.approvals.map((a) => (
         <article key={a.id} className={"dk dk-approve" + (open === a.id ? " is-open" : "")}>
@@ -467,7 +467,7 @@ function CommandBar({ swarmId, stations, can, serverVoice, onDone, setStatus }) 
     if (yes) { await setStatus(entry.change.agent_id, entry.change.action === "pause" ? "paused" : "running"); }
   };
   const last = log[log.length - 1];
-  if (!can("manager")) return <div className="cmd cmd-ro"><span className="dt">Only a manager or owner can instruct the swarm.</span></div>;
+  if (!can("manager")) return <div className="cmd cmd-ro"><span className="dt">Only a manager or owner can instruct the team.</span></div>;
   return (
     <div className="cmd">
       {last && (
@@ -485,9 +485,9 @@ function CommandBar({ swarmId, stations, can, serverVoice, onDone, setStatus }) 
             <Glyph name="mic" size={22} />
           </button>
         )}
-        <label htmlFor="fl-cmd" className="sr-only">Instruct the swarm</label>
+        <label htmlFor="fl-cmd" className="sr-only">Instruct the team</label>
         <input id="fl-cmd" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off"
-          placeholder={voice.state === "listening" ? "Listening… tap the mic to send" : voice.state === "thinking" ? "Writing that down…" : `Ask the swarm, or @${stations.find((x) => x.engine === "llm")?.key || "agent"} do something   ( / )`} />
+          placeholder={voice.state === "listening" ? "Listening… tap the mic to send" : voice.state === "thinking" ? "Writing that down…" : `Ask the team, or @${stations.find((x) => x.engine === "llm")?.key || "agent"} do something   ( / )`} />
         <button type="button" className="cmd-chip" onClick={() => send("brief me")} disabled={busy}>Brief me</button>
         <button type="button" className={"cmd-icon" + (speak ? " is-on" : "")} onClick={toggleSpeak} aria-pressed={speak} aria-label={speak ? "Stop reading replies aloud" : "Read replies aloud"}><Glyph name={speak ? "speaker" : "mute"} size={18} /></button>
         <button className="btn btn-sm" disabled={busy || !q.trim()}>{busy ? "…" : "Send"}</button>
@@ -617,7 +617,7 @@ function Drawer({ drawer, s, can, close, setStatus, reload }) {
 function StationPanel({ st, s, can, setStatus, reload }) {
   const [input, setInput] = useState("");
   const act = useAction();
-  if (!st) return <p className="dt">This agent has left the swarm.</p>;
+  if (!st) return <p className="dt">This agent has left the team.</p>;
   const bp = s.blueprint.agents.find((a) => a.key === st.key);
   const owns = s.blueprint.stages.filter((x) => x.agent === st.key).map((x) => x.name);
   const hands = s.blueprint.handoffs.filter((h) => h.from === st.key);
@@ -648,7 +648,7 @@ function StationPanel({ st, s, can, setStatus, reload }) {
         {can("manager") && <button className="btn btn-sm btn-ghost" onClick={() => setStatus(st.id, st.status === "paused" ? "running" : "paused")}>{st.status === "paused" ? "Resume" : "Pause"} {st.name}</button>}
         <Link to={"/workspace/agents/" + st.id} className="link link-s">Settings and brief</Link>
       </div>
-      {bp?.template === "custom" && <p className="dt">A custom role designed for this swarm.</p>}
+      {bp?.template === "custom" && <p className="dt">A custom role designed for this team.</p>}
     </div>
   );
 }

@@ -1,14 +1,16 @@
 // Shared pieces for the v6 site: glyphs, reveal-on-scroll, marquee, terminal, code editor.
 import React, { useEffect, useRef, useState } from "react";
+import { WORDMARK as WM } from "../../../packages/core/brand.ts";
 import { reduced } from "./ui.jsx";
 
 /* ---------- Brand mark: a roof over an open door, drawn for Agent House ---------- */
-export function Mark({ className = "wm-mark" }) {
+/* The wordmark: "agenthouse" set in Unbounded, heavy then light, as outlines so it never depends on a font loading.
+   Type only, no symbol. src/brand/ has the SVG for print and the "ah" monogram used as the favicon. */
+export function Wordmark({ className = "wm" }) {
   return (
-    <svg className={className} viewBox="0 0 32 32" aria-hidden="true">
-      <rect x="1" y="1" width="30" height="30" rx="9" fill="currentColor" />
-      <path d="M8 15.5 16 9l8 6.5" fill="none" stroke="var(--mark-ink, #fff)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M12.5 24v-5.5h7V24" fill="none" stroke="var(--mark-ink, #fff)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+    <svg className={className} viewBox={WM.viewBox} aria-hidden="true" focusable="false">
+      <path d={WM.agent} fill="currentColor" />
+      <path d={WM.house} fill="currentColor" />
     </svg>
   );
 }
