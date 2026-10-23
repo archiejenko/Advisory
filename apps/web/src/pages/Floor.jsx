@@ -11,7 +11,7 @@ import { since } from "./Ws.jsx";
 import { useVoice, speakText, stopSpeaking, voiceSupported } from "../voice.js";
 import { OrgView } from "./Org.jsx";
 
-const POLL_MS = 4000;
+const POLL_MS = 4000, IDLE_POLL_MS = 15000;
 const STATE = { idle: "Idle", queued: "Starting", working: "Thinking", tool: "Using a tool", needs_you: "Needs you", failed: "Stopped", paused: "Paused" };
 const TPL_GLYPH = { outreach: "send", inbox: "inbox", "credit-control": "pound", "customer-watch": "watch", "customer-check": "check", "lead-finder": "prospect", research: "search", briefing: "bell", custom: "spark", orchestrator: "org" };
 const fmt = (unit, v) => unit === "pence" ? "£" + Math.round(v / 100).toLocaleString("en-GB") : unit === "days" ? `${v} ${v === 1 ? "day" : "days"}` : Number(v).toLocaleString("en-GB");
@@ -208,12 +208,24 @@ export function FloorView({ id }) {
         if (!first) animate(r.events);
       }
       cursor.current = Math.max(cursor.current, r.cursor || 0);
+      busy.current = (r.stations || []).some((st) => ["working", "tool", "queued"].includes(st.state));
+      return r;
     } catch (e) { setErr(e); }
   }, [id, animate]);
+  // Poll every 4 seconds while agents are working, every 15 when the team is quiet, and not at all in a hidden tab.
+  // A Floor that fell behind catches up page by page straight away.
+  const busy = useRef(true);
   useEffect(() => {
-    load();
-    const t = setInterval(() => { if (!document.hidden) load(); }, POLL_MS);
-    return () => clearInterval(t);
+    let gone = false, t;
+    const tick = async () => {
+      if (gone) return;
+      let r;
+      if (!document.hidden) r = await load();
+      if (gone) return;
+      t = setTimeout(tick, r?.more ? 250 : busy.current ? POLL_MS : IDLE_POLL_MS);
+    };
+    tick();
+    return () => { gone = true; clearTimeout(t); };
   }, [load]);
   useEffect(() => {
     const prev = document.body.style.overflow;

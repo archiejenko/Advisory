@@ -198,7 +198,7 @@ async function main() {
 
   await check("reconciliation re-reads every watched company and finds nothing new", async () => {
     const before = (await call("GET", "/api/ws/alerts?state=all")).json.counts.all;
-    const r = await admin("POST", "/run/reconcile");
+    const r = await admin("POST", "/run/reconcile?all=1");
     ok(r.json.result === 25, "25 watched: " + r.text);
     await sleep(6000);
     const after = (await call("GET", "/api/ws/alerts?state=all")).json.counts.all;

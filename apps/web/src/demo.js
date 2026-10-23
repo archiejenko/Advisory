@@ -109,7 +109,38 @@ function seed() {
     { id: "usr_demo", email: "dana@brightwork.example", name: "Dana Price", role: "owner" },
     { id: "usr_demo2", email: "sam@brightwork.example", name: "Sam Okafor", role: "manager" },
   ];
-  return { org: DEMO_ME.org, agents, leads, invoices, inbox, actions, runs, tasks, alerts, clients, byNo, channels, users };
+  const rules = [
+    { id: "hr_1", text: "Sign off as “Dana, Brightwork Cleaning”, not the full company name", source: "edit", status: "proposed", created_at: ago(3 * H) },
+    { id: "hr_2", text: "Never offer a discount by email; offer a free trial clean instead", source: "owner", status: "active", created_at: ago(6 * D) },
+    { id: "hr_3", text: "Keep first emails under 120 words", source: "edit", status: "active", created_at: ago(4 * D) },
+  ];
+  return { org: DEMO_ME.org, agents, leads, invoices, inbox, actions, runs, tasks, alerts, clients, byNo, channels, users, rules };
+}
+
+/** The Today screen, worked out from the demo state the same way the API works it out from the database. */
+function todayDemo(s) {
+  const t = day(0), wk = day(7), dayAgo = ago(D), weekAgo = ago(7 * D);
+  const approvals = s.actions.filter((a) => a.status === "proposed").map((a) => ({ id: a.id, agent: agentName(a.agent_id), agent_id: a.agent_id, title: a.title, reason: a.reason, payload: a.payload, created_at: a.created_at }));
+  const tasks = s.tasks.filter((x) => x.status === "open").map((x) => ({ ...x, agent: x.agent_id ? agentName(x.agent_id) : null }));
+  const rules = s.rules.filter((r) => r.status === "proposed");
+  const alerts = s.alerts.filter((a) => a.state === "open").sort((a, b) => (b.severity === "Critical") - (a.severity === "Critical")).slice(0, 5).map((a) => ({ id: a.id, number: a.number, severity: a.severity, title: a.title, name: a.client, created_at: a.created_at }));
+  const critical = alerts.filter((a) => a.severity === "Critical").length;
+  const failed = s.runs.filter((r) => r.status === "failed" && r.created_at >= dayAgo).map((r) => ({ id: r.id, error: r.error, finished_at: r.finished_at, agent: agentName(r.agent_id) }));
+  const unpaid = s.invoices.filter((i) => i.status === "unpaid");
+  const overdue = unpaid.filter((i) => i.due_date < t), soon = unpaid.filter((i) => i.due_date >= t && i.due_date <= wk);
+  const oldest = overdue.reduce((m, i) => Math.max(m, Math.round((Date.parse(t) - Date.parse(i.due_date)) / D)), 0);
+  const total = approvals.length + tasks.length + rules.length + critical + failed.length;
+  const sent = s.actions.filter((a) => a.status === "sent" && a.decided_at >= weekAgo).length;
+  return {
+    org: { name: s.org.name },
+    headline: total === 0 ? "Nothing needs you right now." : `${total} ${total === 1 ? "thing needs" : "things need"} you.`,
+    needs_you: { total, approvals, tasks, rules, failed },
+    came_in: { messages: s.inbox.filter((m) => m.status === "new").slice(0, 5), inbox_new: s.inbox.filter((m) => m.status === "new").length, leads: s.leads.filter((l) => l.created_at >= dayAgo).length, replies: s.leads.filter((l) => l.status === "replied").length },
+    at_risk: { alerts, critical_alerts: critical, overdue_count: overdue.length, overdue_pence: overdue.reduce((n, i) => n + i.amount_pence, 0), oldest_unpaid_days: oldest },
+    money: { overdue_pence: overdue.reduce((n, i) => n + i.amount_pence, 0), due_this_week_pence: soon.reduce((n, i) => n + i.amount_pence, 0) },
+    week: { replies: 2, emails_sent: sent + 4, new_leads: s.leads.filter((l) => l.created_at >= weekAgo).length, won: 1 },
+    next_runs: s.agents.filter((a) => a.status === "running" && a.next_run_at).sort((a, b) => a.next_run_at.localeCompare(b.next_run_at)).slice(0, 3).map((a) => ({ id: a.id, name: a.name, next_run_at: a.next_run_at })),
+  };
 }
 
 let S = null;
@@ -169,6 +200,8 @@ export async function demoApi(method, path, body) {
         activity: s.runs.slice(0, 8).map((x) => ({ id: x.id, status: x.status, summary: x.summary, created_at: x.created_at, trigger: x.trigger, agent: agentName(x.agent_id), template: agentTpl(x.agent_id) })),
       };
     }
+    if (p === "/today") return todayDemo(s);
+    if (p === "/rules") return { rules: s.rules.filter((r) => r.status !== "dismissed").sort((a, b) => (a.status === "proposed" ? -1 : 0) - (b.status === "proposed" ? -1 : 0)) };
     if (p === "/templates") return { templates: TEMPLATES.map(({ brief, instructions, kickoff, ...t }) => ({ ...t, rhythm_label: RHYTHM_LABEL[t.rhythm], default_brief: brief({ name: s.org.name, ...PROFILE }), hired: s.agents.filter((a) => a.template === t.key).length })) };
     if (p === "/my-agents") return { agents: s.agents.map((a) => ({ ...a, rhythm_label: RHYTHM_LABEL[a.rhythm], waiting: s.actions.filter((x) => x.agent_id === a.id && x.status === "proposed").length, runs: s.runs.filter((x) => x.agent_id === a.id).length })) };
     if ((r = m(/^\/my-agents\/([^/]+)$/))) {
@@ -226,6 +259,23 @@ export async function demoApi(method, path, body) {
   }
 
   // Changes
+  if (method === "POST" && p === "/actions/batch") {
+    const results = (body.ids || []).map((aid) => {
+      const a = s.actions.find((x) => x.id === aid);
+      if (!a || a.status !== "proposed") return { id: aid, ok: false, error: "This has already been decided." };
+      Object.assign(a, body.decision === "approve" ? { status: "sent", decided_by: DEMO_ME.user.email, decided_at: now(), result: "Sent (demo: nothing left this page)" } : { status: "rejected", decided_by: DEMO_ME.user.email, decided_at: now() });
+      return { id: aid, ok: true, status: a.status };
+    });
+    return { done: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, results };
+  }
+  if (method === "POST" && p === "/rules") {
+    const text = String(body.text || "").trim();
+    if (text.length < 4) fail(400, "Say the rule in a few words.");
+    if (s.rules.some((r) => r.status !== "dismissed" && r.text.toLowerCase() === text.toLowerCase())) return { duplicate: true };
+    s.rules.unshift({ id: id("hr"), text, source: "owner", status: "active", created_at: now() });
+    return { id: s.rules[0].id, duplicate: false };
+  }
+  if (method === "PATCH" && (r = m(/^\/rules\/([^/]+)$/))) { Object.assign(s.rules.find((x) => x.id === r[1]) || fail(404, "Rule not found."), body); return { ok: true }; }
   if (method === "POST" && (r = m(/^\/actions\/([^/]+)\/(approve|reject)$/))) {
     const a = s.actions.find((x) => x.id === r[1]);
     if (!a || a.status !== "proposed") fail(409, "This has already been decided.");

@@ -215,7 +215,8 @@ describe("the command bar", () => {
     const { raw, env, org, swarmId } = await swarm();
     const r = await ask(env, org.id, swarmId, "brief me", { ...who, voice: true });
     expect(r.type).toBe("brief");
-    expect(r.say).toMatch(/Nothing is waiting for your approval\. New leads this week: 4\./);
+    // Numbers that matter first, then what's waiting, then how busy the agents were.
+    expect(r.say).toMatch(/^New leads this week: 4\. .*Nothing is waiting for your approval\. .*quiet since your last brief/);
     expect((raw.prepare("SELECT last_brief_at FROM swarm WHERE id = ?").get(swarmId) as any).last_brief_at).toBeTruthy();
     expect(await briefText(env, org.id, swarmId)).toMatch(/quiet since your last brief/);
   });

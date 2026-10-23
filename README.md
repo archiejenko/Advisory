@@ -3,6 +3,7 @@
 One place for everything agentic, with three doors:
 
 - **For businesses:** a team of agents for any small business, led by an orchestrator. Ready-made roles (outreach, inbox, credit control, customer and supplier watch, company checks, lead lists, research, a weekly briefing) or roles you describe, all built from the same twelve building blocks. They work from the business profile, use catalogue tools, record every step, and ask before anything is sent. The lead offer is "check before you trust or pay": customers and suppliers checked on the registers and watched daily.
+- **Today:** the workspace home (`/#/workspace`). What needs the owner (drafts to approve in one go, tasks, critical alerts, runs that stopped), what came in, money owed and due, and the week's outcomes. House rules (`/#/workspace/rules`, "How we work") are learned from the owner's edits to drafts, or added directly, and every agent follows them.
 - **The Floor:** describe the business (typed or spoken) and Claude designs a swarm of agents for it, or start from a preset (Sales floor, Back office; Markets desk is shown but locked until market data is connected). The swarm runs on a live Floor: a station per agent showing what it's doing, work cards moving through stages, handoffs between agents, KPIs, a desk of things waiting for you, a CRM (companies, contacts, deals, timeline), and a command bar you can talk to from your phone.
 - **The org chart:** an orchestrator at the top of every team turns goals into tasks (`assign-task`, `check-tasks`), roles below it (up to two levels) do the work and report back (`finish-task`), and badges (role, skills, autonomy, rhythm) set what each agent is. Shaped by drag and drop on the Floor's Org tab; the rules live in `packages/core/badges.ts` so the UI and the API agree.
 - **For developers:** call the tool catalogue over REST or MCP, run a whole agent in one call (`/v1/agents/run`), or publish an API as a tool and earn 80% of every paid call.
@@ -57,11 +58,12 @@ Opened straight from disk, `apps/web/dist/index.html` runs as an offline demo wi
 ## Tests
 
 ```bash
-npm test               # unit (88): matching, checks, signing, tenant isolation, rate limits, scheduling, catalogue, swarms, org chart,
+npm test               # unit (120): matching, checks, signing, tenant isolation, register budget lanes, scheduling, catalogue, swarms, org chart,
+                       # Today and house rules, and the scale fixes (queues, crons, the Floor, inbound mail, clean-up),
                        # plus the hardening and swarm suites run against real SQL (Node's built-in SQLite, every migration applied)
 npm run typecheck
 npm run test:e2e       # API: 42 flows against wrangler dev and the mocks
-node tests/e2e/ui.mjs  # browser: 20 flows clicking through the real website in Chromium
+node tests/e2e/ui.mjs  # browser: 21 flows clicking through the real website in Chromium
 ```
 
 Stop any running `npm run dev` or `npm run mocks` before the end-to-end suites; they start their own on ports 8787 and 8788 with fresh state. The browser suite saves screenshots to `ui-shots/`.
@@ -72,7 +74,8 @@ Stop any running `npm run dev` or `npm run mocks` before the end-to-end suites; 
 |---|---|---|
 | Website | `/` | Hash routes. Workspace pages show the live workspace when signed in and the demo when not. The site's story comes from `packages/core/usecases.ts`: 80 SMB use cases scored for owners, developers and agents, the twelve building blocks, and sector packs (`/#/use-cases`). The wordmark is type only, as outlines in `packages/core/brand.ts`, with the "ah" favicon in `apps/web/src/brand/`. |
 | Sign-in | `/api/auth/*` | Email magic links. Session is an HttpOnly cookie. |
-| Workspace | `/api/ws/*` | Overview, agent catalogue and hiring, runs, approvals, leads, tasks, invoices, inbox, alerts, customers, imports, briefs, channels, usage and plan, team, audit, billing. Roles: owner, manager, viewer. Every query is forced through an org filter. |
+| Today and house rules | `/api/ws/today`, `/api/ws/actions/batch`, `/api/ws/rules*` | The home screen in one call; approve or reject up to 50 drafts at once (each decided on its own); list, add, keep or dismiss house rules. An approval with edits proposes a rule from what changed (one short model call, after the response). The command bar takes `rule: …` too. |
+| Workspace | `/api/ws/*` | Overview (now "Agents and activity", `/#/workspace/overview`), agent catalogue and hiring, runs, approvals, leads, tasks, invoices, inbox, alerts, customers, imports, briefs, channels, usage and plan, team, audit, billing. Roles: owner, manager, viewer. Every query is forced through an org filter. |
 | Org chart | `/api/ws/swarms/:id/org`, `/api/ws/swarms/:id/goals`, `/api/ws/swarms/:id/tasks`, `/api/ws/agent-tasks/:id` | Read the tree, badges and tasks; apply a list of changes all or nothing; set a goal (wakes the orchestrator); give an agent a task; close or drop one. Owner to-dos stay at `/api/ws/tasks`. |
 | Swarms and the Floor | `/api/ws/swarm-presets`, `/api/ws/swarms*`, `/api/ws/work-items/:id` | Plan a blueprint from a description, preview its cost against the plan, spin it up, poll the Floor (`GET /swarms/:id?since=<cursor>`), ask the command bar, brief, pause all, remove. `/#/floor` and `/#/floor/:id`. |
 | CRM | `/api/ws/crm/*` | Companies (leads), contacts, deals and an activity timeline written by agents and people. |
@@ -83,11 +86,19 @@ Stop any running `npm run dev` or `npm run mocks` before the end-to-end suites; 
 | Discovery | `/.well-known/agent-house.json`, `/llms.txt` | What an agent needs to find the catalogue, MCP, payment details and the signing key. |
 | MCP | `/mcp` | The whole catalogue as tools, billed to the API key in the `Authorization` header. |
 | Developers | `/api/dev/*`, `/#/developers/dashboard` | Signed in with an API key: publish tools (reviewed before they go live), calls, credits, earnings. Requests to developer endpoints carry `X-AgentHouse-Timestamp` and `X-AgentHouse-Signature: v1=hmac_sha256(secret, ts + "." + body)`. |
-| Operator | `/api/admin/*`, `/#/admin` | Approve customer checks and developer tools, create workspaces, load the company index, run jobs. |
+| Operator | `/api/admin/*`, `/#/admin` | Approve customer checks and developer tools, create workspaces, load the company index, run jobs (`/run/reconcile?all=1` re-checks every company at once). Jobs that ran out of retries: `GET /dead-jobs`, then `POST /dead-jobs/:id/retry` or `/resolve`. |
 | Ingest | `/api/internal/*` | Stream listener posts events here. |
 | Webhooks | `/api/webhooks/stripe` | Signature-checked, replay-protected. |
 
-Background work runs on two queues. `AGENT_JOBS` carries agent runs only, one per batch, because a run can take minutes. `JOBS` carries everything else (imports, baselines, alert delivery, digests, webhooks, customer checks, reconciliation batches, monthly prospect lists, workspace purges). Crons (UTC): every 15 minutes, the stuck-run sweep (runs "running" for 15 minutes are failed with their cost recorded; runs queued for 30 minutes are re-queued) and then due agents (schedules are kept in UK time); Gazette poll every 30 minutes; reconciliation of every watched company Monday 06:00, fanned out in batches of 50; digests 07:00; lead lists on the first working day of the month at 08:00, one queued job per business; retention 03:00.
+Background work runs on two queues, plus a dead-letter queue. `AGENT_JOBS` carries agent runs only, one per batch, because a run can take minutes; at most 2 runs per workspace go at once (`RUNS_AT_ONCE`), and a run waiting for a slot is put back with a delay rather than spending a retry. `JOBS` carries everything else (imports, baselines, alert delivery, digests, webhooks, customer checks, re-check batches, scheduled agent starts, monthly prospect lists, workspace purges). Anything that runs out of retries lands in `agent-house-dead`, whose consumer records it in `dead_job` and emails the operator at most once an hour.
+
+Crons (UTC), each doing one indexed read and queuing work in batches:
+- every 15 minutes: the stuck-run sweep (runs "running" for 15 minutes are failed with their cost recorded; runs queued for 30 minutes are re-queued once), then due agents, handed to the queue as `agent_start` messages (a start delivered twice makes one run). Agents set for the same hour start at a fixed minute between :00 and :44, from their id, so 08:00 isn't one spike.
+- every 30 minutes: the Gazette poll, resuming from the newest notice it saw.
+- 06:00 daily: the re-check of a seventh of the watched companies (by the last two digits of the number), so each is re-read once a week.
+- 07:00: digests. First working day of the month at 08:00: lead lists. 03:00: retention.
+
+**The Companies House budget** (600 calls per 5 minutes per key) is shared in lanes (`lib/registers.ts`): bulk work (the re-check, imports, first reads) may use 60% of a window, stream alerts 85%, and live checks (a person or an agent waiting) up to 97%. A token is only taken while the lane has room, and a job that meets the limit goes back on the queue with a delay instead of using a retry (up to 48 waits, about four hours). Truth API watches are matched by an indexed `watch_number` table, not by scanning every watch.
 
 **Agent safety.** Text from inbound mail, web pages and search results is treated as information, never instructions. Without a person approving it, an agent's email only goes to an address already tied to the record it names: the lead's own address (for a lead saved before this run), the invoice's customer, or the sender of the inbox message being answered. Anything else waits in Approvals, whatever the agent's autonomy setting.
 
@@ -95,9 +106,11 @@ Background work runs on two queues. `AGENT_JOBS` carries agent runs only, one pe
 
 **Billing state.** Agents stop (hiring, manual runs, schedules and already-queued runs) when a workspace is cancelled, its trial has ended, or Stripe reports the subscription `unpaid`, `canceled`, `incomplete_expired` or `paused`; `past_due` gets 7 days' grace from the first failure. Plan changes in the Stripe customer portal update the workspace's plan by price id. Webhook events are recorded as seen only after they've been processed, so a failure is retried by Stripe instead of dropped.
 
-**Deletion.** Thirty days after cancellation, retention queues a purge of the workspace: every workspace table (agents, runs, actions, leads, invoices, inbox, tasks, usage, clients, alerts and the rest), agent transcripts, prospect lists and uploaded files in R2, and people who belong to no other workspace. The audit log keeps the actions with targets and details cleared.
+**Deletion.** Thirty days after cancellation, retention queues a purge of the workspace, deleted in chunks of 2,000 rows (a large workspace takes several queued passes): every workspace table (agents, runs, actions, leads, invoices, inbox, tasks, usage, clients, alerts and the rest), agent transcripts, prospect lists and uploaded files in R2, and people who belong to no other workspace. The audit log keeps the actions with targets and details cleared. Retention also trims what grows: the Floor's log after 30 days (by id), processed register events after 90 days, and message and draft bodies 90 days after they arrived or were decided (the rows stay). Each step runs on its own, so one failing step doesn't stop the rest.
 
-**Swarms.** A swarm is a checked JSON blueprint (`packages/core/swarms.ts`, validated in `lib/swarm.ts`): agents (catalogue templates, or custom roles with standing orders and a whitelisted tool set), stages with rules that place records on the board (`lead`, `invoice`, `message`), handoffs, KPIs and a skin. `lib/engine.ts` turns a description into a blueprint with one Claude call plus one correction round, falling back to the nearest preset; it never fails the owner. Swarm agents count against the plan's agents, and spinning up reuses free agents of the same template. Cards follow their records (`syncSwarm`, after every run and every change you make), and a `hand-off` tool lets one agent pass a card to another: allowed routes only, at most 5 a day per card, never straight back, and the note is passed as information, not instructions. Every step lands in `swarm_event`, which the Floor polls every 4 seconds from a cursor. The command bar has fast paths (`@agent do this`, `brief me`, `pause outreach`) and otherwise one routing call to Claude; pausing or resuming always comes back for you to confirm on screen, and nothing can be approved or sent from it.
+**Inbound mail.** Each enquiries address takes at most 300 messages an hour (`INBOX_PER_HOUR`). Auto-replies, newsletters and list mail are kept as "ignored" and don't wake the inbox agent, and a burst of mail becomes one inbox run: an agent with a run already waiting isn't woken again.
+
+**Swarms.** A swarm is a checked JSON blueprint (`packages/core/swarms.ts`, validated in `lib/swarm.ts`): agents (catalogue templates, or custom roles with standing orders and a whitelisted tool set), stages with rules that place records on the board (`lead`, `invoice`, `message`), handoffs, KPIs and a skin. `lib/engine.ts` turns a description into a blueprint with one Claude call plus one correction round, falling back to the nearest preset; it never fails the owner. Swarm agents count against the plan's agents, and spinning up reuses free agents of the same template. Cards follow their records (`syncSwarm`, after every run and every change you make), and a `hand-off` tool lets one agent pass a card to another: allowed routes only, at most 5 a day per card, never straight back, and the note is passed as information, not instructions. Every step lands in `swarm_event`, which the Floor polls from a cursor: every 4 seconds while an agent is working, every 15 when the team is quiet, never in a hidden tab, and page by page when it fell behind. A poll re-reads the records behind the board at most once a minute (runs, approvals, mail and edits sync straight away), its numbers are cached for a minute, and an import of hundreds of records logs one line instead of one per card. The command bar has fast paths (`@agent do this`, `brief me`, `pause outreach`) and otherwise one routing call to Claude; pausing or resuming always comes back for you to confirm on screen, and nothing can be approved or sent from it.
 
 **Two engines for agents.** LLM agents (outreach, inbox, credit control, research, briefing) run through the tool registry in `lib/agents.ts` and `lib/tools.ts`. The register agents (customer watch, customer check, prospect finder) are the original MSP engines (`agent_config`, `lib/process.ts`, `lib/truth.ts`, briefs); hiring one switches its engine on. New capabilities go into the tool registry.
 
@@ -127,7 +140,7 @@ node -e "crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']).then
 for s in SIGNING_JWK CHANNEL_KEY CH_API_KEY FCA_EMAIL FCA_KEY STRIPE_SECRET STRIPE_WEBHOOK_SECRET INGEST_SECRET ADMIN_TOKEN OPERATOR_EMAIL TURNSTILE_SECRET ANTHROPIC_API_KEY SEARCH_API_KEY; do wrangler secret put $s; done
 ```
 
-Voice uses the Workers AI binding (`[ai] binding = "AI"` in `wrangler.toml`, set `VOICE_SPEAKER` and `VOICE_LANGUAGE` in vars). Workers AI always runs remotely, so local dev and the tests point `VOICE_HTTP_URL` at the mock instead; leave it unset in production. Without either, voice routes answer 503 `voice_off` and the Floor uses the browser's speech. Apply migrations `0004_swarms.sql` and `0005_org.sql` before deploying the Floor and the org chart.
+Voice uses the Workers AI binding (`[ai] binding = "AI"` in `wrangler.toml`, set `VOICE_SPEAKER` and `VOICE_LANGUAGE` in vars). Workers AI always runs remotely, so local dev and the tests point `VOICE_HTTP_URL` at the mock instead; leave it unset in production. Without either, voice routes answer 503 `voice_off` and the Floor uses the browser's speech. Apply migrations `0004_swarms.sql`, `0005_org.sql` and `0006_scale.sql` (indexes, `watch_number`, `dead_job`, house rules) before deploying. `wrangler.toml` also turns on Smart Placement (the Worker runs near D1), Workers Logs at 20% sampling, the dead-letter consumer, and a Workers Rate Limiting binding (`WS_LIMITER`, 300 workspace requests a minute per workspace). `npm run deploy` refuses to deploy while `wrangler.toml` still has `REPLACE_WITH_…` placeholders.
 
 `CHANNEL_KEY` is 32 random bytes, base64url. `TURNSTILE_SECRET` is optional; set `TURNSTILE_SITE_KEY` in vars alongside it. `ANTHROPIC_API_KEY` runs the agents (model from `AGENT_MODEL`; costs are recorded per run using `AGENT_PRICE_IN_PENCE` and `AGENT_PRICE_OUT_PENCE` per million tokens, with cache writes and reads at `AGENT_CACHE_WRITE_X` and `AGENT_CACHE_READ_X` of the input price).
 
@@ -142,6 +155,17 @@ npm run deploy
 Run the stream listener somewhere that keeps a process alive (Cloudflare Containers or a small VM) with `STREAM_KEY`, `API_URL` and `INGEST_SECRET`. It resumes from the last stored timepoint after a restart.
 
 Point Cloudflare Email Routing for `INBOUND_DOMAIN` (a catch-all) at the Worker so each business's inbox address (`<alias>@INBOUND_DOMAIN`) reaches the inbox agent, replies from leads are matched, and STOP replies unsubscribe. Point `check@` your domain at it too for emailed brief requests.
+
+## Still to do from the architecture check and the platform plan
+
+Done in this release: everything in phase 0 of the check, the register budget lanes and the spread re-check (phase 1, without a Durable Object: the lanes live on the D1 counter), fair agent scheduling, inbound limits and chunked clean-up (phase 2), the Floor diet without push (phase 3), and phase A of the platform plan (Today, batch approval, outcomes-first briefings, house rules).
+
+Not yet:
+- **Mailbox and accounts connections** (Outlook, Gmail, Xero, QuickBooks, FreeAgent). These need app registrations: Google's restricted Gmail scopes need its verification and a yearly security assessment.
+- **Refresh led by the stream:** a re-check still reads all four Companies House resources for a company. Ask Companies House for a higher limit before the watch grows past a few thousand companies.
+- **Hosting for the stream listener,** with an alarm when its position stops moving.
+- **Splitting the data** (register data in its own database, workspace data sharded), planned for about 300 workspaces.
+- **Push for the Floor** over WebSockets, a separate fast lane for runs a person asked for, and the phone app with notifications (phase C).
 
 ## Confirm before going live
 

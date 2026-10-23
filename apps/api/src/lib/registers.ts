@@ -11,16 +11,27 @@ export class UpstreamError extends Error {
   constructor(public source: string, public status: number, message: string) { super(message); }
 }
 
+/**
+ * The Companies House budget is shared by everything, so it is split into lanes. Bulk work (the weekly re-check,
+ * imports, first reads) may use 60% of a five-minute window, alerts from the stream 85%, and live checks (a person
+ * or an agent waiting on the answer) the rest. A busy Monday can no longer lock out a live check or a liquidation alert.
+ */
+export type Lane = "live" | "alert" | "bulk";
+export const LANE_SHARE: Record<Lane, number> = { bulk: 0.6, alert: 0.85, live: 0.97 };
+/** The same env, with register calls counted against another lane. */
+export const withLane = <E extends Env>(env: E, lane: Lane): E => ({ ...env, REG_LANE: lane });
+
 async function takeToken(env: Env, cost = 1) {
   const limit = Number(env.CH_RATE_LIMIT || 600);
+  const lane: Lane = (env.REG_LANE as Lane) || "live";
   const now = new Date();
   const slot = Math.floor(now.getTime() / 300000);
-  const bucket = "ch:" + slot;
+  const retryAfter = Math.max(5, Math.ceil(((slot + 1) * 300000 - now.getTime()) / 1000));
+  // Take the token only while this lane has room, so a refused call doesn't use up the window for anyone else.
   const row = await one<{ count: number }>(env,
-    "INSERT INTO rate_window (bucket, count) VALUES (?, ?) ON CONFLICT(bucket) DO UPDATE SET count = count + excluded.count RETURNING count", bucket, cost);
-  if ((row?.count || 0) > limit * 0.95) { // keep 5% headroom for live new-client checks
-    throw new RateLimited(Math.max(5, Math.ceil(((slot + 1) * 300000 - now.getTime()) / 1000)));
-  }
+    `INSERT INTO rate_window (bucket, count) VALUES (?, ?) ON CONFLICT(bucket) DO UPDATE SET count = count + excluded.count
+     WHERE rate_window.count + excluded.count <= ? RETURNING count`, "ch:" + slot, cost, Math.floor(limit * LANE_SHARE[lane]));
+  if (!row) throw new RateLimited(retryAfter);
 }
 
 async function ch(env: Env, path: string): Promise<any | null> {

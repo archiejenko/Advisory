@@ -5,6 +5,18 @@ import { checkInput } from "./truth";
 import { sendMail } from "./mail";
 import { wakeOnEvent } from "./agents";
 import { syncOrgSwarms } from "./swarm";
+import { hit } from "./limits";
+
+/** Most messages one enquiries address takes in an hour. Past this, mail is refused so a flood can't run up costs. */
+export const INBOX_PER_HOUR = 300;
+
+/** Auto-replies, newsletters and mailing lists: kept for the record, but they don't wake the inbox agent. */
+export function isAutomated(h: { get(name: string): string | null }) {
+  const auto = (h.get("auto-submitted") || "").toLowerCase();
+  if (auto && auto !== "no") return true;
+  if (/^(bulk|list|junk|auto_reply)$/i.test((h.get("precedence") || "").trim())) return true;
+  return !!(h.get("list-id") || h.get("list-unsubscribe") || h.get("x-autoreply") || h.get("x-autorespond"));
+}
 import { logActivity, leadForEmail } from "./crm";
 import PostalMime from "postal-mime";
 
@@ -52,11 +64,15 @@ export async function onEmail(message: ForwardableEmailMessage, env: Env) {
   const org = local && local !== "check" ? await one<any>(env, "SELECT id FROM org WHERE inbox_alias = ?", local) : null;
   if (message.rawSize > MAX_RAW) { message.setReject?.("Message too large"); return; }
   if (org) {
+    if (!(await hit(env, "inbound", org.id, Number(env.INBOX_PER_HOUR || INBOX_PER_HOUR)))) { message.setReject?.("Too many messages to this address. Try again later."); return; }
+    const automated = isAutomated(message.headers);
     const parsed = await parseMessage(await new Response(message.raw).arrayBuffer());
     const subject = parsed.subject || message.headers.get("subject") || "";
     const body = parsed.text;
     const id = newId("msg");
-    await run(env, "INSERT INTO inbox_message (id, org_id, from_addr, subject, body, received_at) VALUES (?,?,?,?,?,?)", id, org.id, from, subject.slice(0, 300), body.slice(0, 20000), nowIso());
+    await run(env, "INSERT INTO inbox_message (id, org_id, from_addr, subject, body, status, category, received_at) VALUES (?,?,?,?,?,?,?,?)", id, org.id, from, subject.slice(0, 300), body.slice(0, 20000),
+      automated ? "ignored" : "new", automated ? "automated" : null, nowIso());
+    if (automated) return;
     // A reply from someone we emailed marks that lead as replied, and goes on its timeline.
     await run(env, "UPDATE lead SET status = 'replied' WHERE org_id = ? AND email = ? AND status IN ('new','contacted')", org.id, from);
     const leadId = await leadForEmail(env, org.id, from);
@@ -65,7 +81,7 @@ export async function onEmail(message: ForwardableEmailMessage, env: Env) {
       await run(env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", from, "reply_stop", nowIso());
       await run(env, "UPDATE lead SET status = 'unsubscribed' WHERE org_id = ? AND email = ?", org.id, from);
     }
-    await syncOrgSwarms(env, org.id);
+    await syncOrgSwarms(env, org.id, { force: false }); // at most once every 10 seconds, however much mail arrives
     await wakeOnEvent(env, org.id, "inbox", `New message from ${from}: ${subject}`);
     return;
   }

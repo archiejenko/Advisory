@@ -7,7 +7,7 @@ import type { Blueprint } from "../../../../packages/core/swarms";
 import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
 import { emit, loadSwarm, specFor, syncSwarm } from "./swarm";
-import { hireAgent, setAgentStatus, nextRunAt, startRun } from "./agents";
+import { hireAgent, setAgentStatus, nextRunAt, startRun, spreadMinute } from "./agents";
 import { badgesOf } from "./orgbase";
 
 export type OrgView = OrgAgent & { key: string; template: string; engine: string; tools: number; last_run_at: string | null; next_run_at: string | null; status: string };
@@ -113,7 +113,7 @@ export async function applyOrg(env: Env, orgId: string, swarmId: string, user: {
     }
     if (old.autonomy !== a.autonomy) await run(env, "UPDATE agent SET autonomy = ? WHERE id = ? AND org_id = ?", a.autonomy, a.id, orgId);
     if (old.rhythm !== a.rhythm) {
-      await run(env, "UPDATE agent SET rhythm = ?, next_run_at = ? WHERE id = ? AND org_id = ?", a.rhythm, row.status === "running" ? nextRunAt(a.rhythm as any, row.run_hour) : null, a.id, orgId);
+      await run(env, "UPDATE agent SET rhythm = ?, next_run_at = ? WHERE id = ? AND org_id = ?", a.rhythm, row.status === "running" ? nextRunAt(a.rhythm as any, row.run_hour, new Date(), spreadMinute(a.id)) : null, a.id, orgId);
       if (bpa) bpa.rhythm = a.rhythm as any;
     }
     if (old.reports_to !== a.reports_to) {

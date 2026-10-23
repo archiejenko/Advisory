@@ -46,7 +46,9 @@ export async function claude(env: Env, req: { system: string; messages: Msg[]; t
   for (let attempt = 0; ; attempt++) {
     let res: Response | null = null, networkError = "";
     try {
-      res = await fetch(url, { method: "POST", headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" }, body: payload });
+      // A stalled call would hold a run slot until the consumer's time limit. Give up after 90 seconds and retry.
+      res = await fetch(url, { method: "POST", headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" }, body: payload,
+        signal: AbortSignal.timeout(Number(env.CLAUDE_TIMEOUT_MS || 90000)) });
     } catch (e: any) { networkError = String(e?.message || e); }
     if (res?.ok) return res.json<Reply>();
     const status = res?.status ?? 0;

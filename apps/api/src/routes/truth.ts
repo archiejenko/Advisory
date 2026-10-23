@@ -41,6 +41,9 @@ async function watchOp(env: Env, keyId: string, raw: string[], webhook: string) 
   if (numbers.some((n) => !NUMBER.test(n))) throw bad("Company numbers are 8 characters, for example 13985402 or SC123456.");
   const id = newId("wch");
   await run(env, "INSERT INTO watch_subscription (id, key_id, numbers, webhook, created_at) VALUES (?,?,?,?,?)", id, keyId, JSON.stringify(numbers), webhook, nowIso());
+  // One row per number, so a stream event finds its watchers by index instead of scanning every watch.
+  for (let i = 0; i < numbers.length; i += 50)
+    await env.DB.batch(numbers.slice(i, i + 50).map((n) => env.DB.prepare("INSERT OR IGNORE INTO watch_number (watch_id, number) VALUES (?,?)").bind(id, n)));
   // Read each company once, so the first change can be compared against something.
   for (const n of numbers) {
     const known = await one(env, "SELECT 1 AS x FROM company WHERE number = ?", n);
@@ -91,6 +94,7 @@ truth.delete("/watch/:id", async (c) => {
   if (!key) throw new HttpError(401, "invalid_key", "That API key isn't recognised.");
   const r = await run(c.env, "UPDATE watch_subscription SET deleted_at = ? WHERE id = ? AND key_id = ? AND deleted_at IS NULL", nowIso(), c.req.param("id"), key.id);
   if (!r.meta.changes) throw notFound("Watch");
+  await run(c.env, "DELETE FROM watch_number WHERE watch_id = ?", c.req.param("id"));
   return c.json({ ok: true });
 });
 

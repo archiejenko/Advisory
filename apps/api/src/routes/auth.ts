@@ -60,6 +60,10 @@ export async function requireSession(c: Context<{ Bindings: Env; Variables: Vars
   if (!s || s.expires_at < nowIso()) throw new HttpError(401, "signed_out", "Your session has ended. Sign in again.");
   const m = await one<any>(c.env, "SELECT role FROM membership WHERE org_id = ? AND user_id = ?", s.org_id, s.user_id);
   if (!m) throw new HttpError(401, "signed_out", "You no longer have access to this workspace.");
+  if (c.env.WS_LIMITER) {
+    const { success } = await c.env.WS_LIMITER.limit({ key: s.org_id });
+    if (!success) throw new HttpError(429, "slow_down", "Too many requests from this workspace. Wait a minute and try again.");
+  }
   c.set("user", { id: s.user_id, email: s.email, name: s.name });
   c.set("orgId", s.org_id);
   c.set("role", m.role);

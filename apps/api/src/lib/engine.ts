@@ -1,6 +1,7 @@
 // The Swarm engine: a business description becomes a checked blueprint, a blueprint becomes a running swarm,
 // and the command bar (typed or spoken) is routed to the right agent.
 import { newId, nowIso } from "../../../../packages/core/util";
+import { addRule } from "./today";
 import { TEMPLATES, PLANS } from "../../../../packages/core/templates";
 import { PRESETS, KPIS, CUSTOM_TOOLS, SWARM_TOOLS, estimateActions, nearestPreset, withOrchestrator, type Blueprint } from "../../../../packages/core/swarms";
 import { type Env, one, all, run, audit } from "./db";
@@ -214,6 +215,10 @@ export async function ask(env: Env, orgId: string, swarmId: string, text: string
   // Fast paths that need no model call.
   if (/^(brief me|briefing|what('?s| has) (happened|changed)|catch me up)\b/i.test(q)) return { type: "brief", say: await briefText(env, orgId, swarmId) };
   if ((m = q.match(/^\/?(?:new\s+)?goal\s*[:\-]?\s+(.{3,})$/is))) return setGoal(env, orgId, swarmId, m[1], by);
+  if ((m = q.match(/^\/?(?:house\s+)?rule\s*[:\-]?\s+(.{4,})$/is))) {
+    const r = await addRule(env, orgId, m[1], by.email, "owner");
+    return { type: "answer", say: r.duplicate ? "You already have that rule." : "Rule saved. Every agent follows it from now on; change it in How we work." };
+  }
   if ((m = q.match(/^\/?(pause|resume)\s+(.+)$/i))) {
     const a = find(agents, m[2]);
     if (!a) return { type: "answer", say: `There's no agent called ${m[2]} in this swarm.` };
@@ -288,19 +293,25 @@ export async function briefText(env: Env, orgId: string, swarmId: string) {
   const leads = await n("SELECT COUNT(*) AS n FROM lead WHERE org_id = ? AND created_at >= ?", orgId, since);
   const waiting = await n(`SELECT COUNT(*) AS n FROM agent_action WHERE agent_id IN (${qs}) AND status = 'proposed'`, ...ids);
   const tasks = await n("SELECT COUNT(*) AS n FROM task WHERE org_id = ? AND status = 'open'", orgId);
+  const replies = await n("SELECT COUNT(*) AS n FROM activity WHERE org_id = ? AND kind = 'reply' AND at >= ?", orgId, since);
+  const won = await n("SELECT COUNT(*) AS n FROM activity WHERE org_id = ? AND kind = 'won' AND at >= ?", orgId, since);
+  // Outcomes first: what came back and what it's worth. How busy the agents were comes last.
+  const outcomes = [replies && plural(replies, "reply", "replies"), won && plural(won, "new customer"), leads && plural(leads, "new lead"), sent && plural(sent, "email") + " sent"].filter(Boolean) as string[];
   const parts = [
-    runs || failed ? `Since your last brief, your agents finished ${plural(runs, "run")}${failed ? ` and ${plural(failed, "run")} stopped with a problem` : ""}.` : "Your agents have been quiet since your last brief.",
-    sent || leads || moved ? `They sent ${plural(sent, "email")}, found ${plural(leads, "new lead")}, and moved ${plural(moved, "card")} on.` : "",
-    waiting ? `${plural(waiting, "email is", "emails are")} waiting for your approval.` : "Nothing is waiting for your approval.",
-    tasks ? `You have ${plural(tasks, "open task")}.` : "",
-  ].filter(Boolean);
+    outcomes.length ? `Since your last brief: ${outcomes.length > 1 ? outcomes.slice(0, -1).join(", ") + " and " + outcomes.at(-1) : outcomes[0]}.` : "",
+  ];
   for (const k of s.blueprint.kpis.slice(0, 2)) {
     const v = await kpi(env, orgId, k), unit = KPIS[k]?.unit;
     parts.push(`${KPIS[k]?.label}: ${unit === "pence" ? "£" + Math.round(v / 100).toLocaleString("en-GB") : unit === "days" ? plural(v, "day") : v}.`);
   }
+  parts.push(
+    waiting ? `${plural(waiting, "email is", "emails are")} waiting for your approval.` : "Nothing is waiting for your approval.",
+    tasks ? `You have ${plural(tasks, "open task")}.` : "",
+    runs || failed ? `Your agents finished ${plural(runs, "run")}${failed ? ` and ${plural(failed, "run")} stopped with a problem` : ""}${moved ? `, and moved ${plural(moved, "card")} on` : ""}.` : "Your agents have been quiet since your last brief.",
+  );
   await run(env, "UPDATE swarm SET last_brief_at = ? WHERE id = ?", nowIso(), swarmId);
   await emit(env, { orgId, swarmId, kind: "brief", summary: "Brief read out" });
-  return parts.join(" ");
+  return parts.filter(Boolean).join(" ");
 }
 
 export { PRESETS };

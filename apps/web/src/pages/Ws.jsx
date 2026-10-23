@@ -51,24 +51,36 @@ const ENGINE_NOTE = {
 };
 
 /* ---------- Overview ---------- */
-export function WsOverview() {
-  const { me } = useWs();
+/** Ask the research agent a question, from Today or the overview. Shown only to managers, once Research is hired. */
+export function ResearchAsk({ agents }) {
   const can = useCan();
-  const o = useApi("/api/ws/overview");
-  const waiting = useApi("/api/ws/actions?status=proposed");
-  const mine = useApi("/api/ws/my-agents");
-  const research = mine.data?.agents.find((a) => a.template === "research");
+  const research = agents?.find((a) => a.template === "research");
   const [q, setQ] = useState("");
   const act = useAction();
+  if (!research || !can("manager")) return null;
   const ask = (e) => {
     e.preventDefault();
     if (q.trim().length < 5) return act.setError("Ask a full question, for example “Who are the biggest cleaning firms in Salford?”");
     act.run(async () => { const r = await api("POST", `/api/ws/my-agents/${research.id}/run`, { input: q.trim() }); navigate("/workspace/runs/" + r.run_id); });
   };
-  const d = o.data;
-  const first = me.user.name ? me.user.name.split(" ")[0] : null;
   return (
-    <Shell title={first ? `Hello, ${first}` : "Overview"} crumbs={[["Overview"]]} actions={can("manager") && <Link to="/workspace/agents?s=hire" className="btn btn-sm">Hire an agent</Link>}>
+    <form className="askbar" onSubmit={ask} noValidate>
+      <label htmlFor="ask" className="askbar-l"><Glyph name="search" size={20} />Ask the research agent</label>
+      <input id="ask" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Which offices in Salford are moving this year?" />
+      <button className="btn btn-sm" disabled={act.busy}>{act.busy ? "Asking…" : "Ask"}</button>
+      {act.error && <p className="form-err" role="alert">{act.error}</p>}
+    </form>
+  );
+}
+
+export function WsOverview() {
+  const can = useCan();
+  const o = useApi("/api/ws/overview");
+  const waiting = useApi("/api/ws/actions?status=proposed");
+  const mine = useApi("/api/ws/my-agents");
+  const d = o.data;
+  return (
+    <Shell title="Agents and activity" crumbs={[["Agents and activity"]]} actions={can("manager") && <Link to="/workspace/agents?s=hire" className="btn btn-sm">Hire an agent</Link>}>
       {o.error && <Failed error={o.error} retry={o.reload} />}
       {!d ? <Loading /> : mine.data && mine.data.agents.length === 0 ? <FirstAgent /> : (
         <>
@@ -78,14 +90,7 @@ export function WsOverview() {
             <Link to="/workspace/activity" className="kpi"><span className="dt">Runs this week</span><b>{d.runs_week}</b><span className="kpi-sub">Every step recorded</span></Link>
             <Link to="/workspace/approvals?f=sent" className="kpi"><span className="dt">Emails sent this week</span><b>{d.sent_week}</b><span className="kpi-sub">From your address</span></Link>
           </div>
-          {research && can("manager") && (
-            <form className="askbar" onSubmit={ask} noValidate>
-              <label htmlFor="ask" className="askbar-l"><Glyph name="search" size={20} />Ask the research agent</label>
-              <input id="ask" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Which offices in Salford are moving this year?" />
-              <button className="btn btn-sm" disabled={act.busy}>{act.busy ? "Asking…" : "Ask"}</button>
-              {act.error && <p className="form-err" role="alert">{act.error}</p>}
-            </form>
-          )}
+          <ResearchAsk agents={mine.data?.agents} />
           <div className="ov-grid">
             <section className="panel">
               <div className="panel-h"><h2 className="h-sub">Needs you</h2>{d.waiting > 0 && <Link to="/workspace/approvals" className="link link-s">See all {d.waiting}</Link>}</div>
@@ -119,7 +124,7 @@ export function WsOverview() {
   );
 }
 
-function FirstAgent() {
+export function FirstAgent() {
   return (
     <div className="first">
       <p className="label">Start here</p>
@@ -467,7 +472,7 @@ export function WsApprovals() {
   const decide = (kind) => act.run(async () => {
     const edited = ed && (ed.subject !== sel.payload.subject || ed.body !== sel.payload.body);
     await api("POST", `/api/ws/actions/${sel.id}/${kind}`, kind === "approve" && edited ? ed : {});
-    const n = nextId(), msg = kind === "approve" ? `Sent to ${sel.payload.to}${edited ? " with your edits" : ""}.` : "Rejected. Nothing was sent.";
+    const n = nextId(), msg = kind === "approve" ? `Sent to ${sel.payload.to}${edited ? " with your edits. If they're how you'd always want it, a rule to keep will appear in How we work" : ""}.` : "Rejected. Nothing was sent.";
     await reload(); changed(); go(view, n);
     setNote(msg);
   });

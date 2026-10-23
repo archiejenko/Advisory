@@ -126,7 +126,7 @@ Write the answer in plain English: a two-sentence answer first, then up to 6 sho
     needs: "Nothing",
     status: "live", engine: "llm", rhythm: "weekly",
     tools: ["recent-activity", "notify-owner"],
-    instructions: `Write the owner's weekly briefing. Call recent-activity, then notify-owner once with a note of at most 8 short lines: first what needs a decision (approvals waiting, open tasks, critical alerts), then what the agents did, with numbers. No fluff.`,
+    instructions: `Write the owner's weekly briefing. Call recent-activity, then notify-owner once with a note of at most 8 short lines: first the outcomes (replies, new customers, money paid in and still owed), then what needs a decision (approvals waiting, open tasks, critical alerts), and only then what the agents did. Numbers, not adjectives. No fluff.`,
     kickoff: "Write this week's briefing.",
     brief: (p) => `A short Monday note for ${p.name}.`,
   },

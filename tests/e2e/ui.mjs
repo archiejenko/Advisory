@@ -88,8 +88,9 @@ async function main() {
   await check("demo workspace: signed out, approve an email and ask the research agent", async () => {
     await go("/workspace");
     await text("Demo workspace for Brightwork Cleaning");
-    await text("Hello, Dana");
-    await shot("03-demo-overview");
+    await text("things need you.");
+    await text("Learned from your edits");
+    await shot("03-demo-today");
     await go("/workspace/approvals");
     await page.locator("input[aria-label=Subject]").fill("Cleaning for Peel Street");
     await btn("Approve and send");
@@ -99,6 +100,23 @@ async function main() {
     await btn("Ask");
     await runUntil(/Done/);
     await text("Demo answer");
+  });
+
+  await check("demo Today: approve two drafts in one go, keep a learned rule, add a house rule", async () => {
+    await go("/workspace");
+    await text("emails to approve");
+    const boxes = page.locator(".td-pick");
+    const n = await boxes.count();
+    for (let i = 2; i < n; i++) await boxes.nth(i).uncheck();
+    await btn("Approve 2");
+    await text("Sent 2 emails.");
+    await page.locator(".td-rule").first().getByRole("button", { name: "Keep" }).click();
+    await text("Rule saved. Every agent follows it from now on.");
+    await go("/workspace/rules");
+    await page.fill("#rule", "Always mention the free first clean");
+    await btn("Add");
+    await text("Always mention the free first clean");
+    await shot("03b-house-rules");
   });
 
   await check("free customer check: upload a customer list", async () => {

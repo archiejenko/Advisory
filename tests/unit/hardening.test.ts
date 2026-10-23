@@ -219,7 +219,9 @@ describe("agent runtime", () => {
     raw.prepare("INSERT INTO agent_run (id, org_id, agent_id, trigger, status, created_at, started_at) VALUES ('run_busy', ?, ?, 'manual', 'running', ?, ?)").run(org.id, agent, iso(60000), iso(60000));
     raw.prepare("INSERT INTO agent_run (id, org_id, agent_id, trigger, status, created_at) VALUES ('run_lost', ?, ?, 'manual', 'queued', ?)").run(org.id, agent, iso(40 * 60000));
     expect(await sweepRuns(env)).toEqual({ failed: 1, requeued: 1 });
-    expect(await sweepRuns(env)).toEqual({ failed: 0, requeued: 1 });
+    // A run is re-queued once: a second sweep doesn't send it again while its first message is still in the queue.
+    expect(await sweepRuns(env)).toEqual({ failed: 0, requeued: 0 });
+    expect(env.AGENT_JOBS.sent).toHaveLength(1);
     const runs = Object.fromEntries((raw.prepare("SELECT id, status FROM agent_run").all() as any[]).map((r) => [r.id, r.status]));
     expect(runs).toEqual({ run_stuck: "failed", run_busy: "running", run_lost: "queued" });
     expect(raw.prepare("SELECT cost_pence FROM usage_event WHERE kind = 'agent_run' AND payment_ref = 'run_stuck'").all()).toEqual([{ cost_pence: 7 }]);

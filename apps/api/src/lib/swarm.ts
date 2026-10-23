@@ -163,11 +163,13 @@ const SOURCES: Record<SourceKind, string> = {
  * work done anywhere (an agent's tool, an approval, an inbound email, a person) shows on the Floor.
  * Throttled to once every 10 seconds unless `force`.
  */
-export async function syncSwarm(env: Env, orgId: string, swarmId: string, opts: { force?: boolean; quiet?: boolean } = {}) {
+export async function syncSwarm(env: Env, orgId: string, swarmId: string, opts: { force?: boolean; quiet?: boolean; gapMs?: number } = {}) {
   const s = await one<any>(env, "SELECT id, blueprint, synced_at FROM swarm WHERE id = ? AND org_id = ?", swarmId, orgId);
   if (!s) return 0;
-  if (!opts.force && s.synced_at && Date.now() - Date.parse(s.synced_at) < 10000) return 0;
+  if (!opts.force && s.synced_at && Date.now() - Date.parse(s.synced_at) < (opts.gapMs ?? 10000)) return 0;
   await run(env, "UPDATE swarm SET synced_at = ? WHERE id = ?", nowIso(), swarmId);
+  // A forced sync follows a change someone made (a run, an approval, an edit): the cached numbers are stale now.
+  if (opts.force) { try { await env.CACHE.delete?.(`kpi:${swarmId}`); } catch {} }
   const bp: Blueprint = JSON.parse(s.blueprint);
   const agents = await all<any>(env, "SELECT id, swarm_key, name FROM agent WHERE swarm_id = ?", swarmId);
   const agentOf = (key: string) => agents.find((a) => a.swarm_key === key) || null;
@@ -176,6 +178,7 @@ export async function syncSwarm(env: Env, orgId: string, swarmId: string, opts: 
   const kinds = [...new Set(bp.stages.map((st) => st.rule?.source).filter(Boolean))] as SourceKind[];
   const now = nowIso(), writes: D1PreparedStatement[] = [];
   let changed = 0, created = 0;
+  const createdEvents: D1PreparedStatement[] = [];
   for (const kind of kinds) {
     const recs = await all<any>(env, SOURCES[kind], orgId);
     const items = await all<any>(env, "SELECT id, ref_id, stage, status, agent_id, title FROM work_item WHERE swarm_id = ? AND ref_kind = ?", swarmId, kind);
@@ -197,7 +200,7 @@ export async function syncSwarm(env: Env, orgId: string, swarmId: string, opts: 
         const id = newId("wi");
         writes.push(env.DB.prepare("INSERT INTO work_item (id, org_id, swarm_id, agent_id, stage, title, status, value_pence, ref_kind, ref_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(swarm_id, ref_kind, ref_id) DO NOTHING")
           .bind(id, orgId, swarmId, owner?.id ?? null, st.key, String(rec.title).slice(0, 200), status, value, kind, rec.id, now, now));
-        if (!opts.quiet) writes.push(eventStmt(env, { orgId, swarmId, agentId: owner?.id, itemId: id, kind: "created", summary: `${rec.title} arrived in ${st.name}`, detail: { to_stage: st.key } }));
+        if (!opts.quiet) createdEvents.push(eventStmt(env, { orgId, swarmId, agentId: owner?.id, itemId: id, kind: "created", summary: `${rec.title} arrived in ${st.name}`, detail: { to_stage: st.key } }));
         created++;
       } else if (it.stage !== st.key || it.status !== status) {
         const from = bp.stages.find((x) => x.key === it.stage);
@@ -209,7 +212,9 @@ export async function syncSwarm(env: Env, orgId: string, swarmId: string, opts: 
       }
     }
   }
-  if (opts.quiet && created) writes.push(eventStmt(env, { orgId, swarmId, kind: "created", summary: `Loaded ${created} ${created === 1 ? "card" : "cards"} from your records` }));
+  // A handful of new cards get an event each. An import of hundreds gets one line, not a log flooded with arrivals.
+  if (!opts.quiet && createdEvents.length <= BULK_EVENTS) writes.push(...createdEvents);
+  else if (created) writes.push(eventStmt(env, { orgId, swarmId, kind: "created", summary: `Loaded ${created} ${created === 1 ? "card" : "cards"} from your records` }));
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
   return created + changed;
 }
@@ -220,10 +225,10 @@ function eventStmt(env: Env, e: SwarmEvent) {
 }
 
 /** Sync every swarm in a business: after a run, an approval, an inbound email or an edit by hand. */
-export async function syncOrgSwarms(env: Env, orgId: string) {
+export async function syncOrgSwarms(env: Env, orgId: string, opts: { force?: boolean } = { force: true }) {
   const swarms = await all<any>(env, "SELECT id FROM swarm WHERE org_id = ?", orgId);
   for (const s of swarms) {
-    try { await syncSwarm(env, orgId, s.id, { force: true }); } catch (e) { console.error("sync failed", s.id, e); }
+    try { await syncSwarm(env, orgId, s.id, { force: opts.force }); } catch (e) { console.error("sync failed", s.id, e); }
   }
 }
 
@@ -248,25 +253,43 @@ export async function kpi(env: Env, orgId: string, key: string): Promise<number>
   }
 }
 
+/** More new cards than this in one sync are logged as one event. */
+export const BULK_EVENTS = 20;
+/** How often a Floor poll re-reads the records behind the board. Runs, approvals and mail sync straight away. */
+export const POLL_SYNC_MS = 60000;
+/** Events sent per poll. A Floor further behind gets the next page on its next request. */
+export const EVENT_PAGE = 60;
+
+/** The Floor's numbers change slowly: keep them for a minute instead of counting on every poll. */
+async function cachedKpis(env: Env, orgId: string, swarmId: string, keys: string[]) {
+  const ck = `kpi:${swarmId}`;
+  try { const hit = await env.CACHE.get(ck, "json"); if (hit) return hit as Record<string, number>; } catch {}
+  const out: Record<string, number> = {};
+  for (const k of new Set([...keys, "actions_month"])) out[k] = await kpi(env, orgId, k);
+  try { await env.CACHE.put(ck, JSON.stringify(out), { expirationTtl: 60 }); } catch {}
+  return out;
+}
+
 /* ---------- The Floor's state, in one call ---------- */
 export type StationState = "idle" | "queued" | "working" | "tool" | "needs_you" | "failed" | "paused";
 
 export async function floorState(env: Env, orgId: string, swarmId: string, since?: number) {
-  await syncSwarm(env, orgId, swarmId);
+  await syncSwarm(env, orgId, swarmId, { gapMs: POLL_SYNC_MS });
   const s = await loadSwarm(env, orgId, swarmId);
   const agents = await all<any>(env, "SELECT id, template, name, role, swarm_key, status, rhythm, autonomy, last_run_at, next_run_at, monthly_cap FROM agent WHERE swarm_id = ? AND org_id = ?", swarmId, orgId);
   const ids = agents.map((a) => a.id), qs = ids.map(() => "?").join(",") || "''";
-  const [runs, proposed, items, events, tasks, failed, lastEvent] = await Promise.all([
+  const [runs, proposed, items, events, tasks, failed] = await Promise.all([
     all<any>(env, `SELECT r.agent_id, r.id, r.status, r.started_at, r.created_at, r.finished_at, r.summary, r.error FROM agent_run r WHERE r.agent_id IN (${qs}) AND r.created_at >= ? ORDER BY r.created_at DESC`, ...ids, new Date(Date.now() - 2 * DAY).toISOString()),
     all<any>(env, `SELECT x.id, x.agent_id, x.title, x.payload, x.reason, x.created_at, g.name AS agent FROM agent_action x JOIN agent g ON g.id = x.agent_id WHERE x.org_id = ? AND x.status = 'proposed' AND x.agent_id IN (${qs}) ORDER BY x.created_at DESC LIMIT 30`, orgId, ...ids),
     all<any>(env, "SELECT id, agent_id, stage, title, status, value_pence, ref_kind, ref_id, note, updated_at FROM work_item WHERE swarm_id = ? AND (status = 'open' OR updated_at >= ?) ORDER BY updated_at DESC LIMIT 400", swarmId, new Date(Date.now() - 7 * DAY).toISOString()),
-    all<any>(env, `SELECT e.id, e.agent_id, e.run_id, e.item_id, e.kind, e.summary, e.detail, e.at FROM swarm_event e WHERE e.swarm_id = ? AND e.id > ? ORDER BY e.id DESC LIMIT 60`, swarmId, since ?? 0),
+    // First load: the latest page. After that, forwards from the cursor, so a Floor that fell behind misses nothing.
+    since ? all<any>(env, `SELECT e.id, e.agent_id, e.run_id, e.item_id, e.kind, e.summary, e.detail, e.at FROM swarm_event e WHERE e.swarm_id = ? AND e.id > ? ORDER BY e.id LIMIT ${EVENT_PAGE}`, swarmId, since)
+      : all<any>(env, `SELECT e.id, e.agent_id, e.run_id, e.item_id, e.kind, e.summary, e.detail, e.at FROM swarm_event e WHERE e.swarm_id = ? ORDER BY e.id DESC LIMIT ${EVENT_PAGE}`, swarmId).then((r) => r.reverse()),
     all<any>(env, "SELECT t.id, t.title, t.detail, t.due_date, t.created_at, g.name AS agent FROM task t LEFT JOIN agent g ON g.id = t.agent_id WHERE t.org_id = ? AND t.status = 'open' ORDER BY t.created_at DESC LIMIT 15", orgId),
     all<any>(env, `SELECT r.id, r.agent_id, r.error, r.finished_at, g.name AS agent FROM agent_run r JOIN agent g ON g.id = r.agent_id WHERE r.agent_id IN (${qs}) AND r.status = 'failed' AND r.finished_at >= ? ORDER BY r.finished_at DESC LIMIT 10`, ...ids, new Date(Date.now() - DAY).toISOString()),
-    one<any>(env, "SELECT MAX(id) AS id FROM swarm_event WHERE swarm_id = ?", swarmId),
   ]);
   const recentTool = new Map<string, any>();
-  for (const e of events) if (e.kind === "tool" && e.agent_id && !recentTool.has(e.agent_id) && Date.now() - Date.parse(e.at) < 30000) recentTool.set(e.agent_id, e);
+  for (const e of [...events].reverse()) if (e.kind === "tool" && e.agent_id && !recentTool.has(e.agent_id) && Date.now() - Date.parse(e.at) < 30000) recentTool.set(e.agent_id, e);
   const stations = agents.map((a) => {
     const mine = runs.filter((r) => r.agent_id === a.id);
     const live = mine.find((r) => r.status === "running"), queued = mine.find((r) => r.status === "queued");
@@ -283,9 +306,10 @@ export async function floorState(env: Env, orgId: string, swarmId: string, since
     };
   });
   const kpis: { key: string; label: string; unit: string; value: number }[] = [];
-  for (const k of s.blueprint.kpis) kpis.push({ key: k, label: KPIS[k]?.label || k, unit: KPIS[k]?.unit || "count", value: await kpi(env, orgId, k) });
+  const values = await cachedKpis(env, orgId, swarmId, s.blueprint.kpis);
+  for (const k of s.blueprint.kpis) kpis.push({ key: k, label: KPIS[k]?.label || k, unit: KPIS[k]?.unit || "count", value: values[k] ?? 0 });
   const plan = await one<any>(env, "SELECT plan FROM org WHERE id = ?", orgId);
-  const used = await kpi(env, orgId, "actions_month");
+  const used = values.actions_month ?? 0;
   return {
     swarm: { id: s.id, name: s.name, sector: s.sector, preset: s.preset, status: s.status, skin: s.blueprint.skin, layout: s.layout, created_at: s.created_at, last_brief_at: s.last_brief_at, monthly_cap: s.monthly_cap },
     blueprint: { stages: s.blueprint.stages, handoffs: s.blueprint.handoffs, goals: s.blueprint.goals, agents: s.blueprint.agents.map(({ key, name, role, template, rhythm }) => ({ key, name, role, template, rhythm })) },
@@ -295,8 +319,9 @@ export async function floorState(env: Env, orgId: string, swarmId: string, since
       approvals: proposed.map((p) => ({ id: p.id, agent: p.agent, agent_id: p.agent_id, title: p.title, reason: p.reason, payload: JSON.parse(p.payload), created_at: p.created_at })),
       tasks, failed,
     },
-    events: events.map((e) => ({ ...e, detail: e.detail ? JSON.parse(e.detail) : null })).reverse(),
-    cursor: lastEvent?.id ?? 0,
+    events: events.map((e) => ({ ...e, detail: e.detail ? JSON.parse(e.detail) : null })),
+    cursor: events.length ? events[events.length - 1].id : since ?? 0,
+    more: !!since && events.length === EVENT_PAGE,
     usage: { actions_month: used, allowance: (PLANS[plan?.plan || "trial"] || PLANS.trial).actions },
   };
 }

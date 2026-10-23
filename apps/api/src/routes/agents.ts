@@ -8,10 +8,11 @@ import { TEMPLATES, template, RHYTHM_LABEL } from "../../../../packages/core/tem
 import { type Env, audit } from "../lib/db";
 import { body, bad, notFound } from "../lib/http";
 import { requireRole, type Vars } from "./auth";
-import { hireAgent, setAgentStatus, startRun, nextRunAt } from "../lib/agents";
+import { hireAgent, setAgentStatus, startRun, nextRunAt, spreadMinute } from "../lib/agents";
 import { executeAction, rejectAction } from "../lib/actions";
 import { specFor, syncOrgSwarms } from "../lib/swarm";
 import { logActivity } from "../lib/crm";
+import { learnAfterApprove } from "./today";
 
 type App = Hono<{ Bindings: Env; Variables: Vars }>;
 const manager = requireRole("manager");
@@ -91,7 +92,7 @@ export function registerAgentRoutes(ws: App) {
     }
     if (b.rhythm !== undefined || b.run_hour !== undefined) {
       const t = specFor(a)!;
-      await db.run("UPDATE agent SET next_run_at = ?3 WHERE org_id = ?1 AND id = ?2", id, t.engine === "llm" && a.status === "running" ? nextRunAt(b.rhythm ?? a.rhythm, b.run_hour ?? a.run_hour) : null);
+      await db.run("UPDATE agent SET next_run_at = ?3 WHERE org_id = ?1 AND id = ?2", id, t.engine === "llm" && a.status === "running" ? nextRunAt(b.rhythm ?? a.rhythm, b.run_hour ?? a.run_hour, new Date(), spreadMinute(id)) : null);
     }
     const engineKey = ({ watch: "watch", check: "check", prospect: "prospect" } as Record<string, string>)[template(a.template)?.engine || ""];
     if (engineKey && b.channel_id !== undefined) await db.run("UPDATE agent_config SET channel_id = ?3 WHERE org_id = ?1 AND agent = ?2", engineKey, b.channel_id);
@@ -147,8 +148,11 @@ export function registerAgentRoutes(ws: App) {
 
   ws.post("/actions/:id/approve", manager, async (c) => {
     const b = await body(c, z.object({ subject: z.string().min(1).max(200).optional(), body: z.string().min(1).max(5000).optional() }));
+    const before = await c.get("db").one("SELECT payload FROM agent_action WHERE org_id = ?1 AND id = ?2", c.req.param("id"));
     const r = await executeAction(c.env, c.get("orgId"), c.req.param("id")!, c.get("user").email, b);
     await syncOrgSwarms(c.env, c.get("orgId"));
+    // What the owner changed becomes a proposed house rule, when it's a preference rather than a fact about this email.
+    if (before) await learnAfterApprove(c, c.req.param("id")!, JSON.parse(before.payload || "{}"), b);
     return c.json(r);
   });
   ws.post("/actions/:id/reject", manager, async (c) => {

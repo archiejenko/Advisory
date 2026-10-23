@@ -109,9 +109,22 @@ admin.post("/company-index", async (c) => {
 
 admin.post("/run/:task", async (c) => {
   const t = c.req.param("task");
-  const r = t === "gazette" ? await pollGazette(c.env) : t === "reconcile" ? await reconcile(c.env) : t === "digests" ? await digests(c.env, new Date(c.req.query("at") || Date.now())) : t === "agents" ? await dueAgents(c.env, new Date(c.req.query("at") || Date.now())) : t === "monthly" ? await monthly(c.env) : t === "retention" ? await retention(c.env) : t === "sweep" ? await sweepRuns(c.env, new Date(c.req.query("at") || Date.now())) : null;
+  const r = t === "gazette" ? await pollGazette(c.env) : t === "reconcile" ? await reconcile(c.env, new Date(), { all: c.req.query("all") === "1" }) : t === "digests" ? await digests(c.env, new Date(c.req.query("at") || Date.now())) : t === "agents" ? await dueAgents(c.env, new Date(c.req.query("at") || Date.now())) : t === "monthly" ? await monthly(c.env) : t === "retention" ? await retention(c.env) : t === "sweep" ? await sweepRuns(c.env, new Date(c.req.query("at") || Date.now())) : null;
   if (r === null) throw notFound("Task");
   return c.json({ task: t, result: r });
+});
+
+/* ---------- Jobs that ran out of retries ---------- */
+admin.get("/dead-jobs", async (c) => c.json({ jobs: await all(c.env, "SELECT id, queue, type, body, attempts, at FROM dead_job WHERE resolved_at IS NULL ORDER BY at DESC LIMIT 200") }));
+/** Put a dead job back on its queue (once the cause is fixed), or mark it dealt with. */
+admin.post("/dead-jobs/:id/:decision", async (c) => {
+  const d = c.req.param("decision");
+  if (d !== "retry" && d !== "resolve") throw bad("Use retry or resolve.");
+  const j = await one<any>(c.env, "SELECT * FROM dead_job WHERE id = ? AND resolved_at IS NULL", c.req.param("id"));
+  if (!j) throw notFound("Dead job");
+  if (d === "retry") await (j.type === "agent_run" ? c.env.AGENT_JOBS ?? c.env.JOBS : c.env.JOBS).send(JSON.parse(j.body));
+  await run(c.env, "UPDATE dead_job SET resolved_at = ? WHERE id = ?", nowIso(), j.id);
+  return c.json({ ok: true });
 });
 
 admin.get("/outbox", async (c) => c.json({ mail: await all(c.env, "SELECT * FROM dev_outbox ORDER BY at DESC LIMIT 100") }));

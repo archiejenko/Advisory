@@ -9,7 +9,7 @@ import { SIC_GROUPS, DISTRICTS } from "../data.js";
 
 // The workspace sidebar, grouped. Counts come from /api/ws/overview.
 const SIDE = [
-  [null, [["Overview", "/workspace"], ["The Floor", "/floor"], ["Approvals", "/workspace/approvals", "waiting"], ["Agents", "/workspace/agents"], ["Activity", "/workspace/activity"]]],
+  [null, [["Today", "/workspace", "waiting"], ["The Floor", "/floor"], ["Approvals", "/workspace/approvals"], ["Agents", "/workspace/agents"], ["Activity", "/workspace/activity"], ["How we work", "/workspace/rules"]]],
   ["Work", [["Leads", "/workspace/leads"], ["Inbox", "/workspace/inbox", "inbox_new"], ["Invoices", "/workspace/invoices"], ["Tasks", "/workspace/tasks", "open_tasks"]]],
   ["Customers", [["Alerts", "/workspace/alerts", "open_alerts"], ["Customers", "/workspace/clients"], ["Company checks", "/workspace/check"], ["Lead lists", "/workspace/prospects"]]],
   ["Account", [["Usage and plan", "/workspace/usage"], ["Settings", "/workspace/settings"]]],

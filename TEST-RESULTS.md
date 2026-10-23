@@ -1,6 +1,10 @@
-# Agent House test results, 2026-10-22 (site overhaul, wordmark and org chart; on top of swarms and pre-launch hardening)
+# Agent House test results, 2026-10-23 (scale fixes from the architecture check, and Today with house rules; on top of the site overhaul, swarms and pre-launch hardening)
 
-This run: typecheck clean; unit 88 passed (8 files, `org.test.ts` added); API end-to-end 42 passed (the org chart flow now also drops an agent's task); browser 20 passed after the phone pass (every public, workspace and Floor page measured at 360 and 375 px: no sideways scroll, tables as cards, 44 px tap targets), with the public pages checked for the new copy (home, roles, how it works, use cases, for agents, the customer check). The sections below are from the swarms run unless a count says otherwise.
+This run: typecheck clean; unit 120 passed (10 files: `scale.test.ts` and `today.test.ts` added, `ratelimit.test.ts` rewritten for budget lanes against real SQL); API end-to-end 42 passed (the operator re-check now runs with `?all=1`, since the cron takes a seventh a day); browser 21 passed (a new flow approves two drafts on Today in one go, keeps a learned rule and adds a house rule; Today measured at 390 px with no sideways scroll). The sections below are from earlier runs unless a count says otherwise.
+
+New in the unit suite:
+- `scale.test.ts` (20): agents spread across the hour; the cron queues starts without running them; a duplicated start makes one run; two runs at once per workspace, the next deferred without a retry; a late finish doesn't overwrite "interrupted"; register waits re-sent with a delay, then ordinary retries after 48; dead letters recorded with one operator email an hour; watches found by index; prospect lists past 100 parameters; the Floor paged forwards from its cursor; bulk card loads logged as one line; poll syncs at most once a minute; auto-replies and list mail kept but not waking agents; a burst of mail making one run; retention trimming the Floor's log, old bodies and register events, step by step; a purge that finishes and doesn't repeat; the daily re-check covering every company once a week.
+- `today.test.ts` (10): Today's sections and headline; batch approval where one already-decided draft doesn't stop the rest; viewers can't approve; edits that teach a rule and edits that don't; owner rules active at once and not duplicated; rules in every agent's standing orders; the rules API.
 
 Typecheck: clean (tsc -p .). `npm audit --omit=dev`: 0 vulnerabilities (the `xlsx` package is gone).
 

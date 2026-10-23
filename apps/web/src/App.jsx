@@ -13,6 +13,7 @@ import { Gate, SignIn, LiveAlerts, LiveClients, LiveClient, LiveCheck, LiveImpor
 import Admin from "./pages/Admin.jsx";
 import { DevDashboard, ForAgents } from "./pages/Dev.jsx";
 import { FloorHome, FloorView } from "./pages/Floor.jsx";
+import { WsToday, WsRules } from "./pages/Today.jsx";
 
 // Workspace pages show your workspace when signed in, and the demo workspace when not.
 const ws = (live) => (props) => <Gate live={live} {...props} />;
@@ -26,7 +27,9 @@ const ROUTES = [
   ["/how-it-works", Method],
   ["/use-cases", UseCases],
   ["/method", Method],
-  ["/workspace", ws(WsOverview)],
+  ["/workspace", ws(WsToday)],
+  ["/workspace/overview", ws(WsOverview)],
+  ["/workspace/rules", ws(WsRules)],
   ["/workspace/approvals", ws(WsApprovals)],
   ["/workspace/agents", ws(WsAgents)],
   ["/workspace/agents/new", ws(WsHire)],

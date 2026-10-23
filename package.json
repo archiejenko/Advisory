@@ -11,7 +11,7 @@
     "typecheck": "tsc -p .",
     "test": "vitest run",
     "test:e2e": "node tests/e2e/run.mjs",
-    "deploy": "npm run web:build && wrangler deploy"
+    "deploy": "node scripts/predeploy-check.mjs && npm run web:build && wrangler deploy"
   },
   "keywords": [],
   "author": "",
