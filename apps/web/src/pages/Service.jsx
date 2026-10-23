@@ -8,6 +8,7 @@ import { ApiShowcase, TERM } from "./showcase.jsx";
 import { ENDPOINTS } from "../data.js";
 import { TOOLS, AGENT_RUN_STEP_PENCE, pence } from "../catalogue.js";
 import { PLANS } from "../../../../packages/core/templates.ts";
+import { FACETS } from "../../../../packages/core/os.ts";
 
 /* ---------- Shared form ---------- */
 // Validates the shared fields, then calls `send` (the real request on the hosted site).
@@ -136,15 +137,15 @@ export function HealthCheck() {
 export function Pricing() {
   return (
     <Page title="Pricing">
-      <PageHead crumbs={[["Pricing"]]} label="Pricing" title="Simple for businesses. Per call for agents." lede="Businesses pay a monthly plan for a team that works for them, with an orchestrator included. Developers and agents pay per tool call, with a free monthly allowance. Publishers earn 80% of every call to their tools." />
+      <PageHead crumbs={[["Pricing"]]} label="Pricing" title="One price for the whole business. Per call for agents." lede="Businesses pay one monthly price for the whole OS: every app, unlimited people, and up to 100 agents. Plans differ only in how much work the agents do each month. Developers and agents pay per tool call; publishers earn 80% of every call to their tools." />
       <Section tight>
         <h2 className="h-sub">For businesses</h2>
         <div className="plans plans-l">
           <article className="plan">
             <p className="plan-n">Free trial</p>
             <p className="plan-p"><b>£0</b><span>for 14 days</span></p>
-            <p className="dt">Everything in Growth. No card.</p>
-            <ul className="ticks"><li>{PLANS.trial.agents} agents working at once</li><li>An orchestrator to lead them</li><li>{PLANS.trial.actions.toLocaleString("en-GB")} actions</li><li>Every role, or describe your own</li></ul>
+            <p className="dt">The whole OS. No card.</p>
+            <ul className="ticks"><li>All {FACETS.length} apps</li><li>Up to {PLANS.trial.agents} agents</li><li>{PLANS.trial.actions.toLocaleString("en-GB")} actions</li><li>Channels for your whole team</li></ul>
             <Link to="/start" className="btn btn-sm btn-line btn-block">Start free</Link>
           </article>
           {["starter", "growth", "scale"].map((k) => {
@@ -154,7 +155,7 @@ export function Pricing() {
                 <p className="plan-n">{p.name}{k === "growth" && <span className="st st-done">Most chosen</span>}</p>
                 <p className="plan-p"><b>£{p.price}</b><span>a month</span></p>
                 <p className="dt">{p.blurb}</p>
-                <ul className="ticks"><li>{p.agents} agents working at once</li><li>An orchestrator to lead them</li><li>{p.actions.toLocaleString("en-GB")} actions a month</li><li>Every role, or describe your own</li></ul>
+                <ul className="ticks"><li>All {FACETS.length} apps</li><li>Up to {p.agents} agents</li><li>{p.actions.toLocaleString("en-GB")} actions a month</li><li>Unlimited people</li></ul>
                 <Link to="/start" className={"btn btn-sm btn-block" + (k === "growth" ? "" : " btn-line")}>Start with a free trial</Link>
               </article>
             );
@@ -180,7 +181,8 @@ export function Pricing() {
         <SectionHead label="Billing" title="Questions about paying" />
         <QA items={[
           ["What happens when the trial ends?", "Your agents pause and nothing is charged. Choose a plan in your workspace and they pick up where they left off."],
-          ["Does the orchestrator count as an agent?", "No. Every team gets one and it doesn't take a place on your plan. Its tool calls count as actions, like any agent's."],
+          ["Is it priced per person or per agent?", "Neither. One price covers the whole business: every app, everyone on your team, and up to 100 agents. The orchestrator is free on top. Plans differ only in how many actions agents take each month."],
+          ["Do I need other software as well?", "No connectors needed. Accounts, HR, payroll, the rota, the CRM and the helpdesk are apps in the OS. Some are fully built, some partly, and the rest start as records with an agent; each app says which it is."],
           ["What counts as an action?", "One tool call by one of your agents: a search, a page read, a lead saved, an email drafted. Watching customers against the registers and company checks don't count."],
           ["Can I change plan?", "Any time, from Usage and plan in your workspace. Changes apply from the next bill."],
           ["Do agents cost more if they're busy?", "No. Each plan has a monthly allowance and agents stop at it. You can set a lower limit per agent too."],

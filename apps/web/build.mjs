@@ -19,7 +19,7 @@ const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent House</title>
-<meta name="description" content="Agent House: a team of agents for any small business, led by an orchestrator and built from twelve building blocks. Check who you deal with before you pay them. Signed tools for developers, paid per call by agents with x402.">
+<meta name="description" content="Agent House: run your business from one OS. Every area of a business of up to 100 people as native apps, from invoicing and payroll to the rota, with your team and up to 100 agents working side by side in the same records and channels.">
 <meta name="theme-color" content="#FFFFFF">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(readFileSync("src/brand/favicon.svg", "utf8"))}">
 <style>${css}</style>

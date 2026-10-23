@@ -3,6 +3,7 @@
 import { TEMPLATES, RHYTHM_LABEL, PLANS } from "../../../packages/core/templates.ts";
 import { ALERTS, CLIENTS, PROSPECTS } from "./data.js";
 import { floorDemo } from "./floorDemo.js";
+import { osDemo } from "./osDemo.js";
 import { isPass } from "./pass.js";
 
 const H = 3600e3, D = 24 * H;
@@ -96,7 +97,8 @@ function seed() {
   const tasks = [
     { id: "task_1", agent_id: "agt_out", title: "Call Salford Quays Media: no public email", detail: "Reception on 0161 000 0000 per their contact page. Ask for facilities.", due_date: day(1), status: "open", created_at: ago(5 * H) },
     { id: "task_2", agent_id: "agt_inb", title: "Walk-round at Castlefield Dental, Thursday 5.30pm", detail: "Confirm once you've approved the reply.", due_date: day(2), status: "open", created_at: ago(3 * H) },
-    { id: "task_3", agent_id: null, title: "Order microfibre restock", detail: null, due_date: null, status: "open", created_at: ago(D) },
+    { id: "task_3", agent_id: null, title: "Order microfibre restock", detail: null, due_date: null, status: "open", created_at: ago(D), assignee_user_id: "usr_demo4" },
+    { id: "task_5", agent_id: null, title: "Pay Northern Janitorial: September chemicals, overdue", detail: "Raised by the Payables agent in #finance.", due_date: day(0), status: "open", created_at: ago(3 * H), assignee_user_id: "usr_demo3" },
     { id: "task_4", agent_id: "agt_cc", title: "Call Irwell Engineering about the disputed invoice", detail: "They say the October deep clean wasn't agreed.", due_date: day(-1), status: "done", created_at: ago(5 * D), done_at: ago(2 * D) },
   ];
   const byNo = Object.fromEntries(CLIENTS.map((c) => [c.no, c]));
@@ -109,6 +111,8 @@ function seed() {
   const users = [
     { id: "usr_demo", email: "dana@brightwork.example", name: "Dana Price", role: "owner" },
     { id: "usr_demo2", email: "sam@brightwork.example", name: "Sam Okafor", role: "manager" },
+    { id: "usr_demo3", email: "priya@brightwork.example", name: "Priya Shah", role: "manager" },
+    { id: "usr_demo4", email: "lee@brightwork.example", name: "Lee Hart", role: "viewer" },
   ];
   const rules = [
     { id: "hr_1", text: "Sign off as “Dana, Brightwork Cleaning”, not the full company name", source: "edit", status: "proposed", created_at: ago(3 * H) },
@@ -178,7 +182,7 @@ function startDemoRun(a, input) {
 export async function demoApi(method, path, body) {
   await new Promise((r) => setTimeout(r, 120));
   const s = st();
-  // The operator pass starts on the Pilot plan (12 agents, 5,000 actions); the usage page can switch plans.
+  // The operator pass starts on the Pilot plan (100 agents, 6,000 actions); the usage page can switch plans.
   if (isPass() && !s.passPlan) { s.passPlan = true; s.org.plan = "pilot"; }
   const [p, qs] = path.replace(/^\/api\/ws/, "").split("?");
   const q = Object.fromEntries(new URLSearchParams(qs || ""));
@@ -187,6 +191,8 @@ export async function demoApi(method, path, body) {
   let r;
   const floor = floorDemo(method, p, q, body, s, fail);
   if (floor !== undefined) return floor;
+  const os = osDemo(method, p, q, body, s, fail, DEMO_ME);
+  if (os !== undefined) return os;
 
   if (method === "GET") {
     if (p === "/overview") {
@@ -225,7 +231,7 @@ export async function demoApi(method, path, body) {
       return { counts: { proposed: c("proposed"), sent: c("sent"), rejected: c("rejected"), failed: c("failed") }, actions: s.actions.filter((a) => status === "all" || a.status === status).map((a) => ({ kind: "email", ...a, agent: agentName(a.agent_id), template: agentTpl(a.agent_id) })) };
     }
     if (p === "/leads") return { leads: s.leads.filter((l) => !q.status || l.status === q.status) };
-    if (p === "/tasks") return { tasks: [...s.tasks].sort((a, b) => (a.status === b.status ? 0 : a.status === "done" ? 1 : -1)).map((t) => ({ ...t, agent: t.agent_id ? agentName(t.agent_id) : null })) };
+    if (p === "/tasks") return { tasks: [...s.tasks].filter((t) => q.mine !== "1" || t.assignee_user_id === DEMO_ME.user.id).sort((a, b) => (a.status === b.status ? 0 : a.status === "done" ? 1 : -1)).map((t) => { const u = s.users.find((x) => x.id === t.assignee_user_id); return { ...t, agent: t.agent_id ? agentName(t.agent_id) : null, assignee_name: u?.name || null, assignee_email: u?.email || null }; }) };
     if (p === "/invoices") return { today: day(0), invoices: s.invoices };
     if (p === "/inbox") return { address: s.org.inbox_address, messages: s.inbox };
     if (p === "/channels") return { channels: s.channels };
@@ -322,7 +328,7 @@ export async function demoApi(method, path, body) {
   }
   if (method === "PATCH" && (r = m(/^\/leads\/([^/]+)$/))) { Object.assign(s.leads.find((x) => x.id === r[1]) || fail(404, "Lead not found."), body); return { ok: true }; }
   if (method === "POST" && p === "/tasks") { s.tasks.unshift({ id: id("task"), agent_id: null, status: "open", created_at: now(), detail: null, due_date: null, ...body }); return { id: s.tasks[0].id }; }
-  if (method === "PATCH" && (r = m(/^\/tasks\/([^/]+)$/))) { Object.assign(s.tasks.find((x) => x.id === r[1]) || fail(404, "Task not found."), body, { done_at: body.status === "done" ? now() : null }); return { ok: true }; }
+  if (method === "PATCH" && (r = m(/^\/tasks\/([^/]+)$/))) { Object.assign(s.tasks.find((x) => x.id === r[1]) || fail(404, "Task not found."), body, body.status ? { done_at: body.status === "done" ? now() : null } : {}); return { ok: true }; }
   if (method === "PATCH" && (r = m(/^\/invoices\/([^/]+)$/))) { Object.assign(s.invoices.find((x) => x.id === r[1]) || fail(404, "Invoice not found."), body); return { ok: true }; }
   if (method === "PATCH" && (r = m(/^\/alerts\/([^/]+)$/))) { Object.assign(s.alerts.find((x) => x.id === r[1]) || fail(404, "Alert not found."), { state: body.state, reviewed_by: body.state === "reviewed" ? DEMO_ME.user.email : null, reviewed_at: body.state === "reviewed" ? now() : null }); return { ok: true }; }
   if (method === "POST" && m(/^\/alerts\/[^/]+\/share$/)) return { ok: true, status: "queued" };

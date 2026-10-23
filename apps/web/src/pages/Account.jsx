@@ -54,7 +54,7 @@ export function WsUsage() {
         </>
       )}
       <h2 className="h-sub mt-l">Plan</h2>
-      <p className="body">{me.org.plan === "trial" || sub === "trialing" ? <>You're on the <b>14-day free trial</b>, with everything in Growth.</> : <>You're on <b>{(PLANS[me.org.plan] || PLANS.trial).name}</b>{sub !== "active" && SUB[sub] ? ` (${SUB[sub].toLowerCase()})` : ""}.</>} Plans differ in how many agents work at once and how many actions they get each month. When the month's actions are used, agents pause until the 1st; nothing is ever charged on top.</p>
+      <p className="body">{me.org.plan === "trial" || sub === "trialing" ? <>You're on the <b>14-day free trial</b>, with the whole OS.</> : <>You're on <b>{(PLANS[me.org.plan] || PLANS.trial).name}</b>{sub !== "active" && SUB[sub] ? ` (${SUB[sub].toLowerCase()})` : ""}.</>} Every plan has all the apps, unlimited people and up to 100 agents; plans differ in how many actions agents get each month. When the month's actions are used, agents pause until the 1st; nothing is ever charged on top.</p>
       <div className="plans">
         {["starter", "growth", "scale"].map((k) => {
           const p = PLANS[k], current = me.org.plan === k;

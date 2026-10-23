@@ -75,11 +75,11 @@ async function main() {
   console.log("Flows:");
   await check("public pages render for all three doors; signed-out header offers sign in", async () => {
     await go("/");
-    await text("A team of agents for any business");
-    await text("Twelve building blocks. Any business.");
+    await text("Run your business from one OS.");
+    await text("Every area of the business. One place.");
     await page.locator(".hdr-right").getByText("Sign in", { exact: true }).waitFor();
     await shot("01-home");
-    for (const [p, t] of [["/agents", "Ready-made roles for your team"], ["/agents/outreach", "Where it fits among the use cases"], ["/agents/client-book-watch", "Customer and supplier watch"], ["/agents/bookings", "Coming soon"], ["/how-it-works", "Get a team that reports to you"], ["/use-cases", "80 jobs an agent can do"], ["/pricing", "Pay per call"], ["/trust", "Agents you can leave alone"], ["/developers", "Customers for your tools"], ["/for-agents", "Facts your agent can cite"], ["/health-check", "who are you about to pay"]]) {
+    for (const [p, t] of [["/agents", "Ready-made roles for your team"], ["/agents/outreach", "Where it fits among the use cases"], ["/agents/client-book-watch", "Customer and supplier watch"], ["/agents/bookings", "Coming soon"], ["/how-it-works", "Get a team that reports to you"], ["/use-cases", "80 jobs an agent can do"], ["/pricing", "Pay per call"], ["/os", "Everything it takes to run a business, in one OS"], ["/trust", "Agents you can leave alone"], ["/developers", "Customers for your tools"], ["/for-agents", "Facts your agent can cite"], ["/health-check", "who are you about to pay"]]) {
       await go(p); await text(t);
     }
     await shot("02-for-agents");
@@ -315,12 +315,32 @@ async function main() {
     await waitFor(async () => !(await page.getByRole("button", { name: /^Inbox: Paused/ }).count()), "Inbox resumed", 20000);
   });
 
-  await check("usage and plan: actions counted; choosing Growth goes to Stripe Checkout", async () => {
+  await check("business OS: open an app, add a record, ask its agent in #finance and see the answer", async () => {
+    await go("/workspace/apps");
+    await text("118 apps across 17 areas");
+    await page.locator(".os-app", { hasText: "Payables" }).first().click();
+    await page.getByRole("button", { name: "New entry" }).click();
+    await page.fill("#nr-title", "Van lease, November");
+    await page.fill("#nr-party", "Lex Vehicle Leasing");
+    await page.fill("#nr-amount", "489");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await page.locator(".os-drawer").waitFor();
+    await page.keyboard.press("Escape");
+    await page.locator(".os-tr", { hasText: "Van lease, November" }).waitFor();
+    await page.fill("#ask-bills-and-payables", "what's due this week?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await page.waitForURL(/#\/workspace\/messages\?c=/);
+    await page.locator(".chat-main .msg-agent").first().waitFor({ timeout: 60000 });
+    await text("so far.");
+    await shot("17b-os-messages");
+  });
+
+  await check("usage and plan: actions counted; choosing Team goes to Stripe Checkout", async () => {
     await go("/workspace/usage");
     await text("Actions used");
     await text("14-day free trial");
     await shot("15-usage");
-    await btn("Choose Growth");
+    await btn("Choose Team");
     await page.waitForURL(/checkout\.stripe\.example/);
   });
 

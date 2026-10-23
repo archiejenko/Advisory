@@ -547,7 +547,7 @@ async function main() {
     sw.recruit = g.blueprint;
   });
 
-  await check("swarms: spin up the sales floor; locked presets and over-plan swarms are refused and leave nothing behind", async () => {
+  await check("swarms: spin up the sales floor; locked presets and broken blueprints are refused and leave nothing behind", async () => {
     const lk = await call("POST", "/api/ws/swarms", { preset: "markets-desk" }, { cookie: hb });
     ok(lk.status === 409 && lk.json.error.code === "needs_connection", lk.text);
     const bad = await call("POST", "/api/ws/swarms", { blueprint: { ...sw.recruit, agents: sw.recruit.agents.map((a, i) => (i ? a : { ...a, tools: ["send-money"] })) } }, { cookie: hb });
@@ -555,8 +555,7 @@ async function main() {
     const r = await call("POST", "/api/ws/swarms", { preset: "sales-floor" }, { cookie: hb });
     ok(r.status === 201 && r.json.hired === 4 && r.json.reused === 0, r.text);
     swarm = r.json.id;
-    const over = await call("POST", "/api/ws/swarms", { blueprint: sw.recruit }, { cookie: hb });
-    ok(over.status === 409 && over.json.error.code === "plan_limit", over.text);
+    // Over-plan swarms (now past 100 agents) are refused in the unit tests and the 100-agent plan check below.
     const mine = (await call("GET", "/api/ws/my-agents", undefined, { cookie: hb })).json.agents;
     ok(mine.length === 5 && mine.every((a) => a.swarm_id === swarm) && mine.some((a) => a.template === "orchestrator"), "the sales floor's agents and its orchestrator: " + mine.length);
     for (const a of mine) sw[a.name.toLowerCase()] = a.id;
@@ -701,6 +700,41 @@ async function main() {
     ok((await call("GET", "/api/ws/leads", undefined, { cookie: hb })).json.leads.length >= 1, "the CRM keeps its records");
   });
 
+  /* 17b. The business OS: every module, channels, and agents asked in a conversation */
+  await check("business OS: all 118 modules take records; a manager adds, a viewer reads", async () => {
+    const cat = (await call("GET", "/api/ws/os/catalogue", undefined, { cookie: hb })).json;
+    ok(cat.modules.length === 118 && cat.totals.modules === 118, "118 modules");
+    for (const m of cat.modules) {
+      const r = await call("POST", `/api/ws/os/m/${m.key}/records`, { title: `First ${m.app} record` }, { cookie: hb });
+      ok(r.status === 201 && r.json.record.module === m.key, m.key + ": " + r.text);
+    }
+    const bill = await call("POST", "/api/ws/os/m/bills-and-payables/records", { title: "Office rent", fields: { party: "Landlord", amount: "1250", due_date: "2026-11-01" } }, { cookie: hb });
+    ok(bill.json.record.amount_pence === 125000, bill.text);
+    ok((await call("PATCH", `/api/ws/os/records/${bill.json.record.id}`, { status: "paid" }, { cookie: hb })).json.record.status === "paid", "status moves");
+    const after = (await call("GET", "/api/ws/os/catalogue", undefined, { cookie: hb })).json;
+    ok(after.totals.records === 119 && after.modules.every((m) => m.records >= 1), "every module counted");
+    await call("POST", "/api/auth/magic-link", { email: "viewer@harbour.example" }, { cookie: false });
+    const viewer = await signIn("viewer@harbour.example");
+    ok((await call("GET", "/api/ws/os/m/bills-and-payables/records", undefined, { cookie: viewer })).json.records.length === 2, "viewer reads");
+    ok((await call("POST", "/api/ws/os/m/bills-and-payables/records", { title: "x" }, { cookie: viewer })).status === 403, "viewer can't add");
+  });
+
+  await check("business OS: @mention an agent in #general and its answer comes back to the channel", async () => {
+    const chans = (await call("GET", "/api/ws/os/channels", undefined, { cookie: hb })).json.channels;
+    const general = chans.find((c) => c.name === "general");
+    ok(general && chans.length >= 5, JSON.stringify(chans));
+    const said = await call("POST", `/api/ws/os/channels/${general.id}/messages`, { body: "@Payables agent what's due this week?" }, { cookie: hb });
+    ok(said.status === 201 && said.json.asked[0]?.run_id, said.text);
+    const reply = await waitFor(async () => (await call("GET", `/api/ws/os/channels/${general.id}/messages`, undefined, { cookie: hb })).json.messages.find((m) => m.author_kind === "agent"), "the agent's reply", 60000);
+    ok(reply.author_name === "Payables agent" && /records so far/.test(reply.body), JSON.stringify(reply));
+    const pay = (await call("GET", "/api/ws/os/m/bills-and-payables/records", undefined, { cookie: hb })).json.records;
+    ok(pay.some((r) => /^Follow up/.test(r.title) && r.created_by === "Payables agent"), "the agent saved a record in its own module");
+    const { json: rec } = await call("GET", "/api/ws/os/m/complaints/records", undefined, { cookie: hb });
+    const thread = await call("POST", `/api/ws/os/records/${rec.records[0].id}/messages`, { body: "Customer called again, logging it here" }, { cookie: hb });
+    ok(thread.status === 201 && thread.json.asked.length === 0, thread.text);
+    ok((await call("GET", `/api/ws/os/records/${rec.records[0].id}/messages`, undefined, { cookie: hb })).json.messages.length === 1, "record thread");
+  });
+
   /* 18. Tools for agents and developers */
   await check("tool gateway: catalogue and discovery; x402 or a key; every answer signed", async () => {
     const cat = (await call("GET", "/v1/tools", undefined, { cookie: false })).json;
@@ -785,13 +819,13 @@ async function main() {
   });
 
   /* 16. Retention and audit */
-  await check("plan limits: the trial allows six agents; usage shows the allowance", async () => {
+  await check("plan limits: the trial allows 100 agents; usage shows the allowance", async () => {
     let n = (await call("GET", "/api/ws/my-agents", undefined, { cookie: biz })).json.agents.length;
-    while (n < 6) { const h = await call("POST", "/api/ws/my-agents", { template: "research", name: "Research " + n }, { cookie: biz }); ok(h.status === 201, h.text); n++; }
+    while (n < 100) { const h = await call("POST", "/api/ws/my-agents", { template: "research", name: "Research " + n }, { cookie: biz }); ok(h.status === 201, h.text); n++; }
     const over = await call("POST", "/api/ws/my-agents", { template: "outreach" }, { cookie: biz });
     ok(over.status === 409 && over.json.error.code === "plan_limit", over.text);
     const u = (await call("GET", "/api/ws/usage", undefined, { cookie: biz })).json;
-    ok(u.plan === "trial" && u.plan_actions === 1500 && u.actions > 0 && u.by_agent.length === 6, JSON.stringify(u).slice(0, 300));
+    ok(u.plan === "trial" && u.plan_actions === 1500 && u.plan_agents === 100 && u.actions > 0 && u.by_agent.length >= 6, JSON.stringify(u).slice(0, 300));
   });
 
   await check("billing state: plan changes follow Stripe; past-due and cancelled workspaces stop their agents", async () => {

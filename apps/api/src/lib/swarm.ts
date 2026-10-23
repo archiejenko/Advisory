@@ -1,5 +1,7 @@
 // Swarms: the blueprint schema, what each agent is in a swarm, the event log, the work board, and the Floor's state.
 // Nothing here imports the agent runtime or the tool registry, so both can import it.
+import { modulesFor, roleInstructions } from "../../../../packages/core/os";
+import { OS_AGENT_TOOLS } from "./ostools";
 import { z } from "zod";
 import { newId, nowIso } from "../../../../packages/core/util";
 import { template, TEMPLATES, PLANS } from "../../../../packages/core/templates";
@@ -84,8 +86,15 @@ export type AgentSpec = { key: string; name: string; engine: string; tools: stri
 const dedupe = (a: string[]) => [...new Set(a)];
 
 /** The template behind an agent, or its custom role. Swarm agents also get the work board, handoffs and the CRM. */
-export function specFor(a: { template: string; name?: string; tools?: string | null; instructions?: string | null; swarm_id?: string | null; badges?: string | null }): AgentSpec | null {
+export function specFor(a: { template: string; name?: string; tools?: string | null; instructions?: string | null; swarm_id?: string | null; badges?: string | null; settings?: string | null }): AgentSpec | null {
   const extra = a.swarm_id ? SWARM_TOOLS : [];
+  // An OS agent: one role from the business OS, working its modules. It runs when someone asks it something.
+  if (a.template === "os") {
+    let role = "";
+    try { role = JSON.parse(a.settings || "{}").role || ""; } catch {}
+    if (!modulesFor(role).length) return null;
+    return { key: "os", name: role, engine: "llm", tools: OS_AGENT_TOOLS, instructions: roleInstructions(role), kickoff: "Do what you were asked.", glyph: "spark", category: "Run", needsInput: true };
+  }
   if (a.template === "custom") {
     let tools: string[] = [], roleKey = "";
     try { tools = JSON.parse(a.tools || "[]"); } catch {}

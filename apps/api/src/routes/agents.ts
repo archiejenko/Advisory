@@ -180,16 +180,30 @@ export function registerAgentRoutes(ws: App) {
     return c.json({ ok: true });
   });
 
-  ws.get("/tasks", async (c) => c.json({ tasks: await c.get("db").all("SELECT t.*, g.name AS agent FROM task t LEFT JOIN agent g ON g.id = t.agent_id WHERE t.org_id = ?1 ORDER BY t.status = 'done', COALESCE(t.due_date, '9999'), t.created_at DESC LIMIT 200") }));
+  // One task list for people and agents: who raised it (an agent, or a person) and who it's for.
+  ws.get("/tasks", async (c) => {
+    const mine = c.req.query("mine") === "1";
+    const tasks = await c.get("db").all(`SELECT t.*, g.name AS agent, u.name AS assignee_name, u.email AS assignee_email FROM task t LEFT JOIN agent g ON g.id = t.agent_id LEFT JOIN user u ON u.id = t.assignee_user_id
+      WHERE t.org_id = ?1 ${mine ? "AND t.assignee_user_id = ?2" : ""} ORDER BY t.status = 'done', COALESCE(t.due_date, '9999'), t.created_at DESC LIMIT 200`, ...(mine ? [c.get("user").id] : []));
+    return c.json({ tasks });
+  });
+  const assignee = async (c: any, id: string | null | undefined) => {
+    if (!id) return null;
+    if (!(await c.get("db").one("SELECT user_id FROM membership WHERE org_id = ?1 AND user_id = ?2", id))) throw bad("That person isn't in this workspace.");
+    return id;
+  };
   ws.post("/tasks", manager, async (c) => {
-    const b = await body(c, z.object({ title: z.string().min(1).max(200), detail: z.string().max(1000).optional(), due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }));
+    const b = await body(c, z.object({ title: z.string().min(1).max(200), detail: z.string().max(1000).optional(), due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), assignee_user_id: z.string().max(60).nullable().optional() }));
     const id = newId("task");
-    await c.get("db").run("INSERT INTO task (org_id, id, title, detail, due_date, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", id, b.title, b.detail ?? null, b.due_date ?? null, nowIso());
+    await c.get("db").run("INSERT INTO task (org_id, id, title, detail, due_date, assignee_user_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", id, b.title, b.detail ?? null, b.due_date ?? null, await assignee(c, b.assignee_user_id), nowIso());
     return c.json({ id }, 201);
   });
   ws.patch("/tasks/:id", manager, async (c) => {
-    const b = await body(c, z.object({ status: z.enum(["open", "done"]) }));
-    const r = await c.get("db").run("UPDATE task SET status = ?3, done_at = ?4 WHERE org_id = ?1 AND id = ?2", c.req.param("id"), b.status, b.status === "done" ? nowIso() : null);
+    const b = await body(c, z.object({ status: z.enum(["open", "done"]).optional(), assignee_user_id: z.string().max(60).nullable().optional() }));
+    if (!b.status && b.assignee_user_id === undefined) throw bad("Say what to change: the status or who it's for.");
+    const who = b.assignee_user_id === undefined ? undefined : await assignee(c, b.assignee_user_id);
+    const r = await c.get("db").run(`UPDATE task SET status = COALESCE(?3, status), done_at = CASE WHEN ?3 = 'done' THEN ?4 WHEN ?3 = 'open' THEN NULL ELSE done_at END${who !== undefined ? ", assignee_user_id = ?5" : ""} WHERE org_id = ?1 AND id = ?2`,
+      c.req.param("id"), b.status ?? null, nowIso(), ...(who !== undefined ? [who] : []));
     if (!r.meta.changes) throw notFound("Task");
     return c.json({ ok: true });
   });

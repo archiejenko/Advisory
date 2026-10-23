@@ -751,37 +751,52 @@ export function WsInvoices() {
 /* ---------- Tasks ---------- */
 export function WsTasks() {
   const can = useCan();
-  const { data, error, reload } = useApi("/api/ws/tasks");
-  const [t, setT] = useState({ title: "", due_date: "" });
+  const { me } = useWs();
+  const [mine, setMine] = useState(false);
+  const { data, error, reload } = useApi("/api/ws/tasks" + (mine ? "?mine=1" : ""));
+  const dir = useApi("/api/ws/os/directory");
+  const people = dir.data?.people || [];
+  const [t, setT] = useState({ title: "", due_date: "", assignee_user_id: "" });
   const act = useAction();
   const add = (e) => {
     e.preventDefault();
     if (!t.title.trim()) return act.setError("Say what needs doing.");
-    act.run(async () => { await api("POST", "/api/ws/tasks", { title: t.title.trim(), ...(t.due_date ? { due_date: t.due_date } : {}) }); setT({ title: "", due_date: "" }); await reload(); changed(); });
+    act.run(async () => { await api("POST", "/api/ws/tasks", { title: t.title.trim(), ...(t.due_date ? { due_date: t.due_date } : {}), ...(t.assignee_user_id ? { assignee_user_id: t.assignee_user_id } : {}) }); setT({ title: "", due_date: "", assignee_user_id: "" }); await reload(); changed(); });
   };
   const toggle = (x) => act.run(async () => { await api("PATCH", "/api/ws/tasks/" + x.id, { status: x.status === "done" ? "open" : "done" }); await reload(); changed(); });
+  const assign = (x, id) => act.run(async () => { await api("PATCH", "/api/ws/tasks/" + x.id, { assignee_user_id: id || null }); await reload(); });
   const today = new Date().toISOString().slice(0, 10);
   return (
     <Shell title="Tasks" crumbs={[["Tasks"]]}>
-      <p className="body ws-intro">Things only a person can do: a call to make, a visit to book. Agents add them when they reach a step they shouldn't take alone.</p>
+      <p className="body ws-intro">One list for people and agents. Agents add a task when they reach a step only a person should take; give each one to whoever should do it.</p>
       {can("manager") && (
-        <form className="inline-form inline-form-2" onSubmit={add} noValidate>
+        <form className="inline-form inline-form-3" onSubmit={add} noValidate>
           <div className="field"><label htmlFor="t-title">New task</label><input id="t-title" value={t.title} onChange={(e) => setT({ ...t, title: e.target.value })} placeholder="Call Salford Quays Media about the quote" /></div>
+          <div className="field"><label htmlFor="t-who">For</label><select id="t-who" value={t.assignee_user_id} onChange={(e) => setT({ ...t, assignee_user_id: e.target.value })}><option value="">Anyone</option>{people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
           <div className="field"><label htmlFor="t-due">Due</label><input id="t-due" type="date" value={t.due_date} onChange={(e) => setT({ ...t, due_date: e.target.value })} /></div>
           <button className="btn btn-sm" disabled={act.busy}>Add</button>
         </form>
       )}
+      <div className="os-filter" role="group" aria-label="Show">
+        <button className={"os-chip" + (!mine ? " is-on" : "")} aria-pressed={!mine} onClick={() => setMine(false)}>Everyone's</button>
+        <button className={"os-chip" + (mine ? " is-on" : "")} aria-pressed={mine} onClick={() => setMine(true)}>Mine</button>
+      </div>
       {(error || act.error) && <Notice signal>{error?.message || act.error}</Notice>}
       {!data ? <Loading /> : (
         <ul className="tasks">
-          {data.tasks.length === 0 && <li className="empty">No tasks. Nice.</li>}
+          {data.tasks.length === 0 && <li className="empty">{mine ? "Nothing is waiting for you." : "No tasks. Nice."}</li>}
           {data.tasks.map((x) => (
             <li key={x.id} className={x.status === "done" ? "is-done" : ""}>
               <label className="check">
                 <input type="checkbox" checked={x.status === "done"} disabled={!can("manager") || act.busy} onChange={() => toggle(x)} />
                 <span className="box" aria-hidden="true" />
-                <span className="task-b"><b>{x.title}</b>{x.detail && <span className="body">{x.detail}</span>}<span className="dt">{x.agent ? `From ${x.agent}` : "Added by you"}{x.due_date ? `, due ${dateOf(x.due_date)}` : ""}{x.status === "open" && x.due_date && x.due_date < today ? " (late)" : ""}</span></span>
+                <span className="task-b"><b>{x.title}</b>{x.detail && <span className="body">{x.detail}</span>}<span className="dt">{x.agent ? `From ${x.agent}` : "Added by a person"}{x.assignee_name ? `, for ${x.assignee_user_id === me.user.id ? "you" : x.assignee_name}` : ""}{x.due_date ? `, due ${dateOf(x.due_date)}` : ""}{x.status === "open" && x.due_date && x.due_date < today ? " (late)" : ""}</span></span>
               </label>
+              {can("manager") && x.status === "open" && people.length > 0 && (
+                <select className="task-who" aria-label={"Who does " + x.title} value={x.assignee_user_id || ""} disabled={act.busy} onChange={(e) => assign(x, e.target.value)}>
+                  <option value="">Anyone</option>{people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              )}
             </li>
           ))}
         </ul>

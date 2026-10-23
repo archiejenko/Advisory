@@ -76,7 +76,7 @@ export function NextPrev({ prev, next }) {
   );
 }
 
-export function CtaBand({ title = "Put your team to work today.", body = "Fourteen days free with six agents and an orchestrator to lead them. Nothing is sent without your approval, and nothing is charged when the trial ends." }) {
+export function CtaBand({ title = "Run your business from one OS.", body = "Fourteen days free with every app and up to 100 agents. Nothing is sent without your approval, and nothing is charged when the trial ends." }) {
   return (
     <section className="close">
       <div className="wrap grid">

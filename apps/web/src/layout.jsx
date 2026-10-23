@@ -26,14 +26,14 @@ const MENUS = {
   business: {
     label: "For businesses",
     items: [
-      ["floor", "The Floor", "Describe your business, get a team", "/floor"],
-      ["org", "Org chart", "An orchestrator, roles and tasks you shape", "/how-it-works?s=team"],
-      ["verify", "Check before you pay", "Customers and suppliers on the registers", "/health-check"],
-      ["board", "Use cases", "Every job, scored, and what works today", "/use-cases"],
+      ["workspace", "The business OS", "Every area of the business in one place", "/os"],
+      ["board", "Apps", "118 apps, from invoicing to the rota", "/workspace/apps"],
+      ["bell", "Messages", "People and agents in one conversation", "/workspace/messages"],
+      ["floor", "The Floor", "Up to 100 agents, organised like a team", "/floor"],
       ["agent", "All agents", "Outreach, inbox, credit control and more", "/agents"],
-      ["workspace", "Demo workspace", "Click through a business run by agents", "/workspace"],
+      ["verify", "Check before you pay", "Customers and suppliers on the registers", "/health-check"],
     ],
-    foot: ["How it works", "/how-it-works"],
+    foot: ["Open the demo OS", "/workspace"],
   },
   developers: {
     label: "For developers",
@@ -132,7 +132,7 @@ export function Header() {
 export function Footer() {
   const { me } = useWs();
   const cols = [
-    ["For businesses", [["The Floor", "/floor"], ["Use cases", "/use-cases"], ["All agents", "/agents"], ["How it works", "/how-it-works"], ["Free customer check", "/health-check"], ["Demo workspace", "/workspace"], ["Pricing", "/pricing"]]],
+    ["For businesses", [["The business OS", "/os"], ["Apps", "/workspace/apps"], ["Messages", "/workspace/messages"], ["The Floor", "/floor"], ["All agents", "/agents"], ["How it works", "/how-it-works"], ["Free customer check", "/health-check"], ["Demo workspace", "/workspace"], ["Pricing", "/pricing"]]],
     ["For developers", [["Developers", "/developers"], ["Publish a tool", "/developers/dashboard"], ["MCP server", "/developers?s=mcp"], ["Get an API key", "/developers?s=key"]]],
     ["For agents", [["Tool catalogue", "/for-agents?s=catalogue"], ["x402 payments", "/for-agents?s=x402"], ["Verifying answers", "/developers?s=verify"]]],
     ["Company", [["Trust", "/trust"], ["Book a call", "/book-a-call"], [me ? "Workspace" : "Sign in", me ? "/workspace" : "/sign-in"]]],

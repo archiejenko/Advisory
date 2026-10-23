@@ -183,6 +183,14 @@ function mockClaude(raw) {
     if (turn === 2) return use("propose-email", { to: m.from_addr, message_id: m.id, subject: `Re: ${m.subject}`, body: "Hello,\n\nThanks for getting in touch. We'd be glad to help. Could you tell us how many people are in your office, and when you'd like to start? We'll come back with a quote the same day.\n\nKind regards,\n" + sign, reason: "Quote request: reply asking for the details we need" });
     return done(`Triaged 1 message (quote request, high urgency) and drafted a reply for approval.`);
   }
+  if (tpl === "os") {
+    // An OS agent asked in a channel: read its module, add one record, and say what it did.
+    const module = (b.system.match(/module "([a-z0-9-]+)"/) || [])[1];
+    if (turn === 0) return use("os-records", { module });
+    if (turn === 1) return use("os-save", { module, title: "Follow up: " + (userText.trim().split("\n").pop() || "").replace(/@/g, "").trim().slice(0, 60) });
+    const n = H[0]?.records?.length ?? 0;
+    return done(`I checked ${H[0]?.app || "the module"}: ${n} ${n === 1 ? "record" : "records"} so far. I added "${H[1]?.id ? "a follow-up" : "nothing"}" for someone to pick up.`);
+  }
   if (tpl === "custom" && (b.tools || []).some((t) => t.name === "find-companies")) {
     // A prospector-style custom role: find one company, research it, save it, and hand it to outreach.
     if (turn === 0) return use("business-profile", {});

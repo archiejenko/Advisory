@@ -1,4 +1,5 @@
 // The agent runtime: hire an agent, run it turn by turn on the job queue, and schedule the next run.
+import { postRunReply } from "./ostools";
 import { newId, nowIso } from "../../../../packages/core/util";
 import { template, TEMPLATES, PLANS, type Template } from "../../../../packages/core/templates";
 import { type Env, one, all, run, audit } from "./db";
@@ -129,17 +130,17 @@ export async function setAgentStatus(env: Env, orgId: string, agentId: string, s
 }
 
 /* ---------- Running ---------- */
-export async function startRun(env: Env, orgId: string, agentId: string, trigger: "schedule" | "manual" | "event", input?: string) {
+export async function startRun(env: Env, orgId: string, agentId: string, trigger: "schedule" | "manual" | "event", input?: string, opts: { replyChannel?: string } = {}) {
   const a = await one<any>(env, "SELECT * FROM agent WHERE id = ? AND org_id = ?", agentId, orgId);
   if (!a) throw new HttpError(404, "not_found", "Agent not found.");
   const t = specFor(a);
   if (!t || t.engine !== "llm") throw new HttpError(409, "not_runnable", "This agent runs on its own schedule from the registers.");
-  if (t.needsInput && !input?.trim()) throw new HttpError(400, "invalid_request", "Ask the research agent a question.");
+  if (t.needsInput && !input?.trim()) throw new HttpError(400, "invalid_request", t.key === "os" ? `Ask ${t.name} something.` : "Ask the research agent a question.");
   const { org, problem } = await orgAccess(env, orgId);
   if (problem) throw accessError(problem);
   if ((await orgActionsLeft(env, org)) <= 0) throw new HttpError(402, "allowance_used", "Your agents have used this month's actions. They start again on the 1st, or move to a bigger plan in Usage and plan.");
   const id = newId("run");
-  await run(env, "INSERT INTO agent_run (id, org_id, agent_id, trigger, input, status, created_at) VALUES (?,?,?,?,?,?,?)", id, orgId, agentId, trigger, input?.slice(0, 4000) ?? null, "queued", nowIso());
+  await run(env, "INSERT INTO agent_run (id, org_id, agent_id, trigger, input, status, created_at, reply_channel) VALUES (?,?,?,?,?,?,?,?)", id, orgId, agentId, trigger, input?.slice(0, 4000) ?? null, "queued", nowIso(), opts.replyChannel ?? null);
   await (env.AGENT_JOBS ?? env.JOBS).send({ type: "agent_run", run_id: id });
   return id;
 }
@@ -316,11 +317,13 @@ export async function runAgent(env: Env, runId: string) {
       await swarmEv("run_done", out.text ? out.text.split("\n")[0].slice(0, 200) : `${agent.name} finished`, { waiting });
       try { await syncSwarm(env, r.org_id, agent.swarm_id, { force: true }); } catch (e) { console.error("sync after run failed", e); }
     }
+    if (r.reply_channel) await postRunReply(env, runId);
     if (waiting) await notifyChannel(env, org.id, agent.channel_id, `${agent.name}: ${waiting} ${waiting === 1 ? "email" : "emails"} waiting for you`, `${out.text.slice(0, 600)}\n\nApprove or edit them here: ${env.APP_URL}#/workspace/approvals`);
     return waiting ? "waiting" : "done";
   } catch (e: any) {
     const key = out.steps ? await saveTranscript(env, r.org_id, runId, out) : null;
     await settleRun(env, r.org_id, runId, out, { status: "failed", summary: out.text ? out.text.slice(0, 4000) : null, error: String(e.message || e).slice(0, 500), transcript_key: key });
+    if (r.reply_channel) await postRunReply(env, runId);
     await swarmEv("run_failed", `${agent?.name || "Agent"} stopped: ${String(e.message || e).slice(0, 160)}`);
     if (agent?.swarm_id) { try { await settleTasksForRun(env, r.org_id, runId, "failed", String(e.message || e)); } catch (err) { console.error("task settle failed", err); } }
     console.error("agent run failed", runId, e);

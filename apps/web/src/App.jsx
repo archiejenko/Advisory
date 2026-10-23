@@ -14,6 +14,8 @@ import Admin from "./pages/Admin.jsx";
 import { DevDashboard, ForAgents } from "./pages/Dev.jsx";
 import { FloorHome, FloorView } from "./pages/Floor.jsx";
 import { WsToday, WsRules } from "./pages/Today.jsx";
+import { WsApps, WsModule, WsMessages } from "./pages/Os.jsx";
+import { OsPage } from "./pages/OsPublic.jsx";
 
 // Workspace pages show your workspace when signed in, and the demo workspace when not.
 const ws = (live) => (props) => <Gate live={live} {...props} />;
@@ -25,10 +27,14 @@ const ROUTES = [
   ["/start", Start],
   ["/unsubscribe", Unsubscribe],
   ["/how-it-works", Method],
+  ["/os", OsPage],
   ["/use-cases", UseCases],
   ["/method", Method],
   ["/workspace", ws(WsToday)],
   ["/workspace/overview", ws(WsOverview)],
+  ["/workspace/apps", ws(WsApps)],
+  ["/workspace/app/:module", ws(WsModule)],
+  ["/workspace/messages", ws(WsMessages)],
   ["/workspace/rules", ws(WsRules)],
   ["/workspace/approvals", ws(WsApprovals)],
   ["/workspace/agents", ws(WsAgents)],

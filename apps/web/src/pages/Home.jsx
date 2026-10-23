@@ -3,16 +3,16 @@ import { Link } from "../router.jsx";
 import { Page, reduced } from "../ui.jsx";
 import { Reveal, Tile, Glyph, Marquee, Terminal, DarkBand, useInView } from "../kit.jsx";
 import { ApiShowcase, TERM } from "./showcase.jsx";
-import { USE_CASES, PRIMITIVES, SECTOR_PACKS } from "../../../../packages/core/usecases.ts";
+import { AREAS, FACETS } from "../../../../packages/core/os.ts";
 
 /* ---------- 1. Hero: agents at work, scrolling past ---------- */
 const WORK = [
-  ["OUTREACH", "Drafted first email · Peel Street Accountants"], ["INBOX", "Quote request triaged · urgent"], ["CREDIT CONTROL", "Reminder sent · INV-1042 · £640.00"],
-  ["uk-check", "5p · x402 settled · signed"], ["RESEARCH", "3 sources read · answer ready"], ["LEAD FINDER", "214 companies · M1–M50"],
-  ["WATCH", "Administrators appointed · Ellacombe Print"], ["read-page", "1p · castlefielddental.example"], ["INBOX", "Reply drafted · Castlefield Dental"],
-  ["BRIEFING", "Monday 07:00 · 14 runs · 6 sent"], ["company-research", "8p · key ah_live_7f…"], ["OUTREACH", "Lead saved · Ancoats Architects"],
-  ["uk-vat-check", "3p · published by a developer"], ["TASKS", "Call Salford Quays Media"], ["CREDIT CONTROL", "Second reminder · auto"],
-  ["agents/run", "72p · 6 steps · signed"], ["INBOX", "Supplier offer · ignored"], ["WATCH", "Accounts overdue · Tarnbrook Logistics"],
+  ["PAYROLL", "October run ready · 14 people"], ["#finance", "Priya: @Payables agent what's due?"], ["INVOICING", "INV-1055 sent · £960.00"],
+  ["ROTA", "Week 44 published · 9 shifts"], ["QUOTES", "Peel Street · £9,600 · drafted"], ["HELPDESK", "Complaint logged · Tarnbrook"],
+  ["WATCH", "Administrators appointed · Ellacombe Print"], ["HIRING", "2 applicants · evening cleaner"], ["#operations", "Sam: cloths low at Unit 4"],
+  ["VAT", "Jul–Sep return prepared"], ["STOCK", "Reorder · floor cleaner 20 × 5L"], ["OUTREACH", "Lead saved · Ancoats Architects"],
+  ["SAFETY", "COSHH sheet missing · new descaler"], ["TASKS", "Pay Northern Janitorial · Priya"], ["PAYABLES", "Rent due Friday · £1,250"],
+  ["BRIEFING", "Monday 07:00 · 3 things need Dana"], ["INSURANCE", "Renewal in 41 days"], ["CONTRACTS", "Ancoats · weekly · active"],
 ];
 const HOT = new Set([0, 6, 9, 14]);
 function Wall() {
@@ -31,11 +31,11 @@ function Wall() {
 }
 
 const LIVE_CARDS = [
-  ["org", "var(--data)", "Orchestrator gave Outreach a task", "Write to Peel Street Accountants"],
-  ["send", "var(--ink)", "Email to Peel Street Accountants", "Outreach · waiting for you"],
-  ["inbox", "var(--signal)", "Quote request: 3 floors at MediaCity", "Inbox · urgent · reply drafted"],
-  ["pound", "var(--data)", "Reminder sent for INV-1042", "Credit control · approved first time"],
-  ["verify", "var(--signal)", "Supplier checked before payment", "Accounts overdue · hold the order"],
+  ["person", "var(--ink)", "Priya in #finance", "@Payables agent what do we owe this week?"],
+  ["agent", "var(--data)", "Payables agent", "Rent £1,250 on Friday; £684 overdue. Task added for Priya"],
+  ["inbox", "var(--signal)", "Complaint: scratched worktop", "Helpdesk · Sam owns it · thread open"],
+  ["ledger", "var(--data)", "October payroll ready", "Payroll preparer · waiting for Dana"],
+  ["clock", "var(--ink)", "Week 44 rota published", "Rota planner · 9 shifts, all covered"],
 ];
 export function LiveAlerts() {
   const [n, setN] = useState(1);
@@ -60,12 +60,144 @@ function Hero() {
       <div className="hx-shade" />
       <LiveAlerts />
       <div className="wrap hx-copy">
-        <h1 id="hx-h">A team of agents for any business.</h1>
-        <p className="hx-sub">Describe what you do. We set up the team: it finds customers, answers enquiries, chases what you're owed and checks who you deal with. It asks before anything goes out in your name.</p>
+        <h1 id="hx-h">Run your business from one OS.</h1>
+        <p className="hx-sub">Sales, money, people, operations and compliance: every area of a business of up to 100 people, as native apps in one place. Your team and your agents work side by side, in the same records and the same conversations.</p>
         <div className="actions">
           <Link to="/start" className="btn btn-lg btn-light">Start free</Link>
-          <Link to="/floor" className="link">Watch a team at work</Link>
+          <Link to="/workspace/apps" className="link">Open the demo OS</Link>
         </div>
+      </div>
+    </section>
+  );
+}
+
+/* ---------- 2. Every area of the business, in one place ---------- */
+const PHASES = [
+  ["Win work and get paid", "Leads, CRM, quotes, invoicing, receivables, the helpdesk, channels and tasks"],
+  ["Finance depth", "The ledger, bank reconciliation, bills, contracts, bookings and complaints"],
+  ["People and payroll", "Budgets, management accounts, forecasts, HR records, payroll and the rota"],
+  ["Operations", "Projects, dispatch, purchasing, stock, suppliers, hiring and performance"],
+  ["Everything else", "Equity, fulfilment, shipping, returns, year end, benefits and devices"],
+];
+const depthCount = (d) => FACETS.filter((f) => f.depth === d).length;
+function Areas() {
+  return (
+    <section className="band" id="areas" style={{ paddingTop: 96 }}>
+      <div className="wrap">
+        <Reveal as="p" className="label">The business OS</Reveal>
+        <Reveal as="h2" className="display" style={{ marginBottom: 32 }}>Every area of the business. One place.</Reveal>
+        <Reveal as="p" className="body-l sect-lede">We mapped what it takes to run a business of 100 people well: {FACETS.length} jobs across {AREAS.length} areas. Each one is an app in your OS, with its own records, an agent that knows it, and a thread on every record where people and agents work it together.</Reveal>
+        <ul className="hm-areas">
+          {AREAS.map((a, i) => {
+            const list = FACETS.filter((f) => f.area === a.key);
+            const built = list.filter((f) => f.depth !== "basic").length;
+            return (
+              <Reveal as="li" key={a.key} delay={(i % 4) * 50}>
+                <Link to={"/os?a=" + a.key} className="hm-area">
+                  <span className="hm-area-h"><Tile name={a.glyph} /><b>{a.name}</b></span>
+                  <span className="hm-area-apps">{list.slice(0, 4).map((f) => f.app).join(" · ")}{list.length > 4 ? ` · +${list.length - 4}` : ""}</span>
+                  <span className="hm-meter" aria-label={`${built} of ${list.length} apps built natively so far`}><i style={{ width: Math.max(6, (built / list.length) * 100) + "%" }} /></span>
+                  <span className="dt">{list.length} apps · {built} built natively so far</span>
+                </Link>
+              </Reveal>
+            );
+          })}
+        </ul>
+        <p className="more" style={{ marginTop: 40 }}><Link to="/os" className="link">Every app, area by area, and how far each one is built</Link></p>
+      </div>
+    </section>
+  );
+}
+
+/* ---------- 3. People and agents in one conversation ---------- */
+const CHAT = [
+  ["person", "Priya Shah", "@Payables agent what do we owe this week?"],
+  ["agent", "Payables agent", "Rent £1,250 to Redhill Estates on Friday. Chemicals £684.20 to Northern Janitorial is a week overdue: I've given Priya a task to pay it."],
+  ["person", "Dana Price", "Thanks. @Cash forecaster does that leave us OK for payroll on the 28th?"],
+  ["agent", "Cash forecaster", "Yes: £18,400 after payroll, the lowest point on the 29th. Tarnbrook's £1,280 would add a cushion; Credit control is chasing it."],
+];
+function Together() {
+  const [n, setN] = useState(1);
+  const [ref, seen] = useInView({ threshold: 0.3 });
+  useEffect(() => {
+    if (!seen) return;
+    if (reduced()) { setN(CHAT.length); return; }
+    const t = setInterval(() => setN((x) => (x >= CHAT.length ? 1 : x + 1)), 2400);
+    return () => clearInterval(t);
+  }, [seen]);
+  return (
+    <section className="band">
+      <div className="wrap split">
+        <Reveal>
+          <p className="label">People and agents, together</p>
+          <h2>Your team and your agents, in one conversation</h2>
+          <p className="body-l">Channels for the whole business and a thread on every record. Mention an agent with @ and it does the work in its apps, then answers where you asked. Anything only a person should do lands on one task list, given to the right person.</p>
+          <ul className="ways">
+            <li><b>Channels</b><span>#general, #sales, #finance: people and agents in the same place</span></li>
+            <li><b>Threads on records</b><span>A complaint, a contract or a new starter, discussed where it lives</span></li>
+            <li><b>One task list</b><span>Agents raise tasks; you give each one to whoever should do it</span></li>
+          </ul>
+          <div className="actions"><Link to="/workspace/messages" className="btn btn-lg">Try Messages in the demo</Link></div>
+        </Reveal>
+        <Reveal delay={120}>
+          <div className="mini hm-chat" ref={ref} aria-hidden="true">
+            <div className="mini-h"><span># finance</span><span className="dt">Priya, Dana and their agents</span></div>
+            {CHAT.slice(0, n).map(([k, who, t]) => (
+              <div key={t} className={"hm-msg hm-msg-" + k}>
+                <span className={"hm-av" + (k === "agent" ? " hm-av-agent" : "")}>{k === "agent" ? <Glyph name="agent" size={14} /> : who.split(" ").map((w) => w[0]).join("")}</span>
+                <div><b>{who}{k === "agent" && <i>Agent</i>}</b><p>{t.split(/(@[A-Z][a-z]+ [a-z]+)/).map((x, i) => (x.startsWith("@") ? <em key={i}>{x}</em> : x))}</p></div>
+              </div>
+            ))}
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+/* ---------- 4. Native, not stitched together ---------- */
+const STITCHED = ["An accounts package", "An HR system", "A payroll bureau", "A rota app", "A CRM", "A helpdesk", "A chat tool", "A task board"];
+function Native() {
+  return (
+    <section className="band">
+      <div className="wrap split split-rev">
+        <Reveal delay={120}>
+          <div className="hm-native" aria-hidden="true">
+            <div className="hm-stitched">{STITCHED.map((t) => <span key={t}>{t}</span>)}</div>
+            <div className="hm-arrow"><Glyph name="right" size={22} /></div>
+            <div className="hm-one"><b>One OS</b><span>One record of the business</span><span>{FACETS.length} native apps</span><span>Every agent sees the whole picture</span></div>
+          </div>
+        </Reveal>
+        <Reveal>
+          <p className="label">Native, not bolted on</p>
+          <h2>Not another connector. The apps themselves.</h2>
+          <p className="body-l">Most small businesses run on eight or more tools that don't talk to each other. We build the apps natively instead: accounting with an agent inside it, HR and payroll that know the rota, a CRM that knows who owes you. One record, nothing to sync, and agents that can see everything they need.</p>
+          <div className="actions"><Link to="/os" className="link">See every app</Link></div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+/* ---------- 5. Built one module at a time, and honest about it ---------- */
+function Phases() {
+  return (
+    <section className="band">
+      <div className="wrap split">
+        <Reveal>
+          <p className="label">Built in the open</p>
+          <h2>One module at a time, and honest about each</h2>
+          <p className="body-l">Every app is in your OS today. {depthCount("full")} are fully native, {depthCount("partial")} are partly built, and the other {depthCount("basic")} start as records with an agent while their full screens are built. Each app says which it is. We build in the order that matters most to a growing business.</p>
+          <div className="actions"><Link to="/os" className="link">Where every app stands</Link></div>
+        </Reveal>
+        <Reveal delay={120}>
+          <ol className="next-list">
+            {PHASES.map(([t, d], i) => {
+              const n = FACETS.filter((f) => f.phase === i + 1).length;
+              return <li key={t}><span className="next-n">{i + 1}</span><div><b>{t}</b><span>{d}</span></div><i className="st">{n} apps</i></li>;
+            })}
+          </ol>
+        </Reveal>
       </div>
     </section>
   );
@@ -104,15 +236,15 @@ function MiniX402() {
   );
 }
 const DOORS = [
-  ["For businesses", "A team for sales, the inbox, cash and checks, led by an orchestrator. Every email waits for you until you say otherwise.", "/floor", MiniApprove],
-  ["For developers", "The same tools as one API and an MCP server. Publish your own and earn 80% of every call.", "/developers", MiniPublish],
+  ["For businesses", "Every area of the business in one OS, with agents that ask before anything goes out in your name.", "/workspace/apps", MiniApprove],
+  ["For developers", "The tools behind the OS as one API and an MCP server. Publish your own and earn 80% of every call.", "/developers", MiniPublish],
   ["For agents", "Verified UK company facts, research and more, paid per call with x402. Every answer signed.", "/for-agents", MiniX402],
 ];
 function Doors() {
   return (
     <section className="band" style={{ paddingTop: 96 }}>
       <div className="wrap">
-        <Reveal as="h2" className="display" style={{ marginBottom: 88 }}>One catalogue. Three ways in.</Reveal>
+        <Reveal as="h2" className="display" style={{ marginBottom: 88 }}>One OS. Open by design.</Reveal>
         <div className="pgrid">
           {DOORS.map(([t, d, to, Vis], i) => (
             <Reveal key={t} delay={i * 90}>
@@ -168,7 +300,7 @@ function Businesses() {
     <section className="band">
       <div className="wrap split">
         <Reveal>
-          <p className="label">For businesses</p>
+          <p className="label">What your agents do</p>
           <h2>The jobs that never get done, done</h2>
           <p className="body-l">Each agent takes one job off your list. They work from your business profile, show every step, and bring you only what needs a decision. After a run of approvals you're happy with, let a kind of email go on its own.</p>
           <div className="actions"><Link to="/agents" className="btn btn-lg">See every agent</Link><Link to="/workspace" className="link">Try the demo workspace</Link></div>
@@ -383,8 +515,8 @@ function Mission() {
     <section className="band" style={{ overflow: "hidden" }}>
       <div className="wrap mission">
         <Reveal>
-          <h2>Our mission is to give every small business the team it can't yet hire.</h2>
-          <p>Agent House is built in Manchester. The same twelve building blocks serve a plumber, a dental practice and a recruiter, so no business is too niche. Our agents show their work, ask before they act in your name, and never invent a fact, a figure or an email address.</p>
+          <h2>Our mission is to give every growing business one place to run from.</h2>
+          <p>Agent House is built in Manchester, for UK businesses from one person to a hundred. Every area of the business lives in one OS, and agents do the work no one has time for. They show their work, ask before they act in your name, and never invent a fact, a figure or an email address.</p>
           <div className="actions"><Link to="/start" className="btn btn-lg">Start free</Link><Link to="/trust" className="link">How we keep agents honest</Link></div>
         </Reveal>
         <div className="mission-vis"><MissionGrid /></div>
@@ -428,51 +560,12 @@ function Team() {
     <section className="band">
       <div className="wrap split">
         <Reveal>
-          <p className="label">The Floor</p>
-          <h2>Describe the business. Get a team with a lead.</h2>
-          <p className="body-l">Tell us what you do in a sentence, or say it. We design the team: an orchestrator that turns your goals into tasks, and roles under it that do the work. Drag a badge to give an agent a skill, move it to another team, or hire a new role.</p>
+          <p className="label">Agents are the engine</p>
+          <h2>Up to 100 agents, organised like a team</h2>
+          <p className="body-l">Behind the apps, agents do the daily work: an orchestrator turns your goals into tasks, and roles under it work the apps they know. Each one shows every step, follows your house rules, and earns autonomy only when you give it. Drag a badge to give an agent a skill or move it to another team.</p>
           <div className="actions"><Link to="/floor" className="btn btn-lg">See a team at work</Link><Link to="/how-it-works?s=team" className="link">How the team works</Link></div>
         </Reveal>
         <Reveal delay={120}><div className="mini otree-wrap"><MiniOrg /></div></Reveal>
-      </div>
-    </section>
-  );
-}
-
-/* ---------- Any sector: twelve primitives and the packs built from them ---------- */
-const STATUS = { live: ["Live", "st-done"], partly: ["Partly built", "st-running"], coming: ["Coming", "st-paused"] };
-function Sectors() {
-  const [k, setK] = useState(SECTOR_PACKS[0].key);
-  const pack = SECTOR_PACKS.find((p) => p.key === k);
-  return (
-    <section className="band" id="sectors" style={{ paddingTop: 96 }}>
-      <div className="wrap">
-        <Reveal as="h2" className="display" style={{ marginBottom: 32 }}>Twelve building blocks. Any business.</Reveal>
-        <Reveal as="p" className="body-l sect-lede">Every job an agent does for a small business is built from the same twelve building blocks. A new sector is a new team, not new software, so a plumber, a clinic and a recruiter all get the same tested parts.</Reveal>
-        <div className="prims">
-          {PRIMITIVES.map((p, i) => (
-            <Reveal key={p.key} delay={(i % 4) * 60} className={"prim prim-" + p.status}>
-              <b>{p.label}</b><span>{p.note}</span><i className={"st " + STATUS[p.status][1]}>{STATUS[p.status][0]}</i>
-            </Reveal>
-          ))}
-        </div>
-        <div className="sect">
-          <div className="sect-pick" role="tablist" aria-label="Choose a sector">
-            {SECTOR_PACKS.map((p) => <button key={p.key} role="tab" aria-selected={p.key === k} className={"seg-btn" + (p.key === k ? " is-on" : "")} onClick={() => setK(p.key)}>{p.name}</button>)}
-          </div>
-          <div className="sect-card api-fade" key={pack.key} role="tabpanel">
-            <div className="sect-head">
-              <div><p className="dt">{pack.who}</p><h3>A team for {pack.name.toLowerCase()}</h3><p className="sect-goal">Goal: {pack.goal}</p></div>
-              <Link to="/start" className="btn">Start with this team</Link>
-            </div>
-            <ul className="sect-roles">
-              <li className="is-lead"><b>Orchestrator</b><span>Turns the goal into tasks and follows them up</span><i className="st st-done">Live</i></li>
-              {pack.roles.map((r) => (
-                <li key={r.name}><b>{r.name}</b><span>{r.does}{r.needs ? ` (needs ${r.needs})` : ""}</span><i className={"st " + (r.status === "live" ? "st-done" : "st-paused")}>{r.status === "live" ? "Live" : "Coming"}</i></li>
-              ))}
-            </ul>
-          </div>
-        </div>
       </div>
     </section>
   );
@@ -510,78 +603,24 @@ function Verify() {
   );
 }
 
-/* ---------- The matrix: every use case, scored for each user ---------- */
-function UseCasesTeaser() {
-  const cols = [["owner", "For owners"], ["dev", "For developers"], ["agent", "For agents"]];
-  const live = USE_CASES.filter((u) => u.today === "Live").length, part = USE_CASES.filter((u) => u.today === "Partial").length;
-  return (
-    <section className="band" style={{ paddingTop: 96 }}>
-      <div className="wrap">
-        <Reveal as="h2" className="display" style={{ marginBottom: 32 }}>{USE_CASES.length} jobs, scored.</Reveal>
-        <Reveal as="p" className="body-l sect-lede">We mapped every job an agent could do for a small business and scored each for owners, developers and other agents. {live} work today, {part} are partly there, and we show which.</Reveal>
-        <div className="uc-cols">
-          {cols.map(([k, t]) => (
-            <Reveal key={k} className="uc-col">
-              <h3>{t}</h3>
-              <ol>{[...USE_CASES].sort((a, b) => b[k] - a[k] || b.reach - a.reach).slice(0, 5).map((u) => <li key={u.id}><span>{u.use_case}</span><i className={"st " + (u.today === "Live" ? "st-done" : u.today === "Partial" ? "st-running" : "st-paused")}>{u.today}</i></li>)}</ol>
-            </Reveal>
-          ))}
-        </div>
-        <p className="more" style={{ marginTop: 40 }}><Link to="/use-cases" className="link">All {USE_CASES.length} use cases, by job and by sector</Link></p>
-      </div>
-    </section>
-  );
-}
-
-/* ---------- Coming next: the connections that unlock the most ---------- */
-const NEXT = [
-  ["Your own mailbox", "Gmail and Outlook, so agents write from your address and read your real inbox", /own mailbox|gmail/i],
-  ["Reading documents", "Receipts, bills, CVs, contracts and site photos into records; quotes out", /document|photo/i],
-  ["Your calendar", "Bookings, reminders, no-shows, interviews and rotas", /calendar/i],
-  ["WhatsApp and SMS", "Answer customers where they already message you", /whatsapp|sms/i],
-  ["Your accounts", "Xero and QuickBooks: raise invoices, tidy the books, forecast cash", /xero|accounting/i],
-];
-function Roadmap() {
-  return (
-    <section className="band">
-      <div className="wrap split">
-        <Reveal>
-          <p className="label">Coming next</p>
-          <h2>Built in the order that unlocks the most</h2>
-          <p className="body-l">Each connection lights up several jobs at once. This is the order we're building them, by how many jobs each one unlocks.</p>
-          <div className="actions"><Link to="/use-cases" className="link">See what each one unlocks</Link></div>
-        </Reveal>
-        <Reveal delay={120}>
-          <ol className="next-list">
-            {NEXT.map(([t, d, re], i) => {
-              const n = USE_CASES.filter((u) => u.today !== "Live" && re.test(u.needs)).length;
-              return <li key={t}><span className="next-n">{i + 1}</span><div><b>{t}</b><span>{d}</span></div><i className="st">{n} {n === 1 ? "job" : "jobs"}</i></li>;
-            })}
-          </ol>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
-
 export default function Home() {
   return (
-    <Page title="A team of agents for any business">
+    <Page title="Run your business from one OS">
       <Hero />
-      <Doors />
+      <Areas />
+      <Together />
+      <Native />
+      <Phases />
       <Team />
-      <Sectors />
-      <Verify />
-      <UseCasesTeaser />
       <Businesses />
       <LineUp />
-      <Developers />
-      <ApiShowcase title="Build on the same tools." />
+      <Verify />
+      <Doors />
       <Examples />
-      <Roadmap />
+      <Developers />
       <WorksWith />
       <Mission />
-      <DarkBand glyph="agent" title="Try a team free for 14 days" body="Describe your business in two minutes. Your team starts today, and nothing is sent without your approval." cta={["Start free", "/start"]} note="No card needed." />
+      <DarkBand glyph="agent" title="Run your business from one OS, free for 14 days" body="Tell us about your business in two minutes. Every app is ready, your agents start today, and nothing is sent without your approval." cta={["Start free", "/start"]} note="No card needed. From £39 a month for the whole business." />
     </Page>
   );
 }

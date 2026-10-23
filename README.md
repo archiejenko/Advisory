@@ -1,7 +1,9 @@
 # Agent House
 
-One place for everything agentic, with three doors:
+A business OS: run every area of a business of up to 100 people from one place, with your people and up to 100 agents working side by side. Native apps instead of connectors, and three doors:
 
+- **The business OS:** 118 apps across 17 areas (leadership, sales, marketing, customer service, operations, stock, finance, payments, HR, payroll, shifts, internal communication, legal, IT, data, facilities and the agent platform), from the business OS matrix in `docs/os-matrix.json`. Each app keeps its own records, has an agent role you can @mention, and a thread on every record. 6 are fully native, 34 partly built, and 78 start as records with an agent while their full screens are built; every app says which. The catalogue is `packages/core/os.ts`. Apps: `/#/workspace/apps`; one app: `/#/workspace/app/:module`; the public map: `/#/os`.
+- **Messages:** channels (`#general`, `#sales`, `#finance`, `#operations`, `#people`, and any you add) and a thread on every record, where people and agents talk. @mention an agent and it is asked with the message (and the record, on a thread); its answer is posted back where it was asked. One task list for people and agents: tasks can be given to a person (`assignee_user_id`, `?mine=1`).
 - **For businesses:** a team of agents for any small business, led by an orchestrator. Ready-made roles (outreach, inbox, credit control, customer and supplier watch, company checks, lead lists, research, a weekly briefing) or roles you describe, all built from the same twelve building blocks. They work from the business profile, use catalogue tools, record every step, and ask before anything is sent. The lead offer is "check before you trust or pay": customers and suppliers checked on the registers and watched daily.
 - **Today:** the workspace home (`/#/workspace`). What needs the owner (drafts to approve in one go, tasks, critical alerts, runs that stopped), what came in, money owed and due, and the week's outcomes. House rules (`/#/workspace/rules`, "How we work") are learned from the owner's edits to drafts, or added directly, and every agent follows them.
 - **The Floor:** describe the business (typed or spoken) and Claude designs a swarm of agents for it, or start from a preset (Sales floor, Back office; Markets desk is shown but locked until market data is connected). The swarm runs on a live Floor: a station per agent showing what it's doing, work cards moving through stages, handoffs between agents, KPIs, a desk of things waiting for you, a CRM (companies, contacts, deals, timeline), and a command bar you can talk to from your phone.
@@ -58,12 +60,14 @@ Opened straight from disk, `apps/web/dist/index.html` runs as an offline demo wi
 ## Tests
 
 ```bash
-npm test               # unit (120): matching, checks, signing, tenant isolation, register budget lanes, scheduling, catalogue, swarms, org chart,
+node scripts/os-matrix-check.mjs   # stage 1: every row of the business OS matrix is a module, with matching area, app, depth and phase
+npm test               # unit (139): the OS catalogue, records, channels, mentions and replies (os.test.ts), matching, checks, signing, tenant isolation, register budget lanes, scheduling, catalogue, swarms, org chart,
                        # Today and house rules, and the scale fixes (queues, crons, the Floor, inbound mail, clean-up),
                        # plus the hardening and swarm suites run against real SQL (Node's built-in SQLite, every migration applied)
 npm run typecheck
-npm run test:e2e       # API: 42 flows against wrangler dev and the mocks
-node tests/e2e/ui.mjs  # browser: 21 flows clicking through the real website in Chromium
+npm run test:e2e       # API: 44 flows against wrangler dev and the mocks (records in all 118 modules; an @mention answered in #general)
+node tests/e2e/ui.mjs  # browser: 22 flows clicking through the real website in Chromium
+node tests/e2e/os-check.mjs  # stage 3: the demo build in Chromium: the landing page, /os, the launcher, all 118 module screens, Messages, tasks, phone width
 ```
 
 Stop any running `npm run dev` or `npm run mocks` before the end-to-end suites; they start their own on ports 8787 and 8788 with fresh state. The browser suite saves screenshots to `ui-shots/`.
@@ -74,6 +78,7 @@ Stop any running `npm run dev` or `npm run mocks` before the end-to-end suites; 
 |---|---|---|
 | Website | `/` | Hash routes. Workspace pages show the live workspace when signed in and the demo when not. The site's story comes from `packages/core/usecases.ts`: 80 SMB use cases scored for owners, developers and agents, the twelve building blocks, and sector packs (`/#/use-cases`). The wordmark is type only, as outlines in `packages/core/brand.ts`, with the "ah" favicon in `apps/web/src/brand/`. |
 | Sign-in | `/api/auth/*` | Email magic links. Session is an HttpOnly cookie. |
+| Business OS | `/api/ws/os/catalogue`, `/api/ws/os/directory`, `/api/ws/os/m/:module/records`, `/api/ws/os/records/:id` (+ `/messages`), `/api/ws/os/channels` (+ `/:id/messages?after=`) | Every module with this business's record counts; who can be mentioned; module records (one `os_record` table: title, status, owner, due date, amount, party as columns, the kind's other fields as JSON; nine kinds, from items and deals to cases and measures); record threads; team channels. Anyone in the workspace reads and talks; a manager or owner changes records and channels. An @mention of an OS role hires its agent the first time (template `os`, on demand, counts towards the plan's 100), and runs it with `reply_channel` set; `postRunReply` posts the summary or the failure back. OS agents can read any module (`os-records`) and write only their own (`os-save`); anything for a person becomes a task. |
 | Today and house rules | `/api/ws/today`, `/api/ws/actions/batch`, `/api/ws/rules*` | The home screen in one call; approve or reject up to 50 drafts at once (each decided on its own); list, add, keep or dismiss house rules. An approval with edits proposes a rule from what changed (one short model call, after the response). The command bar takes `rule: …` too. |
 | Workspace | `/api/ws/*` | Overview (now "Agents and activity", `/#/workspace/overview`), agent catalogue and hiring, runs, approvals, leads, tasks, invoices, inbox, alerts, customers, imports, briefs, channels, usage and plan, team, audit, billing. Roles: owner, manager, viewer. Every query is forced through an org filter. |
 | Org chart | `/api/ws/swarms/:id/org`, `/api/ws/swarms/:id/goals`, `/api/ws/swarms/:id/tasks`, `/api/ws/agent-tasks/:id` | Read the tree, badges and tasks; apply a list of changes all or nothing; set a goal (wakes the orchestrator); give an agent a task; close or drop one. Owner to-dos stay at `/api/ws/tasks`. |
@@ -114,7 +119,7 @@ Crons (UTC), each doing one indexed read and queuing work in batches:
 
 **Two engines for agents.** LLM agents (outreach, inbox, credit control, research, briefing) run through the tool registry in `lib/agents.ts` and `lib/tools.ts`. The register agents (customer watch, customer check, prospect finder) are the original MSP engines (`agent_config`, `lib/process.ts`, `lib/truth.ts`, briefs); hiring one switches its engine on. New capabilities go into the tool registry.
 
-Plans (in `packages/core/templates.ts`): a 14-day trial with six agents and 1,500 actions, then Starter £49 (2 agents, 300 actions), Growth £149 (6, 1,500) and Scale £399 (12, 5,000). An action is one tool call by an agent. When the month's actions are used, agents pause until the 1st; there are no overage charges. When the trial ends, agents stop until a plan is chosen.
+Plans (in `packages/core/templates.ts`) are per business, not per person or agent: every plan has all 118 apps, unlimited people and up to 100 agents. A 14-day trial with 1,500 actions, then Solo £39 (500 actions a month), Team £129 (2,000) and Business £299 (6,000); the plan keys stay `starter`, `growth` and `scale`. An action is one tool call by an agent. When the month's actions are used, agents pause until the 1st; there are no overage charges. When the trial ends, agents stop until a plan is chosen.
 
 ## A walkthrough demo on its own
 
@@ -140,7 +145,7 @@ node -e "crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']).then
 for s in SIGNING_JWK CHANNEL_KEY CH_API_KEY FCA_EMAIL FCA_KEY STRIPE_SECRET STRIPE_WEBHOOK_SECRET INGEST_SECRET ADMIN_TOKEN OPERATOR_EMAIL TURNSTILE_SECRET ANTHROPIC_API_KEY SEARCH_API_KEY; do wrangler secret put $s; done
 ```
 
-Voice uses the Workers AI binding (`[ai] binding = "AI"` in `wrangler.toml`, set `VOICE_SPEAKER` and `VOICE_LANGUAGE` in vars). Workers AI always runs remotely, so local dev and the tests point `VOICE_HTTP_URL` at the mock instead; leave it unset in production. Without either, voice routes answer 503 `voice_off` and the Floor uses the browser's speech. Apply migrations `0004_swarms.sql`, `0005_org.sql` and `0006_scale.sql` (indexes, `watch_number`, `dead_job`, house rules) before deploying. `wrangler.toml` also turns on Smart Placement (the Worker runs near D1), Workers Logs at 20% sampling, the dead-letter consumer, and a Workers Rate Limiting binding (`WS_LIMITER`, 300 workspace requests a minute per workspace). `npm run deploy` refuses to deploy while `wrangler.toml` still has `REPLACE_WITH_…` placeholders.
+Voice uses the Workers AI binding (`[ai] binding = "AI"` in `wrangler.toml`, set `VOICE_SPEAKER` and `VOICE_LANGUAGE` in vars). Workers AI always runs remotely, so local dev and the tests point `VOICE_HTTP_URL` at the mock instead; leave it unset in production. Without either, voice routes answer 503 `voice_off` and the Floor uses the browser's speech. Apply migrations `0004_swarms.sql`, `0005_org.sql`, `0006_scale.sql` (indexes, `watch_number`, `dead_job`, house rules) and `0007_os.sql` (module records, channels, messages, task assignees, run reply channels) before deploying. `wrangler.toml` also turns on Smart Placement (the Worker runs near D1), Workers Logs at 20% sampling, the dead-letter consumer, and a Workers Rate Limiting binding (`WS_LIMITER`, 300 workspace requests a minute per workspace). `npm run deploy` refuses to deploy while `wrangler.toml` still has `REPLACE_WITH_…` placeholders.
 
 `CHANNEL_KEY` is 32 random bytes, base64url. `TURNSTILE_SECRET` is optional; set `TURNSTILE_SITE_KEY` in vars alongside it. `ANTHROPIC_API_KEY` runs the agents (model from `AGENT_MODEL`; costs are recorded per run using `AGENT_PRICE_IN_PENCE` and `AGENT_PRICE_OUT_PENCE` per million tokens, with cache writes and reads at `AGENT_CACHE_WRITE_X` and `AGENT_CACHE_READ_X` of the input price).
 
@@ -160,8 +165,12 @@ Point Cloudflare Email Routing for `INBOUND_DOMAIN` (a catch-all) at the Worker 
 
 Done in this release: everything in phase 0 of the check, the register budget lanes and the spread re-check (phase 1, without a Durable Object: the lanes live on the D1 counter), fair agent scheduling, inbound limits and chunked clean-up (phase 2), the Floor diet without push (phase 3), and phase A of the platform plan (Today, batch approval, outcomes-first briefings, house rules).
 
+Done in the OS overhaul: every facet of the matrix is a working module (records, an agent, threads), channels for people and agents, @mentions that run an agent and answer in place, one task list with assignees, and per-business pricing.
+
 Not yet:
-- **Mailbox and accounts connections** (Outlook, Gmail, Xero, QuickBooks, FreeAgent). These need app registrations: Google's restricted Gmail scopes need its verification and a yearly security assessment.
+- **Full native screens for the 78 "records + agent" apps,** built in the matrix's phase order: win work and get paid, finance depth (the ledger, bank reconciliation, payables), people and payroll (RTI, pensions), operations, then the rest. Payroll, VAT (MTD) and open banking need their HMRC recognition and a regulated payments partner.
+- **Notifications for people:** @mentioning a person records the mention but doesn't notify them yet; messages are polled every 3 seconds on an open channel.
+- **Your own mailbox** (Outlook, Gmail) for agents writing from your address. Google's restricted Gmail scopes need its verification and a yearly security assessment.
 - **Refresh led by the stream:** a re-check still reads all four Companies House resources for a company. Ask Companies House for a higher limit before the watch grows past a few thousand companies.
 - **Hosting for the stream listener,** with an alarm when its position stops moving.
 - **Splitting the data** (register data in its own database, workspace data sharded), planned for about 300 workspaces.

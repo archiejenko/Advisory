@@ -185,9 +185,10 @@ export const RHYTHM_LABEL: Record<Template["rhythm"], string> = {
 
 /** Plans: how many agents a business can hire and how many tool calls its agents get a month. */
 export const PLANS: Record<string, { name: string; price: number | null; agents: number; actions: number; blurb: string }> = {
-  trial: { name: "Free trial", price: 0, agents: 6, actions: 1500, blurb: "14 days, everything in Growth" },
-  pilot: { name: "Pilot", price: null, agents: 12, actions: 5000, blurb: "Founding rate, agreed with us" },
-  starter: { name: "Starter", price: 49, agents: 2, actions: 300, blurb: "Two agents for a sole trader or small team" },
-  growth: { name: "Growth", price: 149, agents: 6, actions: 1500, blurb: "Six agents across sales, admin and cash" },
-  scale: { name: "Scale", price: 399, agents: 12, actions: 5000, blurb: "Every agent, for busy teams" },
+  // Priced per business, not per agent: every plan has the whole OS and up to 100 agents. Actions are what scale.
+  trial: { name: "Free trial", price: 0, agents: 100, actions: 1500, blurb: "14 days of the whole OS" },
+  pilot: { name: "Pilot", price: null, agents: 100, actions: 6000, blurb: "Founding rate, agreed with us" },
+  starter: { name: "Solo", price: 39, agents: 100, actions: 500, blurb: "The whole OS for an owner and a few people" },
+  growth: { name: "Team", price: 129, agents: 100, actions: 2000, blurb: "For a team of up to 25 running every area in one place" },
+  scale: { name: "Business", price: 299, agents: 100, actions: 6000, blurb: "For a business of up to 100 people and 100 agents" },
 };

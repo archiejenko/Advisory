@@ -76,7 +76,9 @@ const tool = async (env: any, orgId: string, agentId: string, slug: string, inpu
 
 describe("the org chart in a swarm", () => {
   it("every swarm gets an orchestrator that doesn't use a place on the plan", async () => {
-    const { env, org } = business("starter");
+    // Every plan allows 100 agents; a business with 97 has no room for a team of four.
+    const { env, org, raw: full } = business("starter");
+    for (let i = 0; i < 97; i++) seedAgent(full, org.id, { id: "agt_f" + i, template: "research" });
     const pv = await previewFor(env, org.id, preset("sales-floor")!.blueprint);
     expect(pv).toMatchObject({ agents: 4, orchestrator: true, fits: false });
     const { env: env2, org: org2, raw } = business("growth");
@@ -87,7 +89,7 @@ describe("the org chart in a swarm", () => {
     expect(s.root).toBe(root.id);
     expect(s.agents.filter((a) => a.reports_to === root.id)).toHaveLength(4);
     expect(s.agents.find((a) => a.key === "watch")!.locked).toBe(true);
-    expect(s.limits).toMatchObject({ agents_used: 4, agents_allowed: 6 });
+    expect(s.limits).toMatchObject({ agents_used: 4, agents_allowed: 100 });
     expect(specFor(raw.prepare("SELECT * FROM agent WHERE id = ?").get(root.id) as any)!.tools).toEqual(expect.arrayContaining(["list-team", "assign-task", "check-tasks", "finish-task"]));
   });
 

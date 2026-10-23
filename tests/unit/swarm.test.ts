@@ -80,8 +80,9 @@ describe("spinning up a swarm", () => {
 
   it("refuses a swarm that doesn't fit the plan, and leaves nothing behind", async () => {
     const { raw, env, org } = business("starter");
+    for (let i = 0; i < 97; i++) seedAgent(raw, org.id, { id: "agt_f" + i, template: "research" });
     await expect(createSwarm(env, org.id, org.user, preset("sales-floor")!.blueprint)).rejects.toMatchObject({ status: 409, code: "plan_limit" });
-    expect(raw.prepare("SELECT COUNT(*) AS n FROM agent").get()).toEqual({ n: 0 });
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM agent").get()).toEqual({ n: 97 });
     expect(raw.prepare("SELECT COUNT(*) AS n FROM swarm").get()).toEqual({ n: 0 });
   });
 
