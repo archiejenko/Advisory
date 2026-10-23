@@ -1,6 +1,7 @@
 // Self-serve sign-up for businesses, and the unsubscribe page linked from every outreach email.
 import React, { useState } from "react";
-import { Link, useRoute } from "../router.jsx";
+import { isPass } from "../pass.js";
+import { Link, useRoute, navigate } from "../router.jsx";
 import { LIVE, api, useTurnstile } from "../api.js";
 import { Page, PageHead, Section } from "../ui.jsx";
 import { Glyph } from "../kit.jsx";
@@ -31,6 +32,7 @@ export function Start() {
     if (!ts.ready) return setErr("Complete the check that you're not a robot.");
     setErr("");
     try { localStorage.setItem(START_KEY, [f.what.trim(), f.customers.trim() && "Customers: " + f.customers.trim(), f.area.trim() && "Area: " + f.area.trim(), pack && "Goal: " + pack.goal].filter(Boolean).join(". ")); } catch {}
+    if (!LIVE && isPass()) return navigate("/workspace");
     if (!LIVE) return setDone("Prototype: no workspace was created.");
     setBusy(true);
     try {

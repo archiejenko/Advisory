@@ -1,5 +1,6 @@
 // Account pages: usage and plan, and settings (business profile, channels, team, activity log).
 import React, { useEffect, useState } from "react";
+import { isPass } from "../pass.js";
 import { Link, useRoute } from "../router.jsx";
 import { useWs, useCan } from "../layout.jsx";
 import { api, useApi, useAction, dateTimeOf, pounds } from "../api.js";
@@ -65,12 +66,12 @@ export function WsUsage() {
               <ul className="ticks"><li>{p.agents} agents working at once</li><li>{p.actions.toLocaleString("en-GB")} actions a month</li><li>Every agent in the catalogue</li></ul>
               {can("owner") && (current
                 ? <button className="btn btn-line btn-sm btn-block" disabled>Your plan</button>
-                : <button className={"btn btn-sm btn-block" + (k === "growth" ? "" : " btn-line")} disabled={act.busy || me.demo} onClick={() => billing("/api/ws/billing/checkout", { plan: k })}>Choose {p.name}</button>)}
+                : <button className={"btn btn-sm btn-block" + (k === "growth" ? "" : " btn-line")} disabled={act.busy || (me.demo && !isPass())} onClick={() => billing("/api/ws/billing/checkout", { plan: k })}>Choose {p.name}</button>)}
             </article>
           );
         })}
       </div>
-      {me.demo && <p className="dt">Plans are chosen in your own workspace. <Link to="/start" className="link link-s">Start a free trial</Link></p>}
+      {me.demo && !isPass() && <p className="dt">Plans are chosen in your own workspace. <Link to="/start" className="link link-s">Start a free trial</Link></p>}
       {act.error && <Notice signal>{act.error}</Notice>}
       {can("owner") && ["active", "past_due"].includes(sub) && <button className="btn btn-line mt-s" disabled={act.busy} onClick={() => billing("/api/ws/billing/portal")}>Manage billing and invoices</button>}
       {!can("owner") && <p className="dt">Only the workspace owner can change the plan.</p>}

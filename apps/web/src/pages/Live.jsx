@@ -1,5 +1,6 @@
 // The signed-in workspace. Same layout and visual language as the demo, backed by /api/ws.
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { isPass } from "../pass.js";
 import { Link, navigate, useRoute } from "../router.jsx";
 import { Page, PageHead, Section, Severity, Bars, Brief, briefFromApi, DistrictGrid } from "../ui.jsx";
 import { useWs, useCan, WsCtx } from "../layout.jsx";
@@ -42,7 +43,10 @@ export function Shell({ title, crumbs, children, actions, wide }) {
   const n = counts.data || {};
   return (
     <Page title={"Workspace: " + title}>
-      {me.demo && (
+      {me.demo && isPass() && (
+        <div className="ws-banner ws-banner-pass"><div className="wrap">Operator pass: everything is unlocked, including roles still being built, every plan, billing, channels and the team. Nothing is sent, and changes last until you reload. <Link to="/admin" style={{ color: "inherit", fontWeight: 600 }}>Pass settings</Link>.</div></div>
+      )}
+      {me.demo && !isPass() && (
         <div className="ws-banner"><div className="wrap">Demo workspace for Brightwork Cleaning, an example business. Approve emails, hire agents and run them: nothing is sent, and changes last until you reload. <Link to="/start" style={{ color: "inherit", fontWeight: 600 }}>Start your own free trial</Link>.</div></div>
       )}
       <div className="wrap ws">
@@ -126,7 +130,7 @@ export function SignIn() {
       <Section tight>
         <div className="grid">
           <div className="col-6">
-            {!LIVE && <Notice>Sign-in works on the hosted site. This copy of the page is a demo.</Notice>}
+            {!LIVE && (isPass() ? <Notice>Operator pass is on: <Link to="/workspace" className="link link-s">open the workspace</Link>. Sign-in links themselves only work on the hosted site.</Notice> : <Notice>Sign-in works on the hosted site. This copy of the page is a demo.</Notice>)}
             {query.token && !act.error ? <Loading what="Signing you in" /> : sent ? (
               <div aria-live="polite" className="form">
                 <h2 className="h-small">Check your email</h2>

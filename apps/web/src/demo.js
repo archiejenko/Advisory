@@ -3,6 +3,7 @@
 import { TEMPLATES, RHYTHM_LABEL, PLANS } from "../../../packages/core/templates.ts";
 import { ALERTS, CLIENTS, PROSPECTS } from "./data.js";
 import { floorDemo } from "./floorDemo.js";
+import { isPass } from "./pass.js";
 
 const H = 3600e3, D = 24 * H;
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
@@ -177,6 +178,8 @@ function startDemoRun(a, input) {
 export async function demoApi(method, path, body) {
   await new Promise((r) => setTimeout(r, 120));
   const s = st();
+  // The operator pass starts on the Pilot plan (12 agents, 5,000 actions); the usage page can switch plans.
+  if (isPass() && !s.passPlan) { s.passPlan = true; s.org.plan = "pilot"; }
   const [p, qs] = path.replace(/^\/api\/ws/, "").split("?");
   const q = Object.fromEntries(new URLSearchParams(qs || ""));
   const m = (re) => p.match(re);
@@ -296,9 +299,9 @@ export async function demoApi(method, path, body) {
   if (method === "POST" && p === "/my-agents") {
     const t = tpl(body.template);
     if (!t) fail(404, "No agent by that name in the catalogue.");
-    if (t.status !== "live") fail(409, `${t.name} isn't available yet: it needs ${t.needs}.`);
+    if (t.status !== "live" && !isPass()) fail(409, `${t.name} isn't available yet: it needs ${t.needs}.`);
     if (t.engine !== "llm" && s.agents.some((a) => a.template === t.key)) fail(409, `${t.name} is already working for you.`);
-    if (s.agents.length >= PLANS[s.org.plan].agents) fail(409, `Your ${PLANS[s.org.plan].name} includes ${PLANS[s.org.plan].agents} agents. Pause or remove one to hire another in the demo.`);
+    if (!isPass() && s.agents.length >= PLANS[s.org.plan].agents) fail(409, `Your ${PLANS[s.org.plan].name} includes ${PLANS[s.org.plan].agents} agents. Pause or remove one to hire another in the demo.`);
     const a = agent({ id: id("agt"), template: t.key, name: body.name || t.name, brief: body.brief, rhythm: body.rhythm || t.rhythm, run_hour: body.run_hour ?? 8, autonomy: body.autonomy || "approve_all", channel_id: body.channel_id || null, created_at: now() });
     s.agents.push(a);
     return { id: a.id };
@@ -327,5 +330,30 @@ export async function demoApi(method, path, body) {
   if (method === "PATCH" && m(/^\/clients\/[^/]+$/)) { const c = s.clients.find((x) => p.endsWith(x.number)); if (c && body.watching !== undefined) c.watching = body.watching; return { ok: true }; }
   if (method === "POST" && m(/^\/channels\/[^/]+\/test$/)) return { status: "dry_run" };
   if (method === "PATCH" && m(/^\/agents\/[^/]+$/)) return { ok: true };
+  if (isPass()) return passApi(method, p, body, s, now);
   return signUp();
+}
+
+/** With the operator pass, the parts the demo normally refuses work in memory too. */
+function passApi(method, p, body, s, now) {
+  let r;
+  const m = (re) => p.match(re);
+  if (method === "POST" && p === "/billing/checkout") { if (PLANS[body?.plan]) s.org.plan = body.plan; return { url: "#/workspace/usage?billing=done" }; }
+  if (method === "POST" && p === "/billing/portal") return { url: "#/workspace/usage" };
+  if (method === "POST" && p === "/channels") { const c = { id: id("chn"), kind: body.kind, label: body.label || body.kind, verified_at: null, created_at: now() }; s.channels.push(c); return { id: c.id }; }
+  if (method === "DELETE" && (r = m(/^\/channels\/([^/]+)$/))) { s.channels = s.channels.filter((c) => c.id !== r[1]); return { ok: true }; }
+  if (method === "POST" && p === "/users") { const u = { id: id("usr"), email: body.email, name: body.name || null, role: body.role || "viewer" }; s.users.push(u); return { id: u.id, invited: true }; }
+  if (method === "PATCH" && (r = m(/^\/users\/([^/]+)$/))) { Object.assign(s.users.find((u) => u.id === r[1]) || fail(404, "Person not found."), body); return { ok: true }; }
+  if (method === "DELETE" && (r = m(/^\/users\/([^/]+)$/))) { s.users = s.users.filter((u) => u.id !== r[1]); return { ok: true }; }
+  if (method === "POST" && p === "/clients") { const c = { number: String(body.number || "").toUpperCase(), name: body.name || body.display_name || body.number, watching: true, status: "Active", flagged: false }; s.clients.unshift(c); return { ok: true, number: c.number }; }
+  if (method === "DELETE" && (r = m(/^\/clients\/([^/]+)$/))) { s.clients = s.clients.filter((c) => c.number !== r[1]); return { ok: true }; }
+  if (method === "POST" && p === "/briefs") {
+    const q = String(body?.input || "").trim().toLowerCase();
+    const c = s.clients.find((x) => x.number.toLowerCase() === q || x.name.toLowerCase().includes(q)) || s.clients[0];
+    const flags = c.flagged ? [{ text: c.severity === "Critical" ? "Insolvency notice on The Gazette" : "Accounts overdue at Companies House" }] : [];
+    return { brief: { input: body.input, status: "matched", checked_at: now(), response_id: id("chk"), match: { name: c.name, number: c.number, reasons: ["name"] }, flags,
+      rows: [["Status", c.status || "Active", 1], ["Company number", c.number, 1], ["Accounts", c.flagged ? "Overdue" : "Filed on time", 1], ["Insolvency notices", c.flagged && c.severity === "Critical" ? "1 notice" : "None", 2], ["FCA register", "Not listed", 3]] } };
+  }
+  if (method === "POST" && (p === "/imports" || p === "/invoices/import")) fail(400, "Uploading a file needs the hosted site, even with the operator pass. Everything else works here.");
+  return { ok: true, demo: true };
 }

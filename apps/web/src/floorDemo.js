@@ -2,6 +2,7 @@
 // on a step: agents pick up work, call tools, hand cards on and draft emails for the desk. Approving an email in the
 // demo moves its lead, exactly as it would for real, because cards take their stage from the record.
 import { PRESETS, preset, stageFor, nearestPreset, estimateActions, KPIS, withOrchestrator } from "../../../packages/core/swarms.ts";
+import { isPass } from "./pass.js";
 import { applyOrgChanges, defaultBadges, toolsFor, role as roleOf } from "../../../packages/core/badges.ts";
 import { PLANS } from "../../../packages/core/templates.ts";
 
@@ -226,7 +227,7 @@ export function floorDemo(method, p, q, body, s, fail) {
   let m;
   if (!SIM.swarms.length && !SIM.booted) { SIM.booted = true; createSwarm(s, "sales-floor", "Brightwork sales floor"); }
   const find = (id) => SIM.swarms.find((w) => w.id === id) || fail(404, "Swarm not found.");
-  if (method === "GET" && p === "/swarm-presets") return { presets: PRESETS.map((x) => ({ key: x.key, title: x.title, for: x.for, summary: x.summary, locked: x.locked || null, skin: x.blueprint.skin, agents: x.blueprint.agents.map(({ key, name, role, template, rhythm }) => ({ key, name, role, template, rhythm })), stages: x.blueprint.stages.map((y) => y.name), handoffs: x.blueprint.handoffs, kpis: x.blueprint.kpis })), voice: false };
+  if (method === "GET" && p === "/swarm-presets") return { presets: PRESETS.map((x) => ({ key: x.key, title: x.title, for: x.for, summary: x.summary, locked: isPass() ? null : x.locked || null, skin: x.blueprint.skin, agents: x.blueprint.agents.map(({ key, name, role, template, rhythm }) => ({ key, name, role, template, rhythm })), stages: x.blueprint.stages.map((y) => y.name), handoffs: x.blueprint.handoffs, kpis: x.blueprint.kpis })), voice: false };
   if (method === "GET" && p === "/swarms") return { swarms: SIM.swarms.map((w) => ({ id: w.id, name: w.name, sector: w.bp.sector, preset: w.preset, status: w.status, created_at: w.created_at, agents: w.agents.length, open_items: derive(s, w).filter((i) => i.status === "open").length })) };
   if (method === "POST" && p === "/swarms/plan") {
     const pr = nearestPreset(body?.description || "");
@@ -236,7 +237,7 @@ export function floorDemo(method, p, q, body, s, fail) {
   if (method === "POST" && p === "/swarms") {
     const key = body?.preset || nearestPreset(body?.description || "").key;
     const pr = preset(key);
-    if (pr.locked) fail(409, pr.locked);
+    if (pr.locked && !isPass()) fail(409, pr.locked);
     return { id: createSwarm(s, key).id, hired: pr.blueprint.agents.length, reused: 0 };
   }
   if (method === "GET" && (m = p.match(/^\/swarms\/([^/]+)$/))) return state(s, find(m[1]), Number(q.since || 0));

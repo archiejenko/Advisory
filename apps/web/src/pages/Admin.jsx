@@ -2,7 +2,9 @@
 // Uses the ADMIN_TOKEN as a bearer token; it's kept in this browser tab only.
 import React, { useEffect, useState } from "react";
 import { Page, PageHead, Section } from "../ui.jsx";
-import { ApiError, dateTimeOf } from "../api.js";
+import { ApiError, dateTimeOf, LIVE } from "../api.js";
+import { Link, navigate } from "../router.jsx";
+import { isPass, setPass } from "../pass.js";
 
 const KEY = "ah-admin-token";
 const load = () => { try { return sessionStorage.getItem(KEY) || ""; } catch { return ""; } };
@@ -19,7 +21,7 @@ async function admin(token, method, path, body, { raw = false, type } = {}) {
 
 const TASKS = [["gazette", "Poll The Gazette"], ["reconcile", "Reconcile watched companies"], ["digests", "Send due digests"], ["monthly", "Build monthly prospect lists and meter usage"], ["retention", "Run retention"]];
 
-export default function Admin() {
+function LiveAdmin() {
   const [token, setToken] = useState(load);
   const [draft, setDraft] = useState("");
   const [orgs, setOrgs] = useState(null);
@@ -163,3 +165,52 @@ export default function Admin() {
     </Page>
   );
 }
+
+
+/* ---------- The operator pass (demo build only) ---------- */
+const FUNCTIONS = [
+  ["Run the business", [["Today", "/workspace", "What needs you, approve drafts in one go"], ["Approvals", "/workspace/approvals", "Read, edit and send what agents drafted"], ["How we work", "/workspace/rules", "House rules every agent follows"], ["Agents", "/workspace/agents", "Every role, including the ones still being built"], ["Hire an agent", "/workspace/agents/new?t=bookings", "Bookings, unlocked by the pass"], ["Agents and activity", "/workspace/overview", "Runs, steps and what each agent did"]]],
+  ["Teams", [["The Floor", "/floor", "Spin up a team, including the Markets desk"], ["Org chart and badges", "/floor", "Open a team, then the Org tab"]]],
+  ["Work", [["Leads", "/workspace/leads", ""], ["Inbox", "/workspace/inbox", ""], ["Invoices", "/workspace/invoices", ""], ["Tasks", "/workspace/tasks", ""]]],
+  ["Customers", [["Alerts", "/workspace/alerts", "Register changes, Critical first"], ["Customers", "/workspace/clients", "Add or remove companies"], ["Company checks", "/workspace/check", "A sourced brief on any customer"], ["Lead lists", "/workspace/prospects", ""]]],
+  ["Account", [["Usage and plan", "/workspace/usage", "Switch between every plan"], ["Settings", "/workspace/settings", "Profile, channels and the team"]]],
+  ["The public site", [["Home", "/", ""], ["Use cases", "/use-cases", ""], ["How it works", "/how-it-works", ""], ["Pricing", "/pricing", ""], ["Trust", "/trust", ""], ["Free customer check", "/health-check", ""], ["Developers", "/developers", ""], ["For agents", "/for-agents", ""], ["Start a workspace", "/start", "Goes straight to the workspace with the pass"]]],
+];
+
+function DemoAdmin() {
+  const [on, setOn] = useState(isPass);
+  useEffect(() => { const f = () => setOn(isPass()); window.addEventListener("ah:pass", f); return () => window.removeEventListener("ah:pass", f); }, []);
+  const toggle = (v) => { setPass(v); setOn(v); };
+  return (
+    <Page title="Operator pass">
+      <PageHead label="Operator" title={on ? "Everything is unlocked" : "Operator pass"}
+        lede={on
+          ? "This copy of Agent House now lets you into everything: roles still being built, the Markets desk, every plan, billing, channels and the team, with no agent or action limits. Nothing is sent anywhere, and changes last until you reload."
+          : "This copy of Agent House is a demo, so some parts are held back: roles still being built, the Markets desk, plans, billing, channels and inviting people. The pass unlocks them in this browser, so you can walk through every function."} />
+      <Section tight>
+        <div className="actions">
+          {on ? (
+            <><button className="btn" onClick={() => navigate("/workspace")}>Open the workspace</button><button className="btn btn-line" onClick={() => toggle(false)}>Lock again</button></>
+          ) : (
+            <button className="btn btn-lg" onClick={() => toggle(true)}>Unlock everything</button>
+          )}
+        </div>
+        <p className="source">The pass lives in this browser only and changes nothing on the hosted site, which keeps its operator token and real sign-in. File uploads, sign-in links, the developer dashboard and real emails need the hosted site.</p>
+      </Section>
+      {on && (
+        <Section>
+          <div className="pass-grid">
+            {FUNCTIONS.map(([g, items]) => (
+              <div key={g} className="pass-group">
+                <h2 className="h-sub">{g}</h2>
+                <ul>{items.map(([t, to, d]) => <li key={t}><Link to={to} className="pass-link"><b>{t}</b>{d && <span>{d}</span>}</Link></li>)}</ul>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+    </Page>
+  );
+}
+
+export default function Admin() { return LIVE ? <LiveAdmin /> : <DemoAdmin />; }

@@ -1064,3 +1064,11 @@ a.td-num:hover { background: var(--line); }
 /* Icon tiles keep their centring wherever they sit (a parent's `span { display: block }` used to undo it). */
 .tile, .mega-item .tile { display: grid; place-items: center; flex: none; }
 .mega-item .tile { color: var(--ink); line-height: 0; }
+
+/* Operator pass (demo build only) */
+.ws-banner-pass { background: var(--data); color: #fff; }
+.pass-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 28px 32px; }
+.pass-group ul { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
+.pass-link { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; border-bottom: 1px solid var(--line); color: var(--ink); text-decoration: none; min-height: 44px; justify-content: center; }
+.pass-link span { font-size: 14px; color: var(--graphite); }
+.pass-link:hover b { text-decoration: underline; }

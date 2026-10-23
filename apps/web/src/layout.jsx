@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { isPass } from "./pass.js";
 import { Link, useRoute, navigate } from "./router.jsx";
 import { LIVE, api } from "./api.js";
 import { Wordmark, Glyph, Tile } from "./kit.jsx";
@@ -90,7 +91,7 @@ export function Header() {
   const over = path === "/" && !scrolled && !open && !menu;
   const enter = (k) => { clearTimeout(timer.current); setMenu(k); };
   const leave = () => { clearTimeout(timer.current); timer.current = setTimeout(() => setMenu(null), 160); };
-  const account = me ? ["Workspace", "/workspace"] : LIVE ? ["Sign in", "/sign-in"] : ["Demo", "/workspace"];
+  const account = me ? ["Workspace", "/workspace"] : LIVE ? ["Sign in", "/sign-in"] : isPass() ? ["Workspace", "/workspace"] : ["Demo", "/workspace"];
   return (
     <header className={"hdr" + (over ? " is-over" : "") + (open ? " is-open" : "")}>
       <div className="wrap hdr-in">

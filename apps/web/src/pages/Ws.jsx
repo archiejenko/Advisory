@@ -1,6 +1,7 @@
 // The agent workspace: overview, agents, approvals, activity, and the work agents do (leads, inbox, invoices, tasks).
 // Same components signed in and in the demo; the demo answers from demo.js.
 import React, { useEffect, useMemo, useState } from "react";
+import { isPass } from "../pass.js";
 import { Link, navigate, useRoute } from "../router.jsx";
 import { useWs, useCan } from "../layout.jsx";
 import { Glyph } from "../kit.jsx";
@@ -240,7 +241,7 @@ export function WsHire() {
     <Shell title={"Hire " + t.name.toLowerCase().replace(/^./, (c) => c.toUpperCase())} crumbs={[["Agents", "/workspace/agents"], ["Hire " + t.name]]}>
       <div className="hire">
         <div className="hire-main">
-          {t.status !== "live" ? <Notice signal>{t.name} isn't available yet. It needs {t.needs}.</Notice> : !f ? <Loading /> : (
+          {t.status !== "live" && !isPass() ? <Notice signal>{t.name} isn't available yet. It needs {t.needs}.</Notice> : !f ? <Loading /> : (
             <form className="form" onSubmit={submit} noValidate>
               {profileThin && t.engine === "llm" && <Notice>Your business profile is thin, so the agent will know less about you. <Link to="/workspace/settings?s=profile" className="link link-s">Fill it in</Link> (two minutes) before you hire.</Notice>}
               <div className="field"><label htmlFor="h-name">Name</label><input id="h-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={80} /></div>
