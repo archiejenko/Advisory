@@ -1061,3 +1061,6 @@ a.td-num:hover { background: var(--line); }
 .td-bulk .btn, .td-rule-a .btn { margin: 0; }
 .td-row-alert { justify-content: flex-start; align-items: center; }
 @media (max-width: 700px) { .td-row-alert { align-items: flex-start; } }
+/* Icon tiles keep their centring wherever they sit (a parent's `span { display: block }` used to undo it). */
+.tile, .mega-item .tile { display: grid; place-items: center; flex: none; }
+.mega-item .tile { color: var(--ink); line-height: 0; }
