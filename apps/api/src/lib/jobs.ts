@@ -237,6 +237,7 @@ export const ORG_TABLES = [
   "usage_event", "api_key", "session", "membership",
   "swarm", "work_item", "swarm_event", "contact", "deal", "activity", "agent_task", "house_rule",
   "os_record", "os_channel", "os_message",
+  "org_os", "org_module", "custom_field", "custom_app", "os_change", "org_layout",
 ] as const;
 
 /** Rows deleted per statement, and statements per invocation, so a big workspace never meets D1's time or query limits. */

@@ -1,5 +1,7 @@
 // The agent runtime: hire an agent, run it turn by turn on the job queue, and schedule the next run.
 import { postRunReply } from "./ostools";
+import { loadOs } from "./osbuilder";
+import { toolAllowed, templateAllowed } from "../../../../packages/core/osconfig";
 import { newId, nowIso } from "../../../../packages/core/util";
 import { template, TEMPLATES, PLANS, type Template } from "../../../../packages/core/templates";
 import { type Env, one, all, run, audit } from "./db";
@@ -299,7 +301,12 @@ export async function runAgent(env: Env, runId: string) {
     const { org, problem } = await orgAccess(env, r.org_id);
     if (problem) throw new Error(problem);
     if ((await orgActionsLeft(env, org)) <= 0) throw new Error("This month's actions are used up. Agents start again on the 1st, or move to a bigger plan.");
-    const tools = (await Promise.all(t.tools.map((s) => getTool(env, s, { business: true })))).filter(Boolean) as Tool[];
+    // Your OS decides what the AI Team may touch: a paused team doesn't run, an agent whose apps are all off
+    // doesn't run, and tools for apps the business doesn't use here aren't offered at all.
+    const os = await loadOs(env, org.id);
+    if (os?.ai_paused && r.trigger !== "manual") throw new Error("The AI Team is paused in Your OS. Resume it to let agents work on their own.");
+    if (os && !templateAllowed(os, agent.template)) throw new Error(`${agent.name} works in apps that aren't in this business's OS. Add them in Your OS, or retire the agent.`);
+    const tools = (await Promise.all(t.tools.filter((s) => toolAllowed(os, s)).map((s) => getTool(env, s, { business: true })))).filter(Boolean) as Tool[];
     await agentLoop(env, {
       system: systemFor(t, agent, org, swarmLines, await activeRules(env, org.id)), user: [t.kickoff || "Do your work.", r.input || ""].filter(Boolean).join("\n\n"), tools, out,
       onTool: agent.swarm_id ? async (tool, ok) => { await swarmEv("tool", tool, { ok }); } : undefined,

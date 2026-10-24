@@ -1,5 +1,7 @@
 // The business OS, upper half: the catalogue with this business's numbers, channels where people and agents
 // talk, and @mentions that put an agent to work and bring its answer back to the conversation.
+import { loadOs } from "./osbuilder";
+import { moduleSetting } from "../../../../packages/core/osconfig";
 import { newId, nowIso } from "../../../../packages/core/util";
 import { FACETS, KINDS, ROLES, modulesFor } from "../../../../packages/core/os";
 import { PLANS } from "../../../../packages/core/templates";
@@ -18,6 +20,7 @@ export async function catalogue(env: Env, orgId: string) {
   const counts = await all<any>(env, "SELECT module, status, COUNT(*) AS n FROM os_record WHERE org_id = ? GROUP BY module, status", orgId);
   const agents = await all<any>(env, "SELECT id, name, status, template FROM agent WHERE org_id = ? AND template = 'os'", orgId);
   const byName = new Map(agents.map((a) => [a.name, a]));
+  const os = await loadOs(env, orgId);
   const total: Record<string, number> = {}, open: Record<string, number> = {};
   for (const c of counts) {
     total[c.module] = (total[c.module] || 0) + c.n;
@@ -26,7 +29,8 @@ export async function catalogue(env: Env, orgId: string) {
   }
   return {
     modules: FACETS.map((f) => ({ key: f.key, area: f.area, name: f.name, app: f.app, kind: f.kind, depth: f.depth, agent: f.agent, link: f.link,
-      records: total[f.key] || 0, open: open[f.key] || 0, agent_id: f.agent ? byName.get(f.agent)?.id ?? null : null })),
+      records: total[f.key] || 0, open: open[f.key] || 0, agent_id: f.agent ? byName.get(f.agent)?.id ?? null : null, ...(os ? { mode: moduleSetting(os, f.key)!.mode, autonomy: moduleSetting(os, f.key)!.autonomy } : {}) })),
+    built: !!os,
     totals: { modules: FACETS.length, records: Object.values(total).reduce((a, b) => a + b, 0), agents: agents.length },
   };
 }

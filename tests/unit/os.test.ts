@@ -26,10 +26,10 @@ async function signedIn(role = "owner", vars: Record<string, string> = {}) {
 const claudeSays = (text: string) => vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ content: [{ type: "text", text }], stop_reason: "end_turn", usage: { input_tokens: 50, output_tokens: 20 } }), { status: 200 }));
 
 describe("the catalogue", () => {
-  it("covers every facet of the matrix: 17 areas, 118 modules, each with a kind, a depth and a home", () => {
-    expect(AREAS).toHaveLength(17);
-    expect(FACETS).toHaveLength(118);
-    expect(new Set(FACETS.map((f) => f.key)).size).toBe(118);
+  it("covers every facet of the matrix: 18 areas, 138 modules, each with a kind, a depth and a home", () => {
+    expect(AREAS).toHaveLength(18);
+    expect(FACETS).toHaveLength(138);
+    expect(new Set(FACETS.map((f) => f.key)).size).toBe(138);
     for (const a of AREAS) expect(FACETS.some((f) => f.area === a.key)).toBe(true);
     for (const f of FACETS) {
       expect(KINDS[f.kind], f.key).toBeTruthy();
@@ -56,9 +56,9 @@ describe("the catalogue", () => {
     const { post, call } = await signedIn();
     await post("/os/m/bills-and-payables/records", { title: "Office rent", fields: { party: "Landlord", amount: "1,250.00", due_date: "2026-11-01" } });
     const j: any = await (await call("/os/catalogue")).json();
-    expect(j.modules).toHaveLength(118);
+    expect(j.modules).toHaveLength(138);
     expect(j.modules.find((m: any) => m.key === "bills-and-payables")).toMatchObject({ records: 1, open: 1, agent: "Payables agent", agent_id: null });
-    expect(j.totals).toMatchObject({ modules: 118, records: 1 });
+    expect(j.totals).toMatchObject({ modules: 138, records: 1 });
   });
 });
 

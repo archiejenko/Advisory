@@ -5,8 +5,21 @@ import { HttpError } from "./http";
 import { sendMail } from "./mail";
 import { emitForAgent } from "./swarm";
 import { logActivity, leadForEmail } from "./crm";
+import { loadOs } from "./osbuilder";
+import { effectiveAutonomy, templateAutonomy, moduleSetting, type OsConfig, type Autonomy } from "../../../../packages/core/osconfig";
+import { modulesFor } from "../../../../packages/core/os";
 
-export type EmailPayload = { to: string; subject: string; body: string; lead_id?: string; invoice_id?: string; message_id?: string };
+/** For an OS role agent: the most permissive autonomy among the modules it keeps that are run here. */
+function osRoleAutonomy(os: OsConfig, agent: any): Autonomy | undefined {
+  if (agent.template !== "os") return undefined;
+  let role = ""; try { role = JSON.parse(agent.settings || "{}").role || ""; } catch {}
+  const rank = { suggest: 0, approve: 1, auto: 2 } as const;
+  let best: Autonomy = "suggest";
+  for (const f of modulesFor(role)) { const s = moduleSetting(os, f.key); if (s?.mode === "here" && rank[s.autonomy] > rank[best]) best = s.autonomy; }
+  return best;
+}
+
+export type EmailPayload = { to: string; subject: string; body: string; lead_id?: string; invoice_id?: string; message_id?: string; handover?: boolean };
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[a-z]{2,}$/i;
 
 /** Create an email action. Sends straight away only when the agent's autonomy allows it. */
@@ -17,7 +30,7 @@ export async function proposeEmail(env: Env, ctx: { orgId: string; agentId: stri
   if (await one(env, "SELECT email FROM suppression WHERE email = ?", to)) throw new HttpError(409, "suppressed", `${to} has asked not to be contacted. Don't email them.`);
   const agent = await one<any>(env, "SELECT * FROM agent WHERE id = ? AND org_id = ?", ctx.agentId, ctx.orgId);
   if (!agent) throw new HttpError(404, "not_found", "Agent not found.");
-  const payload: EmailPayload = { to, subject: p.subject.trim().slice(0, 200), body: p.body.trim().slice(0, 5000), ...(p.lead_id ? { lead_id: p.lead_id } : {}), ...(p.invoice_id ? { invoice_id: p.invoice_id } : {}), ...(p.message_id ? { message_id: p.message_id } : {}) };
+  const payload: EmailPayload = { to, subject: p.subject.trim().slice(0, 200), body: p.body.trim().slice(0, 5000), ...(p.lead_id ? { lead_id: p.lead_id } : {}), ...(p.invoice_id ? { invoice_id: p.invoice_id } : {}), ...(p.message_id ? { message_id: p.message_id } : {}), ...(p.handover ? { handover: true } : {}) };
   // Check the references belong to this business
   if (payload.lead_id && !(await one(env, "SELECT id FROM lead WHERE id = ? AND org_id = ?", payload.lead_id, ctx.orgId))) throw new HttpError(404, "not_found", "No lead with that id.");
   if (payload.invoice_id && !(await one(env, "SELECT id FROM invoice WHERE id = ? AND org_id = ?", payload.invoice_id, ctx.orgId))) throw new HttpError(404, "not_found", "No invoice with that id.");
@@ -66,6 +79,11 @@ const HELD = "Held for the owner's approval: emails only go out on their own to 
 
 /** auto: send when the recipient is bound. approve_first: follow-ups and second reminders go on their own once the first was approved. */
 async function mayAutoSend(env: Env, agent: any, p: EmailPayload, runId?: string): Promise<true | string | null> {
+  if (p.handover) return "Handovers to a provider always wait for a person to approve them.";
+  const os = await loadOs(env, agent.org_id);
+  if (os?.ai_paused) return "The AI Team is paused: this waits for a person.";
+  const level = effectiveAutonomy(agent.autonomy, os ? templateAutonomy(os, agent.template) ?? osRoleAutonomy(os, agent) : undefined);
+  if (level !== agent.autonomy) return "Held by Your OS: this app is set to approve before anything leaves the business.";
   if (agent.autonomy !== "auto" && agent.autonomy !== "approve_first") return null;
   if (!(await boundRecipient(env, agent.org_id, p, runId))) return HELD;
   if (agent.autonomy === "auto") return true;

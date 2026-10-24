@@ -6,6 +6,9 @@ import { facet, KINDS, modulesFor, type Facet } from "../../../../packages/core/
 import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
 import type { Tool, ToolCtx } from "./tools";
+import { loadOs } from "./osbuilder";
+import { moduleSetting, canRead, canWrite, MODE_LABEL } from "../../../../packages/core/osconfig";
+import { proposeEmail } from "./actions";
 
 export const MAX_RECORDS_PER_MODULE = 5000;
 const text = (v: unknown, max = 2000) => String(v ?? "").trim().slice(0, max);
@@ -107,7 +110,18 @@ async function osAgent(ctx: ToolCtx) {
   return { ...a, role, modules: modulesFor(role).map((f) => f.key) };
 }
 
-export const OS_AGENT_TOOLS = ["business-profile", "os-records", "os-save", "create-task", "recent-activity", "web-research"];
+export const OS_AGENT_TOOLS = ["business-profile", "os-records", "os-save", "prepare-handover", "create-task", "recent-activity", "web-research"];
+
+/** What the business's OS lets an agent do in a module. No saved OS: everything, as before. */
+async function guard(ctx: ToolCtx, module: string, write: boolean) {
+  const cfg = await loadOs(ctx.env, ctx.orgId!);
+  const s = moduleSetting(cfg, module);
+  const f = moduleOf(module);
+  if (!canRead(s?.mode)) throw new HttpError(403, "app_off", `${f.app} isn't in this business's OS. Don't work there; create a task if a person should switch it on.`);
+  if (write && s?.mode === "external") throw new HttpError(403, "app_external", `${f.app} is ${MODE_LABEL.external.toLowerCase()}: read it, but make changes in the other system through a task for a person.`);
+  if (write && !canWrite(s?.mode, s?.autonomy)) throw new HttpError(403, "suggest_only", `${f.app} is set to Suggest: create a task describing the change instead of saving it.`);
+  return { cfg, setting: s, facet: f };
+}
 
 export const OS_TOOL_DEFS: Tool[] = [
   {
@@ -118,7 +132,7 @@ export const OS_TOOL_DEFS: Tool[] = [
       const a = await osAgent(c);
       const module = text(i.module, 80) || a.modules[0];
       if (!module) throw new HttpError(400, "invalid_request", "Say which module.");
-      const f = moduleOf(module);
+      const { facet: f } = await guard(c, module, false);
       return { module: f.key, app: f.app, statuses: KINDS[f.kind].statuses, fields: KINDS[f.kind].fields.map((x) => x.key), records: await listRecords(c.env, c.orgId!, f.key, { status: i.status ? text(i.status, 40) : undefined, q: i.q ? text(i.q, 80) : undefined, limit: 50 }) };
     },
   },
@@ -130,8 +144,23 @@ export const OS_TOOL_DEFS: Tool[] = [
       const a = await osAgent(c);
       const module = text(i.module, 80);
       if (!a.modules.includes(module)) throw new HttpError(403, "not_your_module", `You keep ${a.modules.join(", ") || "no modules"}; ask the agent for that module instead.`);
+      await guard(c, module, true);
       const r = await saveRecord(c.env, c.orgId!, module, { title: i.title, status: i.status, fields: i.fields }, a.name, i.id ? text(i.id, 60) : undefined);
       return { id: r.id, status: r.status, saved: true };
+    },
+  },
+  {
+    slug: "prepare-handover", name: "Prepare a handover", audience: "business", price_pence: 0,
+    description: "For an app this business outsources (payroll to a bureau, say): draft the email that hands this period's information to the provider. It is always held for a person to approve; it never sends on its own.",
+    input_schema: S({ module: str("Module key of an outsourced app"), subject: str("Email subject"), body: str("The handover: what the provider needs, plainly laid out") }, ["module", "subject", "body"]),
+    run: async (c, i) => {
+      const a = await osAgent(c);
+      const module = text(i.module, 80);
+      const { setting, cfg, facet: f } = await guard(c, module, false);
+      if (setting?.mode !== "outsourced") throw new HttpError(400, "not_outsourced", `${f.app} isn't outsourced, so there's no provider to hand over to.`);
+      const provider = cfg!.modules.find((m) => m.key === module)?.provider;
+      if (!provider?.email) throw new HttpError(400, "no_provider", `No provider email is saved for ${f.app}. Create a task asking a person to add it in Your OS.`);
+      return proposeEmail(c.env, { orgId: c.orgId!, agentId: a.id, runId: c.runId }, { to: provider.email, subject: text(i.subject, 200), body: text(i.body, 5000), handover: true, reason: `Handover for ${f.app} to ${provider.name || provider.email}` } as any);
     },
   },
 ];

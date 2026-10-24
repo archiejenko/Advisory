@@ -18,6 +18,7 @@ export const AREAS: Area[] = [
   { key: "LS", name: "Leadership and strategy", glyph: "star" },
   { key: "S", name: "Sales", glyph: "send" },
   { key: "M", name: "Marketing", glyph: "megaphone" },
+  { key: "WC", name: "Website and commerce", glyph: "globe" },
   { key: "CS", name: "Customer service", glyph: "inbox" },
   { key: "O", name: "Operations and delivery", glyph: "split" },
   { key: "SC", name: "Supply chain and stock", glyph: "board" },
@@ -170,7 +171,46 @@ export const FACETS: Facet[] = [
   F("cost-and-usage", "AP", "Cost and usage", "Usage", "Usage assistant", "metric", "full", "/workspace/usage", "Spend per agent and per department", "Finance director", "", 2, "Usage and plan, cost per run", ""),
   F("audit-and-explanation", "AP", "Audit and explanation", "Audit", "Audit assistant", "item", "partial", "/workspace/activity", "Why every action happened, one click away", "MD, auditor", "", 2, "Audit log and run transcripts", ""),
   F("developer-platform", "AP", "Developer platform", "Marketplace", "Marketplace assistant", "item", "full", "/developers", "Tools and agents from others, paid per call", "", "", 5, "Tool catalogue, MCP server, x402 payments", ""),
+  // Added for full coverage of an all-in-one business suite (Oct 2026): each starts as records with an agent.
+  F("subscriptions-and-recurring-billing", "F", "Subscriptions and recurring billing", "Subscriptions", "Subscriptions agent", "money", "basic", null, "Recurring plans billed on schedule, renewals and churn tracked", "Finance team", "Renewal and failed-payment alerts to the account owner", 2, "", "Consumer contract rules for auto-renewal"),
+  F("spreadsheets", "D", "Spreadsheets", "Spreadsheets", "Analyst", "metric", "basic", null, "Sheets that read live from any app's records", "Managers, finance team", "Shared sheets linked from threads", 3, "", ""),
+  F("documents", "IC", "Documents", "Documents", "Records clerk", "doc", "basic", null, "Every company file in folders, versioned and shared by role", "Everyone", "Files attached to records and threads", 2, "", "UK GDPR retention"),
+  F("esg-reporting", "LS", "ESG reporting", "ESG", "ESG analyst", "metric", "basic", null, "Carbon, waste and social measures tracked, with a yearly report", "MD, operations director", "Quarterly data requests to each team", 5, "", "Streamlined energy and carbon reporting above the size thresholds"),
+  F("point-of-sale-shop", "S", "Point of sale: shop", "Shop till", "Till assistant", "money", "basic", null, "Counter sales rung up, cashed up and matched to stock", "Shop staff, managers", "End-of-day cash-up summary to the manager", 4, "", "Card payments through a regulated provider"),
+  F("point-of-sale-restaurant", "S", "Point of sale: restaurant", "Restaurant till", "Front of house agent", "money", "basic", null, "Tables, orders, kitchen tickets, splits and tips in one flow", "Front of house, kitchen", "Kitchen tickets and end-of-service summary", 4, "", "Allergen information, tipping law"),
+  F("rentals", "S", "Rentals", "Rentals", "Rentals agent", "event", "basic", null, "Hire items booked, deposits held, returns and damage checked", "Hire desk", "Return reminders and damage reports", 4, "", ""),
+  F("online-shop", "WC", "Online shop", "Online shop", "Shop manager", "money", "basic", null, "Products online, orders straight into stock and invoicing", "Marketing lead, operations", "New order and low-stock alerts", 3, "", "Consumer Contracts Regulations, distance selling"),
+  F("blog", "WC", "Blog", "Blog", "Content writer", "doc", "basic", null, "Posts drafted, scheduled and published on the site", "Marketing lead", "Drafts for approval before publishing", 3, "", ""),
+  F("online-courses", "WC", "Online courses", "Courses", "Course assistant", "item", "basic", null, "Customer-facing lessons, quizzes and certificates", "Training lead", "Learner questions to the course owner", 5, "", ""),
+  F("community-forum", "WC", "Community forum", "Forum", "Moderator", "case", "basic", null, "Customer questions answered and moderated in public", "Customer service team", "Unanswered questions to the right person", 5, "", "Online Safety Act duties for user content"),
+  F("website-live-chat", "WC", "Website live chat", "Live chat", "Front desk agent", "case", "basic", null, "Visitors answered on the site, handed to a person when needed", "Customer service team", "Hand-off to a person in the same chat", 2, "", "UK GDPR, cookie consent"),
+  F("surveys", "M", "Surveys", "Surveys", "Survey analyst", "item", "basic", null, "Questionnaires sent, results summarised by segment", "Marketing lead, customer service lead", "Results digest to the owner of the survey", 3, "", "UK GDPR consent"),
+  F("sms-campaigns", "M", "SMS campaigns", "SMS", "Campaign agent", "item", "basic", null, "Text campaigns with consent and opt-out handled", "Marketing lead", "Approval before every send", 4, "", "PECR consent for marketing texts"),
+  F("marketing-automation", "M", "Marketing automation", "Journeys", "Journey builder", "item", "basic", null, "Triggered journeys across email, SMS and tasks", "Marketing lead", "Journey changes approved before they go live", 4, "", "PECR, UK GDPR"),
+  F("manufacturing", "SC", "Manufacturing", "Manufacturing", "Production planner", "item", "basic", null, "Bills of materials, work orders and output tracked against stock", "Production manager", "Work orders to the shop floor; shortages to purchasing", 4, "", ""),
+  F("product-lifecycle", "SC", "Product lifecycle", "Product changes", "Change controller", "doc", "basic", null, "Engineering changes versioned and approved before release", "Engineering lead", "Change approvals in the product's thread", 5, "", ""),
+  F("maintenance", "FA", "Maintenance", "Maintenance", "Maintenance planner", "case", "basic", null, "Planned and reactive maintenance on every machine and site", "Operations, engineers", "Jobs to the engineer; overdue checks to the manager", 4, "", "PUWER inspections"),
+  F("connected-devices", "IT", "Connected devices", "Devices (IoT)", "Device monitor", "asset", "basic", null, "Scales, label printers, card readers and sensors online and reporting", "IT or the IT support firm", "Offline-device alerts", 5, "", ""),
+  F("studio", "D", "Studio: custom apps and fields", "Studio", "App builder", "item", "basic", null, "Custom fields on any app and new apps the business designs itself", "MD, managers", "", 2, "", ""),
 ];
+
+/** The ten categories of the OS Builder's library and the landing page. Each holds one or more areas. */
+export type Category = { key: string; name: string; glyph: string; areas: string[] };
+export const CATEGORIES: Category[] = [
+  { key: "finance", name: "Finance", glyph: "ledger", areas: ["F", "P"] },
+  { key: "sales", name: "Sales", glyph: "send", areas: ["S"] },
+  { key: "marketing", name: "Marketing", glyph: "megaphone", areas: ["M"] },
+  { key: "commerce", name: "Website and commerce", glyph: "globe", areas: ["WC"] },
+  { key: "service", name: "Customer service", glyph: "inbox", areas: ["CS"] },
+  { key: "projects", name: "Projects and services", glyph: "split", areas: ["O"] },
+  { key: "supply", name: "Supply chain and making", glyph: "board", areas: ["SC", "FA"] },
+  { key: "people", name: "People and payroll", glyph: "person", areas: ["H", "PB", "W"] },
+  { key: "workplace", name: "Workplace", glyph: "bell", areas: ["IC", "D", "LS"] },
+  { key: "legal", name: "Legal and IT", glyph: "standards", areas: ["L", "IT"] },
+];
+/** The agent platform is always on: it isn't in the builder's library. */
+export const ALWAYS_ON_AREA = "AP";
+export const categoryOf = (area: string) => CATEGORIES.find((c) => c.areas.includes(area));
 
 const BY_KEY = new Map(FACETS.map((f) => [f.key, f]));
 export const facet = (key: string) => BY_KEY.get(key);
