@@ -7,15 +7,8 @@ import { useWs, useCan, WsCtx } from "../layout.jsx";
 import { DEMO_ME } from "../demo.js";
 import { LIVE, api, setDemo, useApi, useAction, download, dateOf, dateTimeOf, pounds } from "../api.js";
 import { SIC_GROUPS, DISTRICTS } from "../data.js";
+import { OsShell } from "./OsShell.jsx";
 
-// The workspace sidebar, grouped. Counts come from /api/ws/overview.
-const SIDE = [
-  [null, [["Today", "/workspace", "waiting"], ["Messages", "/workspace/messages"], ["Apps", "/workspace/apps"], ["Tasks", "/workspace/tasks", "open_tasks"], ["Approvals", "/workspace/approvals"]]],
-  ["Agents", [["The Floor", "/floor"], ["Agents", "/workspace/agents"], ["Activity", "/workspace/activity"], ["How we work", "/workspace/rules"]]],
-  ["Work", [["Leads", "/workspace/leads"], ["Inbox", "/workspace/inbox", "inbox_new"], ["Invoices", "/workspace/invoices"]]],
-  ["Customers", [["Alerts", "/workspace/alerts", "open_alerts"], ["Customers", "/workspace/clients"], ["Company checks", "/workspace/check"], ["Lead lists", "/workspace/prospects"]]],
-  ["Account", [["Usage and plan", "/workspace/usage"], ["Settings", "/workspace/settings"]]],
-];
 export const changed = () => { window.dispatchEvent(new Event("ah:alerts")); };
 const AGENT_NAME = { watch: "Customer and supplier watch", check: "New customer check", prospect: "Lead finder" };
 const KIND_LABEL = {
@@ -32,52 +25,11 @@ export function Failed({ error, retry }) {
   return <Notice signal>{error.message} {retry && <button className="link link-s" onClick={retry}>Try again</button>}</Notice>;
 }
 
-export function Shell({ title, crumbs, children, actions, wide }) {
-  const { me, signOut } = useWs();
-  const counts = useApi("/api/ws/overview");
-  useEffect(() => {
-    const on = () => counts.reload();
-    window.addEventListener("ah:alerts", on);
-    const t = setInterval(on, 60000);
-    return () => { window.removeEventListener("ah:alerts", on); clearInterval(t); };
-  }, [counts.reload]);
-  const n = counts.data || {};
+/** Every workspace screen sits in the OS shell: top bar, command layer, the page, and the dock. */
+export function Shell({ title, crumbs, children, actions, wide, bare }) {
   return (
     <Page title={"Workspace: " + title}>
-      {me.demo && isPass() && (
-        <div className="ws-banner ws-banner-pass"><div className="wrap">Operator pass: everything is unlocked, including roles still being built, every plan, billing, channels and the team. Nothing is sent, and changes last until you reload. <Link to="/admin" style={{ color: "inherit", fontWeight: 600 }}>Pass settings</Link>.</div></div>
-      )}
-      {me.demo && !isPass() && (
-        <div className="ws-banner"><div className="wrap">Demo workspace for Brightwork Cleaning, an example business. Approve emails, hire agents and run them: nothing is sent, and changes last until you reload. <Link to="/start" style={{ color: "inherit", fontWeight: 600 }}>Start your own free trial</Link>.</div></div>
-      )}
-      <div className="wrap ws">
-        <aside className="ws-side" aria-label="Workspace">
-          <p className="ws-org">{me.org.name}</p>
-          <nav>
-            {SIDE.map(([group, items]) => (
-              <div key={group || "main"} className="ws-group">
-                {group && <p className="ws-group-h">{group}</p>}
-                {items.map(([t, to, key]) => (
-                  <Link key={to} to={to} exact={to === "/workspace"} className="ws-nav">
-                    {t}{key && n[key] > 0 && <span className={"ws-count" + (key === "waiting" ? " ws-count-hot" : "")}>{n[key]}</span>}
-                  </Link>
-                ))}
-              </div>
-            ))}
-          </nav>
-          <div className="ws-side-foot">
-            <p className="dt">{me.user.email}, {me.role}</p>
-            {me.demo ? <Link to="/start" className="link link-s">Start a free trial</Link> : <button className="signout" onClick={signOut}>Sign out</button>}
-          </div>
-        </aside>
-        <div className={"ws-main" + (wide ? " ws-main-wide" : "")}>
-          <nav className="crumbs ws-crumbs" aria-label="Breadcrumb">
-            <ol><li><Link to="/workspace">Workspace</Link></li>{crumbs.map(([t, to]) => <li key={t}>{to ? <Link to={to}>{t}</Link> : <span aria-current="page">{t}</span>}</li>)}</ol>
-          </nav>
-          <div className="ws-titlebar"><h1 className="ws-h">{title}</h1>{actions && <div className="ws-actions">{actions}</div>}</div>
-          {children}
-        </div>
-      </div>
+      <OsShell title={title} crumbs={crumbs} actions={actions} wide={wide} bare={bare}>{children}</OsShell>
     </Page>
   );
 }
@@ -85,7 +37,7 @@ export function Shell({ title, crumbs, children, actions, wide }) {
 /** Chooses the live page when signed in, the demo when not, and waits while the session is checked. */
 export function Gate({ live: Live, ...props }) {
   const ctx = useWs();
-  if (ctx.me === undefined) { setDemo(false); return <Page title="Workspace"><div className="wrap ws"><Loading what="Opening your workspace" /></div></Page>; }
+  if (ctx.me === undefined) { setDemo(false); return <Page title="Workspace"><div className="os-shell os-loading" data-theme="dark"><Loading what="Opening your workspace" /></div></Page>; }
   if (ctx.me) { setDemo(false); return <Live {...props} />; }
   // Signed out: the same pages, answered by the demo data.
   setDemo(true);

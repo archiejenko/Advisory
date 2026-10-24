@@ -34,6 +34,7 @@ export function registerOsRoutes(ws: App) {
     return c.json({ os: cfg || { ...configFromPack("blank"), built: false, version: 0 }, guardrails: GUARDRAILS });
   });
   ws.get("/os/library", (c) => c.json({ categories: LIBRARY, packs: PACKS.map((p) => ({ key: p.key, name: p.name, blurb: p.blurb, apps: p.here.length })) }));
+  ws.get("/os/packs", (c) => c.json({ packs: PACKS.map((p) => ({ key: p.key, name: p.name, blurb: p.blurb, os: configFromPack(p.key) })) }));
   ws.get("/os/packs/:key", (c) => {
     const p = PACKS.find((x) => x.key === c.req.param("key"));
     if (!p) throw notFound("Pack");
@@ -63,6 +64,14 @@ export function registerOsRoutes(ws: App) {
     const b = await body(c, z.object({ module: z.string().max(80), key: z.string().max(40), label: z.string().min(1).max(60), type: z.enum(["text", "date", "money", "long", "url", "number", "choice"]), options: z.array(z.string().max(60)).max(30).optional() }));
     return c.json({ field: await addCustomField(c.env, c.get("orgId"), b, c.get("user").email) }, 201);
   });
+  // The same Studio routes under the names the overhaul spec uses.
+  ws.get("/os/custom-fields", async (c) => c.json({ fields: await customFields(c.env, c.get("orgId"), c.req.query("module") || undefined) }));
+  ws.post("/os/custom-fields", owner, async (c) => {
+    const b = await body(c, z.object({ module: z.string().max(80), key: z.string().max(40), label: z.string().min(1).max(60), type: z.enum(["text", "date", "money", "long", "url", "number", "choice"]), options: z.array(z.string().max(60)).max(30).optional() }));
+    return c.json({ field: await addCustomField(c.env, c.get("orgId"), b, c.get("user").email) }, 201);
+  });
+  ws.delete("/os/custom-fields/:id", owner, async (c) => { await removeCustomField(c.env, c.get("orgId"), c.req.param("id")!, c.get("user").email); return c.json({ ok: true }); });
+  ws.get("/os/custom-apps", async (c) => c.json({ apps: await customApps(c.env, c.get("orgId")) }));
   ws.delete("/os/fields/:id", owner, async (c) => { await removeCustomField(c.env, c.get("orgId"), c.req.param("id")!, c.get("user").email); return c.json({ ok: true }); });
   ws.get("/os/apps", async (c) => c.json({ apps: await customApps(c.env, c.get("orgId")) }));
   ws.post("/os/apps", owner, async (c) => {

@@ -7,7 +7,7 @@ import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
 import type { Tool, ToolCtx } from "./tools";
 import { loadOs } from "./osbuilder";
-import { moduleSetting, canRead, canWrite, MODE_LABEL } from "../../../../packages/core/osconfig";
+import { moduleSetting, canRead, canWrite } from "../../../../packages/core/osconfig";
 import { proposeEmail } from "./actions";
 
 export const MAX_RECORDS_PER_MODULE = 5000;
@@ -118,7 +118,7 @@ async function guard(ctx: ToolCtx, module: string, write: boolean) {
   const s = moduleSetting(cfg, module);
   const f = moduleOf(module);
   if (!canRead(s?.mode)) throw new HttpError(403, "app_off", `${f.app} isn't in this business's OS. Don't work there; create a task if a person should switch it on.`);
-  if (write && s?.mode === "external") throw new HttpError(403, "app_external", `${f.app} is ${MODE_LABEL.external.toLowerCase()}: read it, but make changes in the other system through a task for a person.`);
+  if (write && s?.mode === "external") throw new HttpError(403, "app_external", `${f.app} is kept in the business's current tool: read it here, and ask a person to make changes there with a task.`);
   if (write && !canWrite(s?.mode, s?.autonomy)) throw new HttpError(403, "suggest_only", `${f.app} is set to Suggest: create a task describing the change instead of saving it.`);
   return { cfg, setting: s, facet: f };
 }

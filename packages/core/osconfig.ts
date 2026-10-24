@@ -9,7 +9,9 @@ export type Mode = "here" | "outsourced" | "external" | "off";
 export type Autonomy = "suggest" | "approve" | "auto";
 export const MODES: Mode[] = ["here", "outsourced", "external", "off"];
 export const AUTONOMY: Autonomy[] = ["suggest", "approve", "auto"];
-export const MODE_LABEL: Record<Mode, string> = { here: "Run it here", outsourced: "Outsourced", external: "Kept elsewhere", off: "Not used" };
+export const MODE_LABEL: Record<Mode, string> = { here: "Run it here", outsourced: "Outsourced", external: "Keep my current tool", off: "Off" };
+/** Areas where a person always decides: the AI Team can help, but never acts on its own. */
+export const NEVER_AUTO = ["complaints", "employee-relations", "whistleblowing"];
 export const AUTONOMY_LABEL: Record<Autonomy, string> = { suggest: "Suggest", approve: "Approve", auto: "Run on its own" };
 
 export type Feature = { key: string; label: string; depth: Depth; default: boolean };
@@ -149,7 +151,7 @@ export function configFromPack(key: string): OsConfig {
   return { pack: p.key, theme: "dark", ai_paused: false, modules };
 }
 
-export type Problem = { module: string; code: "unknown_app" | "unknown_feature" | "needs" | "always_on" | "duplicate"; detail: string; needs?: string[] };
+export type Problem = { module: string; code: "unknown_app" | "unknown_feature" | "needs" | "always_on" | "duplicate" | "never_auto"; detail: string; needs?: string[] };
 /** Checks a config before it's saved. Unknown apps and features are errors; a missing dependency is a warning the builder offers to fix. */
 export function validateConfig(cfg: Pick<OsConfig, "modules">) {
   const errors: Problem[] = []; const warnings: Problem[] = [];
@@ -163,6 +165,7 @@ export function validateConfig(cfg: Pick<OsConfig, "modules">) {
     if (fc.area === ALWAYS_ON_AREA) errors.push({ module: m.key, code: "always_on", detail: `${fc.app} is always on.` });
     const known = new Set(featuresOf(m.key).map((x) => x.key));
     for (const x of m.features) if (!known.has(x)) errors.push({ module: m.key, code: "unknown_feature", detail: `${fc.app} has no feature called ${x}.` });
+    if (m.autonomy === "auto" && NEVER_AUTO.includes(m.key)) errors.push({ module: m.key, code: "never_auto", detail: `${fc.app} can't run on its own: a person always decides there.` });
     if (m.mode === "here") {
       const missing = (DEPENDS[m.key] || []).filter((d) => !active.has(d));
       if (missing.length) warnings.push({ module: m.key, code: "needs", detail: `${fc.app} works best with ${missing.map((d) => facet(d)!.app).join(" and ")}.`, needs: missing });
@@ -204,7 +207,8 @@ export function moduleSetting(cfg: Pick<OsConfig, "modules"> | null | undefined,
   if (!cfg) return undefined;
   if (ALWAYS_ON.includes(key)) return { mode: "here", autonomy: "approve" };
   const m = cfg.modules.find((x) => x.key === key);
-  return m ? { mode: m.mode, autonomy: m.autonomy } : { mode: "off", autonomy: "suggest" };
+  if (!m) return { mode: "off", autonomy: "suggest" };
+  return { mode: m.mode, autonomy: m.autonomy === "auto" && NEVER_AUTO.includes(key) ? "approve" : m.autonomy };
 }
 const usable = (cfg: Pick<OsConfig, "modules"> | null | undefined, key: string) => { const s = moduleSetting(cfg, key); return !s || s.mode === "here"; };
 export function toolAllowed(cfg: Pick<OsConfig, "modules"> | null | undefined, slug: string) {

@@ -99,6 +99,15 @@ describe("saving your OS", () => {
     expect(p.ok).toBe(true);
     expect(p.warnings[0]).toMatchObject({ module: "credit-control", needs: ["sales-invoicing"] });
   });
+  it("complaints, employee relations and whistleblowing never run on their own", async () => {
+    const { send } = await signedIn();
+    const r = await send("PUT", "/os", { modules: [{ key: "complaints", mode: "here", autonomy: "auto", features: [] }] });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as any).error.message).toMatch(/a person always decides/);
+    expect(moduleSetting({ modules: [{ key: "complaints", mode: "here", autonomy: "auto", features: [], position: 0 }] }, "complaints")!.autonomy).toBe("approve");
+    const packs: any = await (await send("GET", "/os/packs", undefined)).json();
+    expect(packs.packs.map((p: any) => p.key)).toContain("hospitality");
+  });
   it("only an owner changes the OS; a manager can pause the AI Team", async () => {
     const { send } = await signedIn("manager");
     expect((await send("PUT", "/os", configFromPack("blank"))).status).toBe(403);

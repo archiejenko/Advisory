@@ -4,6 +4,7 @@ import { TEMPLATES, RHYTHM_LABEL, PLANS } from "../../../packages/core/templates
 import { ALERTS, CLIENTS, PROSPECTS } from "./data.js";
 import { floorDemo } from "./floorDemo.js";
 import { osDemo } from "./osDemo.js";
+import { builderDemo, withModes } from "./builderDemo.js";
 import { isPass } from "./pass.js";
 
 const H = 3600e3, D = 24 * H;
@@ -191,8 +192,10 @@ export async function demoApi(method, path, body) {
   let r;
   const floor = floorDemo(method, p, q, body, s, fail);
   if (floor !== undefined) return floor;
+  const built = builderDemo(method, p, q, body, s, fail, DEMO_ME);
+  if (built !== undefined) return built;
   const os = osDemo(method, p, q, body, s, fail, DEMO_ME);
-  if (os !== undefined) return os;
+  if (os !== undefined) return p === "/os/catalogue" ? withModes(os, s) : os;
 
   if (method === "GET") {
     if (p === "/overview") {

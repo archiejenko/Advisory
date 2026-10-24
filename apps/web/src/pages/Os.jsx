@@ -8,11 +8,30 @@ import { api, useApi, useAction, pounds, dateOf } from "../api.js";
 import { Shell, Notice, Loading, Failed, changed } from "./Live.jsx";
 import { since } from "./Ws.jsx";
 import { AREAS, FACETS, KINDS, facet, areaOf } from "../../../../packages/core/os.ts";
+import { useOs } from "../osStore.js";
+
+/** How this business runs an app, from its saved OS: run here, outsourced, kept in its current tool, or off. */
+function ModeBanner({ f, setting }) {
+  if (!setting || setting.mode === "here") return null;
+  const role = f.agent || "a colleague";
+  if (setting.mode === "outsourced") {
+    const p = setting.provider || {};
+    return (
+      <div className="mode-banner mode-out" role="note">
+        <p><b>Outsourced{p.name ? ` to ${p.name}` : ""}.</b> {p.notes ? p.notes + ". " : ""}Keep their documents and this month's hand-off here. {role} prepares what they need as a draft for you to send; it never sends on its own.</p>
+        <ul className="mode-check"><li>Collect this month's changes (hours, starters, leavers, expenses)</li><li>{role} drafts the hand-off{p.email ? ` to ${p.email}` : ""}</li><li>You approve it in Needs you</li><li>File what comes back</li></ul>
+        <Link to="/workspace/build" className="link link-s">Change in Your OS</Link>
+      </div>
+    );
+  }
+  if (setting.mode === "external") return <div className="mode-banner" role="note"><p><b>Kept in your current tool.</b> This is a read-only mirror, filled by importing a CSV. The AI Team can read it but not change it. <Link to="/workspace/build" className="link link-s">Move it here when you're ready</Link></p></div>;
+  return <div className="mode-banner" role="note"><p><b>Not in your OS.</b> The AI Team can't see this app. <Link to="/workspace/build" className="link link-s">Add it in Your OS</Link></p></div>;
+}
 
 export const DEPTH = {
-  full: { label: "Native", note: "A full native screen with its agent." },
-  partial: { label: "Partly built", note: "Some of this runs natively today; records and the agent fill the rest." },
-  basic: { label: "Records + agent", note: "Keep the records here and ask the module's agent. The full native screen is still being built." },
+  full: { label: "Full", note: "A full native screen, worked by the AI Team." },
+  partial: { label: "Partly built", note: "Some of this runs natively today; records and the AI Team fill the rest." },
+  basic: { label: "Records and AI Team", note: "Keep the records here and ask the AI Team. The full native screen is still being built." },
 };
 /** Where a module's questions go when asked from its own screen: the area's team channel. */
 const AREA_CHANNEL = { S: "sales", M: "sales", CS: "sales", F: "finance", P: "finance", PB: "finance", H: "people", W: "people", O: "operations", SC: "operations", FA: "operations" };
@@ -31,18 +50,20 @@ export function WsApps() {
   const [depth, setDepth] = useState("all");
   const counts = useMemo(() => Object.fromEntries((data?.modules || []).map((m) => [m.key, m])), [data]);
   const words = q.trim().toLowerCase();
-  const shown = FACETS.filter((f) => (depth === "all" || f.depth === depth) && (!words || [f.name, f.app, f.agent || "", areaOf(f.area).name].some((s) => s.toLowerCase().includes(words))));
+  const built = !!data?.built;
+  const inOs = (f) => counts[f.key]?.mode && counts[f.key].mode !== "off";
+  const shown = FACETS.filter((f) => (depth === "all" || (depth === "mine" ? inOs(f) : f.depth === depth)) && (!words || [f.name, f.app, f.agent || "", areaOf(f.area).name].some((s) => s.toLowerCase().includes(words))));
   const byDepth = (d) => FACETS.filter((f) => f.depth === d).length;
   return (
     <Shell title="Apps" crumbs={[["Apps"]]} wide>
       <div className="os-hero">
-        <p className="body ws-intro">Every part of running the business, in one place: {FACETS.length} apps across {AREAS.length} areas. Each keeps its own records, has an agent you can ask, and a thread on every record where people and agents work it together.</p>
+        <p className="body ws-intro">Every part of running the business, in one place: {FACETS.length} apps across {AREAS.length} areas. Each keeps its own records, has a member of the AI Team you can ask, and a thread on every record where people and the AI Team work it together. Choose which ones you run in Your OS.</p>
         {data && <p className="os-totals"><b>{data.totals.records}</b> records <span aria-hidden="true">·</span> <b>{data.totals.agents}</b> app agents at work</p>}
       </div>
       <div className="os-tools">
         <div className="field os-search"><label htmlFor="os-q" className="sr">Find an app</label><input id="os-q" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find an app: payroll, rota, contracts…" /></div>
         <div className="os-seg" role="group" aria-label="Show">
-          {[["all", `All ${FACETS.length}`], ["full", `Native ${byDepth("full")}`], ["partial", `Partly built ${byDepth("partial")}`], ["basic", `Records + agent ${byDepth("basic")}`]].map(([k, t]) => (
+          {[...(built ? [["mine", `In your OS ${FACETS.filter(inOs).length}`]] : []), ["all", `All ${FACETS.length}`], ["full", `Full ${byDepth("full")}`], ["partial", `Partly built ${byDepth("partial")}`], ["basic", `Records and AI Team ${byDepth("basic")}`]].map(([k, t]) => (
             <button key={k} className={"os-seg-b" + (depth === k ? " is-on" : "")} aria-pressed={depth === k} onClick={() => setDepth(k)}>{t}</button>
           ))}
         </div>
@@ -60,10 +81,10 @@ export function WsApps() {
                 const c = counts[f.key];
                 return (
                   <li key={f.key}>
-                    <Link to={"/workspace/app/" + f.key} className="os-app">
+                    <Link to={"/workspace/app/" + f.key} className={"os-app" + (built && !inOs(f) ? " is-off" : "")}>
                       <span className="os-app-t"><b>{f.app}</b><DepthPill depth={f.depth} /></span>
                       <span className="os-app-n">{f.name}</span>
-                      <span className="os-app-f dt">{c ? (c.records ? `${c.open} open of ${c.records}` : "No records yet") : "…"}{f.agent ? ` · ${f.agent}` : " · People only"}</span>
+                      <span className="os-app-f dt">{c?.mode && c.mode !== "here" ? (c.mode === "off" ? "Not in your OS · " : c.mode === "outsourced" ? "Outsourced · " : "Kept in your current tool · ") : ""}{c ? (c.records ? `${c.open} open of ${c.records}` : "No records yet") : "…"}{f.agent ? ` · ${f.agent}` : " · People only"}</span>
                     </Link>
                   </li>
                 );
@@ -88,6 +109,7 @@ const fieldShown = (f, r, key) => {
 
 export function WsModule({ module }) {
   const f = facet(module);
+  const o = useOs();
   const can = useCan();
   const { query } = useRoute();
   const [status, setStatus] = useState("");
@@ -101,9 +123,13 @@ export function WsModule({ module }) {
   const area = areaOf(f.area);
   const cols = k.fields.filter((x) => x.type !== "long").slice(0, 3);
   const pick = (id) => navigate(`/workspace/app/${f.key}${id ? "?r=" + id : ""}`);
+  const built = o?.os?.built ? o.os : null;
+  const setting = built ? built.modules.find((m) => m.key === f.key) || { mode: f.area === "AP" ? "here" : "off" } : null;
+  const writable = !setting || setting.mode === "here" || setting.mode === "outsourced";
   return (
     <Shell title={f.app} crumbs={[["Apps", "/workspace/apps"], [area.name, "/workspace/apps?q=" + encodeURIComponent(area.name)], [f.app]]} wide
-      actions={can("manager") && <button className="btn btn-sm" onClick={() => setAdding(true)}>New {k.label.toLowerCase()}</button>}>
+      actions={can("manager") && writable && <button className="btn btn-sm" onClick={() => setAdding(true)}>New {k.label.toLowerCase()}</button>}>
+      <ModeBanner f={f} setting={setting} />
       <div className="os-mod-head">
         <div className="os-mod-copy">
           <p className="os-mod-name"><Glyph name={area.glyph} size={18} /> {f.name} <DepthPill depth={f.depth} /></p>

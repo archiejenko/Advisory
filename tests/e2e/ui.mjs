@@ -75,8 +75,8 @@ async function main() {
   console.log("Flows:");
   await check("public pages render for all three doors; signed-out header offers sign in", async () => {
     await go("/");
-    await text("Run your business from one OS.");
-    await text("Every area of the business. One place.");
+    await text("The all-in-one business operating system, powered by an agentic future.");
+    await text("Build the OS your business actually runs on.");
     await page.locator(".hdr-right").getByText("Sign in", { exact: true }).waitFor();
     await shot("01-home");
     for (const [p, t] of [["/agents", "Ready-made roles for your team"], ["/agents/outreach", "Where it fits among the use cases"], ["/agents/client-book-watch", "Customer and supplier watch"], ["/agents/bookings", "Coming soon"], ["/how-it-works", "Get a team that reports to you"], ["/use-cases", "80 jobs an agent can do"], ["/pricing", "Pay per call"], ["/os", "Everything it takes to run a business, in one OS"], ["/trust", "Agents you can leave alone"], ["/developers", "Customers for your tools"], ["/for-agents", "Facts your agent can cite"], ["/health-check", "who are you about to pay"]]) {
@@ -150,9 +150,15 @@ async function main() {
     await text("Check your email");
     const token = await tokenFor("dana@brightwork.example");
     await go("/sign-in?token=" + token);
+    // A new workspace opens on the OS Builder: pick an industry and launch.
+    await page.waitForURL(/#\/workspace\/build$/);
+    await text("What kind of business is this?");
+    await page.locator(".ob-pack").getByText("Trades and field service").click();
+    await btn("Launch my OS");
     await page.waitForURL(/#\/workspace$/);
-    await text("Hire your first agent");
-    await page.locator(".hdr-right").getByText("Workspace", { exact: true }).waitFor();
+    await text("Needs you");
+    await page.locator(".os-top").waitFor();
+    ok((await page.locator("header.hdr").count()) === 0, "no website header in the workspace");
     await shot("04-first-run");
   });
 

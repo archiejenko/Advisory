@@ -96,14 +96,43 @@ const CHANNEL_HELP = {
 const KIND_NAME = { teams: "Microsoft Teams", slack: "Slack", email: "Email" };
 const ROLE_HELP = { owner: "Everything, including billing, channels and team", manager: "Hire agents, approve emails, change settings", viewer: "Read only" };
 
+/** Notifications on this device: approvals waiting over an hour, critical alerts, stopped runs and the daily summary. */
+function Notifications() {
+  const can = typeof window !== "undefined" && "Notification" in window;
+  const [state, setState] = useState(can ? Notification.permission : "unsupported");
+  const [quiet, setQuiet] = useState(() => { try { return JSON.parse(localStorage.getItem("ah:quiet") || '{"from":"20:00","to":"07:00"}'); } catch { return { from: "20:00", to: "07:00" }; } });
+  const saveQuiet = (q) => { setQuiet(q); try { localStorage.setItem("ah:quiet", JSON.stringify(q)); } catch {} };
+  const ask = async () => { try { setState(await Notification.requestPermission()); } catch {} };
+  const test = () => window.__ahNotify?.("Test: 1 draft is waiting for your OK", "/workspace/approvals");
+  return (
+    <section id="notify" className="set-sec">
+      <h2 className="h-sub">Notifications on this device</h2>
+      <p className="body">Only what needs you: approvals waiting over an hour, critical alerts, work that stopped with a problem, and a daily summary for apps that run on their own. Each one opens the right screen. Add Agent House to your home screen to get them on your phone.</p>
+      <p className="body mt-s">{state === "granted" ? "Notifications are on." : state === "denied" ? "Notifications are blocked in this browser's settings." : state === "unsupported" ? "This browser doesn't support notifications." : "Notifications are off."}</p>
+      <div className="actions actions-tight">
+        {state === "default" && <button className="btn btn-sm" onClick={ask}>Turn on notifications</button>}
+        <button className="btn btn-sm btn-line" onClick={test}>Send a test</button>
+      </div>
+      <p className="body mt-s">Quiet hours, when only critical alerts come through if you allow them: <label>from <input type="time" value={quiet.from} onChange={(e) => saveQuiet({ ...quiet, from: e.target.value })} /></label> <label>to <input type="time" value={quiet.to} onChange={(e) => saveQuiet({ ...quiet, to: e.target.value })} /></label></p>
+    </section>
+  );
+}
+
 export function WsSettings() {
   const { me, refreshMe, signOut } = useWs();
   const can = useCan();
   return (
     <Shell title="Settings" crumbs={[["Settings"]]}>
       <nav className="subnav" aria-label="Settings sections">
-        {[["profile", "Business profile"], ["channels", "Channels"], ["team", "Team"], ...(can("owner") ? [["log", "Activity log"]] : []), ["account", "Account"]].map(([id, t]) => <a key={id} href={"#/workspace/settings?s=" + id}>{t}</a>)}
+        <a href="#/workspace/build">Your OS</a>
+        {[["profile", "Business profile"], ["notify", "Notifications"], ["channels", "Channels"], ["team", "Team"], ...(can("owner") ? [["log", "Activity log"]] : []), ["account", "Account"]].map(([id, t]) => <a key={id} href={"#/workspace/settings?s=" + id}>{t}</a>)}
       </nav>
+      <section className="set-sec set-os">
+        <h2 className="h-sub">Your OS</h2>
+        <p className="body">Which apps you run here, which you outsource or keep in your current tools, their features, and how much the AI Team does on its own in each.</p>
+        <p><a href="#/workspace/build" className="btn btn-sm">Open Your OS</a></p>
+      </section>
+      <Notifications />
       <Profile me={me} can={can} refreshMe={refreshMe} />
       <Channels can={can} />
       <Team me={me} can={can} />

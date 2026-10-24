@@ -27,14 +27,12 @@ try {
   console.log("Stage 3: the OS in the browser (demo build)");
   await check("landing page leads with the business OS", async () => {
     await go("/");
-    await text("Run your business from one OS.");
-    await text("Every area of the business. One place.");
-    await text("Your team and your agents, in one conversation");
-    await text("Not another connector. The apps themselves.");
-    await text("One module at a time, and honest about each");
-    await text("Agents are the engine");
-    ok((await page.locator(".hm-area").count()) === AREAS.length, "every area on the landing page");
-    ok((await page.title()).includes("Run your business from one OS"), "page title: " + (await page.title()));
+    await text("The all-in-one business operating system, powered by an agentic future.");
+    await text("Build the OS your business actually runs on.");
+    await text("Then your AI Team runs it.");
+    await text("Start from your industry, then change anything.");
+    ok((await page.locator(".lp-cat").count()) === 10, "all ten categories on the landing page");
+    ok((await page.title()).includes("all-in-one business operating system"), "page title: " + (await page.title()));
     await shot("os-01-landing");
   });
   await check("the public map lists every app, and filters by area", async () => {
