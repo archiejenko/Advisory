@@ -12,14 +12,14 @@ const out = await build({
   jsx: "automatic", loader: { ".js": "jsx" }, define: { "process.env.NODE_ENV": '"production"', __DEMO_BUILD__: DEMO ? "true" : "false" }, target: "es2020",
 });
 const js = out.outputFiles[0].text.replace(/<\/script/g, "<\\/script");
-const css = ["src/styles.css", "src/theme.css", "src/floor.css"].map((f) => readFileSync(f, "utf8")).join("\n");
+const css = ["src/styles.css", "src/theme.css", "src/floor.css", "src/landing.css", "src/os.css"].map((f) => readFileSync(f, "utf8")).join("\n");
 const html = `<!doctype html>
 <html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent House</title>
-<meta name="description" content="Agent House: run your business from one OS. Every area of a business of up to 100 people as native apps, from invoicing and payroll to the rota, with your team and up to 100 agents working side by side in the same records and channels.">
+<meta name="description" content="Agent House: the all-in-one business operating system. Drag together the apps your business runs on, all on one database, and let your AI Team do the manual work. For UK businesses of 1 to 100 people.">
 <meta name="theme-color" content="#FFFFFF">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(readFileSync("src/brand/favicon.svg", "utf8"))}">
 <style>${css}</style>

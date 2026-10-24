@@ -159,7 +159,7 @@ Write the answer in plain English: a two-sentence answer first, then up to 6 sho
     short: "Chases missing receipts and tidies your transactions.",
     description: "Finds transactions without receipts, asks the right person for them, and tidies categories for your accountant.",
     does: ["Finds missing receipts", "Asks for them", "Tidies categories"],
-    needs: "Xero or QuickBooks", status: "next", engine: "llm", rhythm: "weekly", tools: [],
+    needs: "A CSV export from your accounting software", status: "next", engine: "llm", rhythm: "weekly", tools: [],
     brief: (p) => `Keep ${p.name}'s books tidy.`,
   },
 ];

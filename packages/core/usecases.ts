@@ -693,7 +693,7 @@ export const USE_CASES: UseCase[] = [
   "agent": 1,
   "reach": 3.5,
   "today": "Not yet",
-  "needs": "Xero or QuickBooks",
+  "needs": "A CSV export from your accounting software",
   "effort": "M",
   "risk": "High",
   "tier": "Park"
@@ -709,7 +709,7 @@ export const USE_CASES: UseCase[] = [
   "agent": 2,
   "reach": 4.0,
   "today": "Not yet",
-  "needs": "Xero or QuickBooks, bank feed",
+  "needs": "CSV exports from your accounting software and bank",
   "effort": "M",
   "risk": "Medium",
   "tier": "Build later"

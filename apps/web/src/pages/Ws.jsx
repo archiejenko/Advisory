@@ -739,7 +739,7 @@ export function WsInvoices() {
               <span>{file ? file.name : "Choose a CSV file"}</span><span className="file-btn">{file ? "Change" : "Browse"}</span>
               <input id="inv-file" type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files[0] || null)} />
             </label>
-            <p className="hint">Columns for invoice number, customer, email, amount and due date. Xero, QuickBooks and Sage exports work as they are. Uploading again updates invoices with the same number.</p>
+            <p className="hint">Columns for invoice number, customer, email, amount and due date. Exports from most accounting software work as they are. Uploading again updates invoices with the same number.</p>
           </div>
           <button className="btn btn-sm" disabled={act.busy}>{act.busy ? "Uploading…" : "Upload"}</button>
         </form>
