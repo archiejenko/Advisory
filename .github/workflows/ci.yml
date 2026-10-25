@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "deploy/**", "hardening/**"]
+    branches: [main, "deploy/**", "hardening-batch-*"]
   pull_request:
 
 jobs:
