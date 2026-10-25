@@ -186,3 +186,91 @@ describe("S8 admin audit", () => {
     expect(raw.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE actor = 'operator'").get()).toEqual({ n: 1 });
   });
 });
+
+/* ---------- P1: one x402 payment pays for one call ---------- */
+describe("P1 x402 replay", () => {
+  it("a payment payload can't be used twice, even concurrently", async () => {
+    const { env } = testEnv({ X402_PAY_TO: "0x000000000000000000000000000000000000dEaD", FACILITATOR_URL: "https://fac.test", X402_ASSET: "0xA", SIGNING_JWK: await devJwk(), SIGNING_KID: "k1" });
+    let settles = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (u: any) => {
+      const url = String(u);
+      if (url.endsWith("/verify")) return new Response(JSON.stringify({ isValid: true, payer: "0xP" }));
+      if (url.endsWith("/settle")) { settles++; return new Response(JSON.stringify({ success: settles === 1, transaction: "0xT" })); }
+      return new Response("<html><title>x</title></html>", { headers: { "content-type": "text/html" } });
+    });
+    const pay = Buffer.from(JSON.stringify({ x402Version: 2, payload: { signature: "s", authorization: { nonce: "n1" } } })).toString("base64");
+    const go = () => call(env, "/v1/tools/read-page", { method: "POST", headers: { "Content-Type": "application/json", "PAYMENT-SIGNATURE": pay }, body: JSON.stringify({ url: "https://example.com" }) });
+    const statuses = (await Promise.all([go(), go(), go()])).map((r) => r.status).sort();
+    expect(statuses).toEqual([200, 409, 409]);
+    expect(settles).toBe(1);
+  });
+});
+async function devJwk() {
+  const kp = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
+  return Buffer.from(JSON.stringify(await crypto.subtle.exportKey("jwk", kp.privateKey))).toString("base64url");
+}
+
+/* ---------- P2: free calls are reserved atomically ---------- */
+import { authorisePayment } from "../../apps/api/src/lib/pay";
+describe("P2 free calls", () => {
+  it("a burst can't take more than the 100 free calls", async () => {
+    const { raw, env } = testEnv();
+    raw.prepare("INSERT INTO api_key (id, key_hash, kind, created_at) VALUES ('key_f', ?, 'credits', ?)").run(await sha256Hex("ah_live_free"), iso());
+    const month = new Date().toISOString().slice(0, 7);
+    for (let i = 0; i < 98; i++) raw.prepare("INSERT INTO usage_event (id, key_id, kind, units, cost_pence, payment, payment_ref, at) VALUES (?, 'key_f', 'api_call:resolve', 1, 0, 'credits', 'free', ?)").run("u" + i, month + "-02T00:00:00Z");
+    const c = () => ({ env, req: { header: (h: string) => (h === "Authorization" ? "Bearer ah_live_free" : undefined), url: "https://ah.test/v1/resolve" }, header() {} }) as any;
+    const results = await Promise.allSettled(Array.from({ length: 5 }, () => authorisePayment(c(), "resolve")));
+    const free = results.filter((r) => r.status === "fulfilled" && (r.value as any).creditRef === "free").length;
+    expect(free).toBe(2);
+  });
+});
+
+/* ---------- P3: card credit only once the money has arrived ---------- */
+import { applyStripeEvent } from "../../apps/api/src/lib/billing";
+describe("P3 Stripe credits", () => {
+  it("an unpaid checkout grants nothing until async payment succeeds", async () => {
+    const { raw, env } = testEnv();
+    const session = { id: "cs_1", mode: "payment", payment_status: "unpaid", amount_total: 1000, metadata: { key_id: "key_1" } };
+    await applyStripeEvent(env, { type: "checkout.session.completed", data: { object: session } });
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM credit_ledger").get()).toEqual({ n: 0 });
+    await applyStripeEvent(env, { type: "checkout.session.async_payment_succeeded", data: { object: { ...session, payment_status: "paid" } } });
+    expect(raw.prepare("SELECT delta_pence FROM credit_ledger").all()).toEqual([{ delta_pence: 1000 }]);
+  });
+});
+
+/* ---------- S12: previous signing keys stay published ---------- */
+describe("S12 signing key rotation", () => {
+  it("publishes previous public keys alongside the current one", async () => {
+    const prev = { kty: "OKP", crv: "Ed25519", x: "abc", kid: "ah-2026-01" };
+    const { env } = testEnv({ SIGNING_JWK: await devJwk(), SIGNING_KID: "ah-2026-10", SIGNING_JWKS_PREVIOUS: JSON.stringify([prev, { kty: "OKP", crv: "Ed25519", x: "z", d: "SECRET", kid: "bad" }]) });
+    const j: any = await (await call(env, "/.well-known/agent-house-key")).json();
+    expect(j.keys.map((k: any) => k.kid)).toEqual(["ah-2026-10", "ah-2026-01"]);
+    expect(JSON.stringify(j)).not.toContain("SECRET");
+  });
+});
+
+/* ---------- S13: a webhook with no secret configured says so ---------- */
+describe("S13 Stripe webhook without a secret", () => {
+  it("answers 503 billing_off instead of a server error", async () => {
+    const { env } = testEnv();
+    const r = await call(env, "/api/webhooks/stripe", { method: "POST", headers: { "Stripe-Signature": "t=1,v1=x" }, body: "{}" });
+    expect(r.status).toBe(503);
+  });
+});
+
+/* ---------- A1: an agent run that fails after model steps is charged for them ---------- */
+describe("A1 agents run refunds", () => {
+  it("returns the partial result and keeps the charge once the model has run", async () => {
+    const { raw, env } = testEnv({ ANTHROPIC_API_KEY: "k", CLAUDE_RETRIES: "0", SIGNING_JWK: await devJwk(), SIGNING_KID: "k1" });
+    raw.prepare("INSERT INTO api_key (id, key_hash, kind, created_at) VALUES ('key_a', ?, 'credits', ?)").run(await sha256Hex("ah_live_a"), iso());
+    raw.prepare("INSERT INTO credit_ledger (id, key_id, delta_pence, reason, ref, at) VALUES ('cl1', 'key_a', 1000, 'purchase', 'cs', ?)").run(iso());
+    let n = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => { n++; return n === 1 ? new Response(JSON.stringify({ content: [{ type: "text", text: "Partly there" }, { type: "tool_use", id: "t1", name: "find-companies", input: { districts: ["M2"] } }], stop_reason: "tool_use", usage: { input_tokens: 10, output_tokens: 10 } })) : new Response("down", { status: 500 }); });
+    const r = await call(env, "/v1/agents/run", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer ah_live_a" }, body: JSON.stringify({ instructions: "Find companies in M2 please.", tools: ["find-companies"], max_steps: 2 }) });
+    const j: any = await r.json();
+    expect(r.status).toBe(200);
+    expect(j.error).toMatch(/stopped/i);
+    expect(j.usage.model_steps).toBe(1);
+    expect((raw.prepare("SELECT SUM(delta_pence) AS s FROM credit_ledger").get() as any).s).toBe(1000 - 24);
+  });
+});

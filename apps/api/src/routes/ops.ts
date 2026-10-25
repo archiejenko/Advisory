@@ -140,6 +140,7 @@ admin.get("/outbox", async (c) => c.json({ mail: await all(c.env, "SELECT * FROM
 export const hooks = new Hono<{ Bindings: Env }>();
 
 hooks.post("/stripe", async (c) => {
+  if (!c.env.STRIPE_WEBHOOK_SECRET) throw new HttpError(503, "billing_off", "Billing isn't set up in this environment.");
   const payload = await c.req.text();
   if (!(await verifyStripeSignature(c.env.STRIPE_WEBHOOK_SECRET, c.req.header("Stripe-Signature"), payload))) throw new HttpError(400, "bad_signature", "Signature check failed.");
   const ev = JSON.parse(payload);

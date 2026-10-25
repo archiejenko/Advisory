@@ -33,6 +33,16 @@ export function publicJwk(env: Env) {
   return { ...pub, kid: env.SIGNING_KID, use: "sig", alg: "EdDSA" };
 }
 
+/**
+ * Keys signed with before a rotation (SIGNING_JWKS_PREVIOUS: a JSON array of public JWKs, each with its kid), so
+ * answers signed earlier still verify. Only public fields are ever published, whatever the variable holds.
+ */
+export function previousJwks(env: Env) {
+  let list: any[] = [];
+  try { list = JSON.parse(env.SIGNING_JWKS_PREVIOUS || "[]"); } catch {}
+  return (Array.isArray(list) ? list : []).filter((k) => k?.kty === "OKP" && k.x && k.kid && !k.d).map((k) => ({ kty: "OKP", crv: "Ed25519", x: k.x, kid: k.kid, use: "sig", alg: "EdDSA" }));
+}
+
 /** An unsubscribe link's token: HMAC of the address under CHANNEL_KEY, so only someone sent the link can use it. */
 export async function unsubToken(env: Env, email: string) {
   const key = await crypto.subtle.importKey("raw", fromB64url(env.CHANNEL_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);

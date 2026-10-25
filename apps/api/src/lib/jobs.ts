@@ -367,6 +367,7 @@ To take a copy first, export it from the same page.` });
     await pruneRateWindows(env, new Date(nowMs));
     return 1;
   });
+  await step("x402_payments", () => chunked(env, `DELETE FROM x402_payment WHERE rowid IN (SELECT rowid FROM x402_payment WHERE at < ? LIMIT ${CHUNK})`, [isoAgo(1, nowMs)]));
   await step("magic_links", () => chunked(env, `DELETE FROM magic_link WHERE rowid IN (SELECT rowid FROM magic_link WHERE expires_at < ? LIMIT ${CHUNK})`, [cutoff]));
   await step("sessions", () => chunked(env, `DELETE FROM session WHERE rowid IN (SELECT rowid FROM session WHERE expires_at < ? LIMIT ${CHUNK})`, [new Date(nowMs).toISOString()]));
   // The Floor's log is kept 30 days. Ids rise with time, so find the first id to keep and delete below it by id.

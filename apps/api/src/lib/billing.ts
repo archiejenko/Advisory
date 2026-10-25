@@ -61,7 +61,9 @@ export async function applyStripeEvent(env: Env, ev: any) {
     await audit(env, orgId, "stripe", "subscription_started", o.subscription, { plan });
     return;
   }
-  if (ev.type === "checkout.session.completed" && o.mode === "payment" && o.metadata?.key_id) {
+  // Credits only once the money has arrived: card payments are "paid" at completion; slower methods send
+  // async_payment_succeeded later.
+  if ((ev.type === "checkout.session.completed" || ev.type === "checkout.session.async_payment_succeeded") && o.mode === "payment" && o.metadata?.key_id && o.payment_status === "paid") {
     await run(env, "INSERT INTO credit_ledger (id, key_id, delta_pence, reason, ref, at) VALUES (?,?,?,?,?,?) ON CONFLICT(reason, ref) DO NOTHING",
       newId("cl"), o.metadata.key_id, o.amount_total, "purchase", o.id, now);
     return;

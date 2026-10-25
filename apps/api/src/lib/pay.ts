@@ -14,6 +14,10 @@ export type Payer = {
   kind: "internal" | "credits" | "x402"; keyId?: string; orgId?: string; payer?: string; payment?: any; requirements?: any;
   /** Credits: "free" (inside the monthly free calls) or the id of the debit taken up front. */
   creditRef?: string;
+  /** Free calls: the usage row reserved up front (P2), completed or removed later. */
+  usageId?: string;
+  /** x402: the payment payload's hash, claimed so it pays for one call only (P1). */
+  paymentHash?: string;
   /** x402: set once the payment has been settled. */
   settled?: { transaction: string; network?: string; payer?: string };
 };
@@ -86,8 +90,12 @@ export async function authorisePayment(c: Context<{ Bindings: Env }>, ep: Endpoi
     if (key.kind === "internal") return { kind: "internal", keyId: key.id, orgId: key.org_id };
     const month = nowIso().slice(0, 7);
     if (opts.freeTier !== false) {
-      const used = await one<any>(env, "SELECT COUNT(*) AS n FROM usage_event WHERE key_id = ? AND at >= ? AND payment_ref = 'free'", key.id, month + "-01");
-      if ((used?.n || 0) < FREE_CALLS) return { kind: "credits", keyId: key.id, creditRef: "free" };
+      // Reserve the free call in one statement, so a burst of simultaneous calls can't take more than the allowance.
+      const usageId = newId("use");
+      const r = await run(env, `INSERT INTO usage_event (id, key_id, kind, units, cost_pence, payment, payment_ref, at)
+        SELECT ?, ?, ?, 1, 0, 'credits', 'free', ? WHERE (SELECT COUNT(*) FROM usage_event WHERE key_id = ? AND at >= ? AND payment_ref = 'free') < ?`,
+        usageId, key.id, "api_call:" + price.label, nowIso(), key.id, month + "-01", FREE_CALLS);
+      if (r.meta.changes) return { kind: "credits", keyId: key.id, creditRef: "free", usageId };
     }
     const today = nowIso().slice(0, 10);
     const spent = await one<any>(env, "SELECT COALESCE(SUM(cost_pence),0) AS s FROM usage_event WHERE key_id = ? AND at >= ?", key.id, today);
@@ -108,12 +116,19 @@ export async function authorisePayment(c: Context<{ Bindings: Env }>, ep: Endpoi
   }
   let payload: any;
   try { payload = fromB64json(header); } catch { throw new HttpError(400, "invalid_payment", "The payment header isn't valid base64 JSON."); }
-  const v = await facilitator(env, "/verify", payload, req.accepts[0]);
+  // One payment, one call: claim the payload before verifying it, so concurrent copies of it are refused here
+  // instead of each doing paid work while only one settles. Released if the call fails before settling.
+  const paymentHash = await sha256Hex(header.trim());
+  const claim = await run(env, "INSERT INTO x402_payment (hash, at) VALUES (?, ?) ON CONFLICT(hash) DO NOTHING", paymentHash, nowIso());
+  if (!claim.meta.changes) throw new HttpError(409, "payment_reused", "This payment has already been used. Sign a new one for this call.");
+  let v: any;
+  try { v = await facilitator(env, "/verify", payload, req.accepts[0]); } catch (e) { await run(env, "DELETE FROM x402_payment WHERE hash = ?", paymentHash); throw e; }
   if (!v.isValid) {
+    await run(env, "DELETE FROM x402_payment WHERE hash = ?", paymentHash);
     c.header("PAYMENT-REQUIRED", b64json(req));
     throw new HttpError(402, "payment_invalid", `Payment wasn't accepted: ${v.invalidReason || "unknown reason"}.`, req);
   }
-  return { kind: "x402", payer: v.payer, payment: payload, requirements: req.accepts[0] };
+  return { kind: "x402", payer: v.payer, payment: payload, requirements: req.accepts[0], paymentHash };
 }
 
 /** Settle an x402 payment now (for calls that cost us real money before they can fail, like agent runs). */
@@ -126,6 +141,9 @@ export async function settleNow(c: Context<{ Bindings: Env }>, p: Payer) {
 
 /** The handler failed: give back credits taken up front. (A settled x402 payment can't be returned.) */
 export async function releasePayment(env: Env, p: Payer, ep: Endpoint | Price) {
+  // An x402 payment that never settled can be used again; a reserved free call goes back to the allowance.
+  if (p.kind === "x402" && !p.settled && p.paymentHash) { await run(env, "DELETE FROM x402_payment WHERE hash = ?", p.paymentHash); return; }
+  if (p.usageId) { await run(env, "DELETE FROM usage_event WHERE id = ?", p.usageId); p.usageId = undefined; return; }
   if (p.kind !== "credits" || !p.creditRef || p.creditRef === "free") return;
   const price = priceOf(env, ep);
   await run(env, "INSERT INTO credit_ledger (id, key_id, delta_pence, reason, ref, at) VALUES (?,?,?,?,?,?) ON CONFLICT(reason, ref) DO NOTHING",
@@ -145,6 +163,10 @@ export async function completePayment(c: Context<{ Bindings: Env }>, ep: Endpoin
     c.header("PAYMENT-RESPONSE", b64json({ success: true, transaction: p.settled!.transaction, network: p.settled!.network, payer: p.settled!.payer }));
   }
   if (p.kind === "credits") ref = p.creditRef ?? null;
+  if (p.usageId) { // a free call reserved up front: just record what it was for
+    await run(env, "UPDATE usage_event SET number = ? WHERE id = ?", number ?? null, p.usageId);
+    return { charged: 0, payment: p.kind };
+  }
   await run(env, "INSERT INTO usage_event (id, org_id, key_id, kind, number, units, cost_pence, payment, payment_ref, at) VALUES (?,?,?,?,?,1,?,?,?,?)",
     newId("use"), p.orgId ?? null, p.keyId ?? null, "api_call:" + price.label, number ?? null, p.kind === "internal" || ref === "free" ? 0 : pence, p.kind, ref, nowIso());
   return { charged: p.kind === "internal" || ref === "free" ? 0 : pence, payment: p.kind };
