@@ -5,7 +5,7 @@ import { newId, nowIso, sha256Hex } from "../../../../packages/core/util";
 import { signBody } from "../../../../packages/core/sign";
 import { type Env, one, run } from "../lib/db";
 import { body, bad, notFound, HttpError } from "../lib/http";
-import { withPayment, prices, usdcFor } from "../lib/pay";
+import { withPayment, prices, usdcFor, x402On } from "../lib/pay";
 import { resolveInput, checkInput, profileFields } from "../lib/truth";
 import { companyCached } from "../lib/registers";
 import { getTool, runTool, catalogue, builtin, creditPublisher, PUBLIC_TOOLS, type Tool } from "../lib/tools";
@@ -143,7 +143,7 @@ async function catalogueOut(env: Env) {
 truth.get("/tools", async (c) => c.json({
   tools: await catalogueOut(c.env),
   agents_run: { call: "POST /v1/agents/run", price: { per_step_pence: stepPence(c.env), default_steps: DEFAULT_RUN_STEPS, max_steps: MAX_STEPS, example: runPrice(c.env, DEFAULT_RUN_STEPS) }, free_calls: false },
-  payment: { x402: { version: 2, network: c.env.X402_NETWORK || "eip155:8453", asset: c.env.X402_ASSET, header: "PAYMENT-SIGNATURE" }, api_key: { header: "Authorization: Bearer", free_calls_per_month: 100 } },
+  payment: { x402: !x402On(c.env) ? null : { version: 2, network: c.env.X402_NETWORK || "eip155:8453", asset: c.env.X402_ASSET, header: "PAYMENT-SIGNATURE" }, api_key: { header: "Authorization: Bearer", free_calls_per_month: 100 } },
   signing_key: "/.well-known/agent-house-key",
 }));
 
@@ -192,7 +192,7 @@ discovery.get("/.well-known/agent-house.json", (c) => {
   return c.json({
     name: "Agent House", description: "Tools for agents: UK company data, web and company research, and developer-published tools. Signed answers, paid per call with x402 or an API key.",
     tools: `${base}/v1/tools`, mcp: `${base}/mcp`, agents_run: `${base}/v1/agents/run`, signing_key: `${base}/.well-known/agent-house-key`,
-    payment: { x402: { version: 2, network: c.env.X402_NETWORK || "eip155:8453", asset: c.env.X402_ASSET }, api_key: `${c.env.APP_URL}#/developers?s=key` },
+    payment: { x402: !x402On(c.env) ? null : { version: 2, network: c.env.X402_NETWORK || "eip155:8453", asset: c.env.X402_ASSET }, api_key: `${c.env.APP_URL}#/developers?s=key` },
     docs: `${c.env.APP_URL}#/for-agents`,
   });
 });

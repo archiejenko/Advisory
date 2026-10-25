@@ -30,6 +30,9 @@ export function prices(env: Env): Record<Endpoint, { pence: number; usdc_atomic:
 
 const priceOf = (env: Env, ep: Endpoint | Price): Price => (typeof ep === "string" ? { label: ep, ...prices(env)[ep] } : ep);
 
+/** x402 is on once X402_PAY_TO holds a real 0x address. */
+export const x402On = (env: Env) => /^0x[0-9a-fA-F]{40}$/.test(env.X402_PAY_TO || "");
+
 function requirements(env: Env, price: Price, url: string) {
   return {
     x402Version: 2,
@@ -94,6 +97,8 @@ export async function authorisePayment(c: Context<{ Bindings: Env }>, ep: Endpoi
       : "This key has used its 100 free calls and has no credit left. Buy credits, or pay per call with x402.");
     return { kind: "credits", keyId: key.id, creditRef: ref };
   }
+  // No receiving wallet configured yet: pay-per-call is off, API keys still work.
+  if (!x402On(env)) throw new HttpError(402, "x402_off", "Pay-per-call isn't switched on yet. Use an API key: the first 100 calls each month are free.");
   const header = c.req.header("PAYMENT-SIGNATURE") || c.req.header("X-PAYMENT");
   const req = requirements(env, price, c.req.url);
   if (!header) {

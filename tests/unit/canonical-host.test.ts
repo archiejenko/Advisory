@@ -23,3 +23,23 @@ describe("canonical host", () => {
     expect((await go("https://ejtech.co.uk/api/health", { ...env, CANONICAL_HOST: "" })).status).toBe(200);
   });
 });
+
+import { testEnv } from "./d1";
+describe("pay-per-call without a wallet", () => {
+  const call = (env: any) => worker.fetch(new Request("https://www.ejtech.co.uk/v1/tools/read-page", { method: "POST", body: JSON.stringify({ url: "https://example.com" }) }), env, ctx);
+  it("answers 402 x402_off with no payment header, and the catalogue hides x402", async () => {
+    const { env } = testEnv({ X402_PAY_TO: "" });
+    const r = await call(env);
+    expect(r.status).toBe(402);
+    expect(r.headers.get("payment-required")).toBeNull();
+    expect((await r.json() as any).error.code).toBe("x402_off");
+    const cat = await (await worker.fetch(new Request("https://www.ejtech.co.uk/v1/tools"), env, ctx)).json() as any;
+    expect(cat.payment.x402).toBeNull();
+  });
+  it("asks for payment once a wallet is set", async () => {
+    const { env } = testEnv({ X402_PAY_TO: "0x000000000000000000000000000000000000dEaD" });
+    const r = await call(env);
+    expect(r.status).toBe(402);
+    expect(r.headers.get("payment-required")).toBeTruthy();
+  });
+});

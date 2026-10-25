@@ -5,7 +5,7 @@
 # Safe to re-run: anything that already exists is reused, and the keys are only generated once.
 # Doesn't need the ejtech.co.uk zone to be active yet, so you can run it while the nameservers propagate.
 # Runs without questions when these are set (none of them are keys):
-#   X402_WALLET=0x...                        the public wallet address that receives x402 payments
+#   X402_WALLET=0x... or none                the public wallet address for x402 payments; none = pay-per-call off for now
 #   STORE_ID=<32 hex>                         which Secrets Store, if the account has more than one
 #   SECRETS_MAP="ANTHROPIC_API_KEY=name,..."  Worker key name = Secrets Store entry name; "none" for no store
 # ADMIN_TOKEN and INGEST_SECRET in the environment are used instead of generated ones, so a cloud session (whose
@@ -60,14 +60,21 @@ fs.writeFileSync("wrangler.toml", t);
 EOF
 TTY=; [ -t 0 ] && TTY=1
 need() { echo "$1"; exit 1; }
-if grep -q REPLACE_WITH_RECEIVING_WALLET wrangler.toml; then
-  W=${X402_WALLET:-}
+# The wallet that receives x402 pay-per-call payments. X402_WALLET=none deploys with pay-per-call off (API keys
+# still work); run this again with a real address later to switch it on.
+setwallet() { node -e 'const fs=require("fs");fs.writeFileSync("wrangler.toml",fs.readFileSync("wrangler.toml","utf8").replace(/X402_PAY_TO = "[^"]*"/,`X402_PAY_TO = "${process.argv[1]}"`))' "$1"; }
+W=${X402_WALLET:-}
+if [ "$W" = none ]; then
+  grep -q REPLACE_WITH_RECEIVING_WALLET wrangler.toml && setwallet ""
+  echo "No wallet: pay-per-call stays off."
+elif [ -n "$W" ] || grep -q REPLACE_WITH_RECEIVING_WALLET wrangler.toml; then
   while ! [[ "$W" =~ ^0x[0-9a-fA-F]{40}$ ]]; do
     [ -n "$W" ] && echo "That isn't a 0x address with 40 hex characters."
-    [ -n "$TTY" ] || need "Set X402_WALLET to the receiving wallet's public 0x address and run this again."
-    read -r -p "Base wallet address that receives x402 payments (0x…, the public address only): " W
+    [ -n "$TTY" ] || need "Set X402_WALLET to the receiving wallet's public 0x address (or none) and run this again."
+    read -r -p "Base wallet address that receives x402 payments (0x…, the public address only; none to skip): " W
+    [ "$W" = none ] && break
   done
-  node -e 'const fs=require("fs");fs.writeFileSync("wrangler.toml",fs.readFileSync("wrangler.toml","utf8").replace("REPLACE_WITH_RECEIVING_WALLET",process.argv[1]))' "$W"
+  if [ "$W" = none ]; then setwallet ""; else setwallet "$W"; echo "x402 payments go to $W"; fi
 fi
 node scripts/predeploy-check.mjs
 

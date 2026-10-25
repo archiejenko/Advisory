@@ -37,7 +37,8 @@ await check("MCP tools/list", async () => { const j = await (await rpc("tools/li
 await check("unpaid tool call asks for x402 payment", async () => {
   const r = await get("/v1/tools/read-page", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: "https://example.com" }) });
   if (r.status !== 402) return `status ${r.status}`;
-  const h = r.headers.get("payment-required"); if (!h) return "no PAYMENT-REQUIRED header";
+  const h = r.headers.get("payment-required");
+  if (!h) { const j = await r.json(); if (j.error?.code === "x402_off") { console.log("  note  pay-per-call is off (no wallet set)"); return; } return "no PAYMENT-REQUIRED header"; }
   const req = JSON.parse(Buffer.from(h, "base64").toString());
   const payTo = req.accepts?.[0]?.payTo; if (!/^0x[0-9a-fA-F]{40}$/.test(payTo || "")) return `payTo is ${payTo}`;
 });
