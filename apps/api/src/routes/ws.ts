@@ -75,11 +75,30 @@ ws.post("/users", owner, async (c) => {
   return c.json({ ok: true, user_id: u.id }, 201);
 });
 
+/** Someone must always be able to manage the workspace: refuse to demote or remove its last owner. */
+async function keepAnOwner(c: any, userId: string) {
+  const owners = await c.get("db").all("SELECT user_id FROM membership WHERE org_id = ?1 AND role = 'owner'");
+  if (owners.length === 1 && owners[0].user_id === userId) throw new HttpError(409, "last_owner", "Make someone else an owner first: a workspace always needs one.");
+}
+
 ws.patch("/users/:id", owner, async (c) => {
   const b = await body(c, z.object({ role: z.enum(["owner", "manager", "viewer"]) }));
+  if (b.role !== "owner") await keepAnOwner(c, c.req.param("id")!);
   const r = await c.get("db").run("UPDATE membership SET role = ?3 WHERE org_id = ?1 AND user_id = ?2", c.req.param("id"), b.role);
   if (!r.meta.changes) throw notFound("User");
   await audit(c.env, c.get("orgId"), c.get("user").id, "role_changed", c.req.param("id"), b);
+  return c.json({ ok: true });
+});
+
+/** Remove someone from the workspace. Their sessions here end at once. */
+ws.delete("/users/:id", owner, async (c) => {
+  const id = c.req.param("id")!, db = c.get("db");
+  await keepAnOwner(c, id);
+  const r = await db.run("DELETE FROM membership WHERE org_id = ?1 AND user_id = ?2", id);
+  if (!r.meta.changes) throw notFound("User");
+  await db.run("DELETE FROM session WHERE org_id = ?1 AND user_id = ?2", id);
+  await db.run("UPDATE task SET assignee_user_id = NULL WHERE org_id = ?1 AND assignee_user_id = ?2", id);
+  await audit(c.env, c.get("orgId"), c.get("user").id, "user_removed", id);
   return c.json({ ok: true });
 });
 

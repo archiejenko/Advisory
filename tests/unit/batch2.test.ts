@@ -146,3 +146,43 @@ describe("D3 retention catch-up", () => {
     expect((raw.prepare("SELECT body FROM inbox_message WHERE id = 'm1'").get() as any).body).toBeNull();
   });
 });
+
+/* ---------- S10: members can be removed; the last owner can't lock the workspace ---------- */
+describe("S10 members", () => {
+  async function setup() {
+    const { raw, env } = testEnv();
+    const org = seedOrg(raw);
+    raw.prepare("INSERT INTO user (id, email, created_at) VALUES ('usr_m', 'm@x.test', ?)").run(iso());
+    raw.prepare("INSERT INTO membership (org_id, user_id, role) VALUES (?, 'usr_m', 'manager')").run(org.id);
+    const owner = await signedIn(raw, env, org.id, org.user);
+    const member = await signedIn(raw, env, org.id, "usr_m");
+    return { raw, env, org, owner, member };
+  }
+  it("removing a member ends their access at once", async () => {
+    const { raw, owner, member } = await setup();
+    expect((await member("/me")).status).toBe(200);
+    expect((await owner("/users/usr_m", { method: "DELETE" })).status).toBe(200);
+    expect((await member("/me")).status).toBe(401);
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM session WHERE user_id = 'usr_m'").get()).toEqual({ n: 0 });
+  });
+  it("the last owner can't be demoted or removed", async () => {
+    const { org, owner } = await setup();
+    expect((await owner(`/users/${org.user}`, { method: "PATCH", body: JSON.stringify({ role: "viewer" }) })).status).toBe(409);
+    expect((await owner(`/users/${org.user}`, { method: "DELETE" })).status).toBe(409);
+    expect((await owner("/users/usr_m", { method: "PATCH", body: JSON.stringify({ role: "owner" }) })).status).toBe(200);
+    expect((await owner(`/users/${org.user}`, { method: "PATCH", body: JSON.stringify({ role: "viewer" }) })).status).toBe(200);
+  });
+});
+
+/* ---------- S8: every operator write is on the audit log ---------- */
+describe("S8 admin audit", () => {
+  it("records admin writes with the route and result", async () => {
+    const { raw, env } = testEnv({ ADMIN_TOKEN: "admin-token-value" });
+    raw.prepare("INSERT INTO dead_job (id, queue, type, body, attempts, at) VALUES ('dj1', 'q', 'deliver', '{}', 3, ?)").run(iso());
+    const r = await call(env, "/api/admin/dead-jobs/dj1/resolve", { method: "POST", headers: { Authorization: "Bearer admin-token-value", "CF-Connecting-IP": "9.9.9.9" } });
+    expect(r.status).toBe(200);
+    expect(raw.prepare("SELECT actor, action, target, detail FROM audit_log WHERE actor = 'operator'").get()).toMatchObject({ action: "admin:POST /api/admin/dead-jobs/dj1/resolve", detail: expect.stringContaining("9.9.9.9") });
+    await call(env, "/api/admin/orgs", { headers: { Authorization: "Bearer admin-token-value" } });
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE actor = 'operator'").get()).toEqual({ n: 1 });
+  });
+});

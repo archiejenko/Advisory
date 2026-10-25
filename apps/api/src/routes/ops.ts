@@ -42,6 +42,13 @@ internal.get("/timepoint", async (c) => c.json({ timepoint: Number((await c.env.
 /* ---------- Operator admin ---------- */
 export const admin = new Hono<{ Bindings: Env }>();
 admin.use("*", bearer("ADMIN_TOKEN"));
+// Every operator write leaves a trace: the route, the result and where it came from. Reads aren't logged.
+admin.use("*", async (c, next) => {
+  await next();
+  if (c.req.method === "GET") return;
+  await audit(c.env, null, "operator", `admin:${c.req.method} ${c.req.path}`, c.req.path.split("/")[4], { status: c.res.status, ip: c.req.header("CF-Connecting-IP") || null })
+    .catch((e) => console.error("admin audit failed", e));
+});
 
 /** Create a pilot MSP: organisation, owner, the three agents, and an internal Truth API key. */
 admin.post("/orgs", async (c) => {
