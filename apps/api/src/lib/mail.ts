@@ -8,13 +8,15 @@ import { type Env, one, run } from "./db";
  * operator's alerts). It always sends, and the outreach suppression list doesn't apply to it.
  * "outbound" (the default): mail an agent or an alert sends on a business's behalf. It is held while SENDS_LIVE
  * isn't "true", and never goes to a suppressed address.
+ * "service": an agent's email that isn't marketing (an invoice reminder, a reply to someone who wrote in). Held like
+ * outbound mail, but an outreach opt-out doesn't stop it.
  */
-export type MailKind = "transactional" | "outbound";
+export type MailKind = "transactional" | "outbound" | "service";
 export type Mail = { to: string; subject: string; text: string; replyTo?: string; kind?: MailKind };
 
 export async function sendMail(env: Env, m: Mail): Promise<"sent" | "suppressed" | "dry_run"> {
   const transactional = m.kind === "transactional";
-  if (!transactional && (await one(env, "SELECT email FROM suppression WHERE email = ?", m.to.toLowerCase()))) return "suppressed";
+  if (!transactional && m.kind !== "service" && (await one(env, "SELECT email FROM suppression WHERE email = ?", m.to.toLowerCase()))) return "suppressed";
   const mode = env.MAIL_MODE || "outbox";
   if (mode === "outbox") {
     await run(env, "INSERT INTO dev_outbox (id, to_addr, subject, body, at) VALUES (?,?,?,?,?)", newId("mail"), m.to, m.subject, m.text, nowIso());

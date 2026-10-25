@@ -3,6 +3,7 @@ import { newId, nowIso } from "../../../../packages/core/util";
 import { type Env, one, run, audit } from "./db";
 import { HttpError } from "./http";
 import { sendMail } from "./mail";
+import { unsubLink } from "./crypto";
 import { emitForAgent } from "./swarm";
 import { logActivity, leadForEmail } from "./crm";
 import { loadOs } from "./osbuilder";
@@ -19,6 +20,9 @@ function osRoleAutonomy(os: OsConfig, agent: any): Autonomy | undefined {
   return best;
 }
 
+/** Invoice reminders and replies to a message aren't marketing: the outreach opt-out doesn't apply to them. */
+const isService = (p: { invoice_id?: string; message_id?: string; lead_id?: string }) => !p.lead_id && !!(p.invoice_id || p.message_id);
+
 export type EmailPayload = { to: string; subject: string; body: string; lead_id?: string; invoice_id?: string; message_id?: string; handover?: boolean };
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[a-z]{2,}$/i;
 
@@ -27,14 +31,19 @@ export async function proposeEmail(env: Env, ctx: { orgId: string; agentId: stri
   const to = String(p.to || "").trim().toLowerCase();
   if (!EMAIL.test(to)) throw new HttpError(400, "invalid_email", "That isn't a valid email address. Never guess one: save the lead without an email and create a task instead.");
   if (!p.subject?.trim() || !p.body?.trim()) throw new HttpError(400, "invalid_email", "An email needs a subject and a body.");
-  if (await one(env, "SELECT email FROM suppression WHERE email = ?", to)) throw new HttpError(409, "suppressed", `${to} has asked not to be contacted. Don't email them.`);
+  // An outreach opt-out stops marketing, not an invoice reminder or a reply to someone who wrote to the business.
+  if (!isService(p) && (await one(env, "SELECT email FROM suppression WHERE email = ?", to))) throw new HttpError(409, "suppressed", `${to} has asked not to be contacted. Don't email them.`);
   const agent = await one<any>(env, "SELECT * FROM agent WHERE id = ? AND org_id = ?", ctx.agentId, ctx.orgId);
   if (!agent) throw new HttpError(404, "not_found", "Agent not found.");
   const payload: EmailPayload = { to, subject: p.subject.trim().slice(0, 200), body: p.body.trim().slice(0, 5000), ...(p.lead_id ? { lead_id: p.lead_id } : {}), ...(p.invoice_id ? { invoice_id: p.invoice_id } : {}), ...(p.message_id ? { message_id: p.message_id } : {}), ...(p.handover ? { handover: true } : {}) };
   // Check the references belong to this business
   if (payload.lead_id && !(await one(env, "SELECT id FROM lead WHERE id = ? AND org_id = ?", payload.lead_id, ctx.orgId))) throw new HttpError(404, "not_found", "No lead with that id.");
   if (payload.invoice_id && !(await one(env, "SELECT id FROM invoice WHERE id = ? AND org_id = ?", payload.invoice_id, ctx.orgId))) throw new HttpError(404, "not_found", "No invoice with that id.");
-  if (payload.message_id && !(await one(env, "SELECT id FROM inbox_message WHERE id = ? AND org_id = ?", payload.message_id, ctx.orgId))) throw new HttpError(404, "not_found", "No message with that id.");
+  if (payload.message_id) {
+    const m = await one<any>(env, "SELECT category FROM inbox_message WHERE id = ? AND org_id = ?", payload.message_id, ctx.orgId);
+    if (!m) throw new HttpError(404, "not_found", "No message with that id.");
+    if (m.category === "unsubscribe") throw new HttpError(409, "suppressed", "That message asked to stop emails. Don't reply to it.");
+  }
   const id = newId("act");
   await run(env, "INSERT INTO agent_action (id, org_id, agent_id, run_id, kind, title, payload, reason, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
     id, ctx.orgId, ctx.agentId, ctx.runId ?? null, "email", `Email ${to}: ${payload.subject}`, JSON.stringify(payload), p.reason?.slice(0, 500) ?? null, "proposed", nowIso());
@@ -106,11 +115,11 @@ export async function executeAction(env: Env, orgId: string, actionId: string, d
   const org = await one<any>(env, "SELECT name FROM org WHERE id = ?", orgId);
   const owner = await one<any>(env, "SELECT u.email FROM membership m JOIN user u ON u.id = m.user_id WHERE m.org_id = ? AND m.role = 'owner' LIMIT 1", orgId);
   const footer = p.lead_id
-    ? `\n\n--\n${org.name}\nIf you'd rather not hear from us, reply STOP or unsubscribe here: ${env.APP_URL}#/unsubscribe?e=${encodeURIComponent(p.to)}`
+    ? `\n\n--\n${org.name}\nIf you'd rather not hear from us, reply STOP or unsubscribe here: ${await unsubLink(env, p.to)}`
     : "";
   let result: string;
   try {
-    result = await sendMail(env, { to: p.to, subject: p.subject, text: p.body + footer, replyTo: owner?.email });
+    result = await sendMail(env, { to: p.to, subject: p.subject, text: p.body + footer, replyTo: owner?.email, kind: isService(p) ? "service" : "outbound" });
   } catch (e: any) {
     await run(env, "UPDATE agent_action SET status = 'failed', result = ? WHERE id = ?", String(e.message).slice(0, 300), actionId);
     throw new HttpError(502, "send_failed", "The email didn't send: " + e.message);

@@ -9,6 +9,7 @@ import { sendMail } from "../lib/mail";
 import { creditsCheckout } from "../lib/stripe";
 import { createOrg } from "../lib/orgs";
 import { limitIp, limitEmail } from "../lib/limits";
+import { checkUnsubToken, unsubLink } from "../lib/crypto";
 
 export const pub = new Hono<{ Bindings: Env }>();
 
@@ -121,8 +122,21 @@ pub.post("/credits/checkout", async (c) => {
   return c.json({ url: s.url });
 });
 
+/**
+ * With the token from an email's link, the address is suppressed at once. Without one (someone typing an address
+ * on the site), we email that address a link instead: nobody can unsubscribe an address they don't receive mail at.
+ */
 pub.post("/unsubscribe", async (c) => {
-  const b = await body(c, z.object({ email: z.string().email() }));
-  await run(c.env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", b.email.toLowerCase(), "unsubscribe", nowIso());
-  return c.json({ ok: true });
+  const b = await body(c, z.object({ email: z.string().email(), token: z.string().max(100).optional() }));
+  const email = b.email.toLowerCase();
+  if (b.token) {
+    if (!(await checkUnsubToken(c.env, email, b.token))) throw bad("This unsubscribe link isn't valid. Reply STOP to the email instead, or ask for a new link below.", "invalid_token");
+    await run(c.env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", email, "unsubscribe", nowIso());
+    return c.json({ ok: true, unsubscribed: true });
+  }
+  await limitIp(c, "unsub", 10);
+  if (await limitEmail(c.env, "unsub", email, 3)) {
+    await sendMail(c.env, { kind: "transactional", to: email, subject: "Confirm: stop emails from Agent House agents", text: `Someone asked to stop outreach emails from Agent House agents to this address. If it was you, confirm here:\n${await unsubLink(c.env, email)}\n\nIf it wasn't, ignore this email and nothing changes.` });
+  }
+  return c.json({ ok: true, unsubscribed: false, message: "We've emailed that address a link to confirm." });
 });

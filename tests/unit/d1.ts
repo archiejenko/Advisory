@@ -54,7 +54,7 @@ export function fakeQueue() {
 /** An Env with a fresh database, R2 and queues, local mail, and the given vars. */
 export function testEnv(vars: Record<string, string> = {}) {
   const { raw, DB } = testDb();
-  return { raw, env: { DB, FILES: fakeR2(), JOBS: fakeQueue(), AGENT_JOBS: fakeQueue(), CACHE: { get: async () => null, put: async () => {} }, MAIL_MODE: "outbox", APP_URL: "https://ah.test/", ...vars } as any };
+  return { raw, env: { DB, FILES: fakeR2(), JOBS: fakeQueue(), AGENT_JOBS: fakeQueue(), CACHE: { get: async () => null, put: async () => {} }, MAIL_MODE: "outbox", APP_URL: "https://ah.test/", CHANNEL_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", ...vars } as any };
 }
 
 const now = () => new Date().toISOString();

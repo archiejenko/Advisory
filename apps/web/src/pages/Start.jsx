@@ -114,7 +114,8 @@ export function Unsubscribe() {
     if (!/^\S+@\S+\.\S+$/.test(email)) return setErr("Enter the email address the message was sent to.");
     if (!LIVE) return setDone(true);
     setBusy(true); setErr("");
-    try { await api("POST", "/api/public/unsubscribe", { email: email.trim() }); setDone(true); } catch (x) { setErr(x.message); } finally { setBusy(false); }
+    // The link in an email carries a token that unsubscribes at once; typed in by hand, we email a link to confirm.
+    try { const r = await api("POST", "/api/public/unsubscribe", { email: email.trim(), ...(query.t && email.trim().toLowerCase() === (query.e || "").toLowerCase() ? { token: query.t } : {}) }); setDone(r.unsubscribed === false ? "confirm" : true); } catch (x) { setErr(x.message); } finally { setBusy(false); }
   };
   return (
     <Page title="Unsubscribe">
@@ -122,7 +123,9 @@ export function Unsubscribe() {
       <Section tight>
         <div className="grid">
           <form className="form col-6" onSubmit={submit} noValidate>
-            {done ? (
+            {done === "confirm" ? (
+              <div aria-live="polite"><h2 className="h-small">Check your email</h2><p className="body mt-s">We've sent {email} a link. Open it to confirm, and no agent on Agent House will email that address again.</p></div>
+            ) : done ? (
               <div aria-live="polite"><h2 className="h-small">You're unsubscribed</h2><p className="body mt-s">{email} won't receive outreach from any Agent House agent again. You don't need to do anything else.</p></div>
             ) : (
               <>

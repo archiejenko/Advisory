@@ -384,7 +384,7 @@ async function main() {
 
   /* 14. Inbound email */
   await check("inbound email: a workspace user emails a company name and gets a brief back", async () => {
-    const eml = ["From: owner@northgate.example", "To: check@northgate.agenthouse.example", "Subject: check Harlow Vale Studios", "Message-ID: <e2e@northgate.example>", "Content-Type: text/plain", "", "Please check this one before we sign.", ""].join("\r\n");
+    const eml = ["From: owner@northgate.example", "Authentication-Results: mx.cloudflare.net; spf=pass smtp.mailfrom=owner@northgate.example", "To: check@northgate.agenthouse.example", "Subject: check Harlow Vale Studios", "Message-ID: <e2e@northgate.example>", "Content-Type: text/plain", "", "Please check this one before we sign.", ""].join("\r\n");
     const r = await fetch(`${API}/cdn-cgi/handler/email?from=owner@northgate.example&to=check@northgate.agenthouse.example`, { method: "POST", body: eml });
     ok(r.ok, "email handler status " + r.status);
     await waitFor(async () => (await outbox()).find((m) => m.to_addr === "owner@northgate.example" && m.subject.startsWith("Brief: HARLOW VALE STUDIOS")), "brief reply", 30000);
@@ -457,7 +457,7 @@ async function main() {
     const ap = await call("POST", `/api/ws/actions/${acts.actions[0].id}/approve`, { subject: "Office cleaning for Ashworth Hale" }, { cookie: biz });
     ok(ap.status === 200 && ap.json.status === "sent", ap.text);
     const sent = await waitFor(async () => (await outbox()).find((m) => m.to_addr === leads[0].email), "outreach email");
-    ok(sent.subject === "Office cleaning for Ashworth Hale" && /unsubscribe here: .*#\/unsubscribe\?e=hello%40ashworth/.test(sent.body), sent.body);
+    ok(sent.subject === "Office cleaning for Ashworth Hale" && /unsubscribe here: .*#\/unsubscribe\?e=hello%40ashworth[^&\s]*&t=[\w-]{20,}/.test(sent.body), sent.body);
     ok((await call("POST", `/api/ws/actions/${acts.actions[0].id}/approve`, {}, { cookie: biz })).status === 409, "can't send twice");
     ok((await call("GET", "/api/ws/leads", undefined, { cookie: biz })).json.leads.find((l) => l.id === leads[0].id).status === "contacted", "lead marked contacted");
     const again = await waitRun((await call("POST", `/api/ws/my-agents/${agents.outreach}/run`, {}, { cookie: biz })).json.run_id, biz);
@@ -469,7 +469,7 @@ async function main() {
   await check("inbox agent: an enquiry arrives by email, is triaged, and a reply is drafted; a STOP reply suppresses", async () => {
     const me = (await call("GET", "/api/ws/me", undefined, { cookie: biz })).json;
     const to = me.org.inbox_address;
-    const eml = ["From: facilities@quayside.example", `To: ${to}`, "Subject: Quote for weekly office clean", "Message-ID: <q1@quayside.example>", "Content-Type: text/plain", "", "Hi, could you quote for cleaning our 20-desk office twice a week?", ""].join("\r\n");
+    const eml = ["From: facilities@quayside.example", "Authentication-Results: mx.cloudflare.net; dmarc=pass header.from=quayside.example", `To: ${to}`, "Subject: Quote for weekly office clean", "Message-ID: <q1@quayside.example>", "Content-Type: text/plain", "", "Hi, could you quote for cleaning our 20-desk office twice a week?", ""].join("\r\n");
     ok((await fetch(`${API}/cdn-cgi/handler/email?from=facilities@quayside.example&to=${encodeURIComponent(to)}`, { method: "POST", body: eml })).ok, "inbound accepted");
     const runs = await waitFor(async () => { const r = (await call("GET", `/api/ws/runs?agent=${agents.inbox}`, undefined, { cookie: biz })).json.runs; return r.length && ["waiting", "done", "failed"].includes(r[0].status) && r; }, "inbox run", 60000);
     ok(runs[0].trigger === "event" && runs[0].status === "waiting", JSON.stringify(runs[0]));
@@ -479,7 +479,11 @@ async function main() {
     ok(act && act.payload.to === "facilities@quayside.example" && act.payload.subject.startsWith("Re: "), JSON.stringify(act));
     ok((await call("POST", `/api/ws/actions/${act.id}/reject`, {}, { cookie: biz })).status === 200, "reject");
     ok((await call("GET", "/api/ws/actions?status=rejected", undefined, { cookie: biz })).json.actions.some((a) => a.id === act.id), "rejected listed");
-    const stop = ["From: hello@ashworth-hale-solicitors.example", `To: ${to}`, "Subject: Re: Office cleaning", "Message-ID: <s1@ashworth.example>", "", "STOP", ""].join("\r\n");
+    // A forged STOP (no authentication results for the sender's domain) is kept but changes nothing.
+    const forged = ["From: hello@ashworth-hale-solicitors.example", `To: ${to}`, "Subject: Re: Office cleaning", "Message-ID: <f1@forger.example>", "", "STOP", ""].join("\r\n");
+    await fetch(`${API}/cdn-cgi/handler/email?from=hello@ashworth-hale-solicitors.example&to=${encodeURIComponent(to)}`, { method: "POST", body: forged });
+    ok((await call("GET", "/api/ws/leads", undefined, { cookie: biz })).json.leads.find((l) => l.email === "hello@ashworth-hale-solicitors.example").status !== "unsubscribed", "a forged STOP changes nothing");
+    const stop = ["From: hello@ashworth-hale-solicitors.example", "Authentication-Results: mx.cloudflare.net; spf=pass smtp.mailfrom=hello@ashworth-hale-solicitors.example", `To: ${to}`, "Subject: Re: Office cleaning", "Message-ID: <s1@ashworth.example>", "", "STOP", ""].join("\r\n");
     await fetch(`${API}/cdn-cgi/handler/email?from=hello@ashworth-hale-solicitors.example&to=${encodeURIComponent(to)}`, { method: "POST", body: stop });
     await waitFor(async () => (await call("GET", "/api/ws/leads", undefined, { cookie: biz })).json.leads.find((l) => l.email === "hello@ashworth-hale-solicitors.example").status === "unsubscribed", "lead unsubscribed");
   });

@@ -20,6 +20,24 @@ export function isAutomated(h: { get(name: string): string | null }) {
 import { logActivity, leadForEmail } from "./crm";
 import PostalMime from "postal-mime";
 
+/**
+ * Did the sender's domain vouch for this message? Email Routing records SPF, DKIM and DMARC results in
+ * Authentication-Results (and ARC-Authentication-Results). A pass counts only when it is for the sender's own domain,
+ * so a message from an attacker's domain passing its own checks doesn't vouch for someone else's address.
+ */
+export function senderVerified(h: { get(name: string): string | null }, from: string) {
+  const domain = (from.split("@")[1] || "").toLowerCase().replace(/[>\s]/g, "");
+  if (!domain) return false;
+  const results = [h.get("authentication-results"), h.get("arc-authentication-results")].filter(Boolean).join(";").toLowerCase();
+  const ownDomain = (d: string | undefined) => !!d && (d === domain || domain.endsWith("." + d));
+  for (const part of results.split(";").map((x) => x.trim())) {
+    if (/^dmarc=pass\b/.test(part) && ownDomain((part.match(/header\.from=([^\s;]+)/) || [])[1])) return true;
+    if (/^spf=pass\b/.test(part) && ownDomain(((part.match(/smtp\.mailfrom=([^\s;]+)/) || [])[1] || "").split("@").pop())) return true;
+    if (/^dkim=pass\b/.test(part) && ownDomain((part.match(/header\.d=([^\s;]+)/) || [])[1])) return true;
+  }
+  return false;
+}
+
 /** Pull the request out of a message: the subject, else the first non-empty body line. */
 export function requestFrom(subject: string, text: string): string {
   const s = subject.replace(/^(re|fwd?|fw):\s*/gi, "").replace(/^check\s*/i, "").trim();
@@ -69,24 +87,31 @@ export async function onEmail(message: ForwardableEmailMessage, env: Env) {
     const parsed = await parseMessage(await new Response(message.raw).arrayBuffer());
     const subject = parsed.subject || message.headers.get("subject") || "";
     const body = parsed.text;
+    const stop = /^\s*(stop|unsubscribe)\b/i.test(body);
     const id = newId("msg");
     await run(env, "INSERT INTO inbox_message (id, org_id, from_addr, subject, body, status, category, received_at) VALUES (?,?,?,?,?,?,?,?)", id, org.id, from, subject.slice(0, 300), body.slice(0, 20000),
-      automated ? "ignored" : "new", automated ? "automated" : null, nowIso());
+      automated || stop ? "ignored" : "new", automated ? "automated" : stop ? "unsubscribe" : null, nowIso());
     if (automated) return;
-    // A reply from someone we emailed marks that lead as replied, and goes on its timeline.
-    await run(env, "UPDATE lead SET status = 'replied' WHERE org_id = ? AND email = ? AND status IN ('new','contacted')", org.id, from);
-    const leadId = await leadForEmail(env, org.id, from);
-    if (leadId) await logActivity(env, { orgId: org.id, leadId, actor: from, kind: "reply", summary: `Reply: ${subject.slice(0, 200) || "(no subject)"}`, refKind: "message", refId: id });
-    if (/^\s*(stop|unsubscribe)\b/i.test(body)) {
-      await run(env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", from, "reply_stop", nowIso());
-      await run(env, "UPDATE lead SET status = 'unsubscribed' WHERE org_id = ? AND email = ?", org.id, from);
+    // The envelope sender can be forged. Only a sender whose own domain vouched for the message can change a lead
+    // or opt out an address; anything else is kept for the inbox agent to read, as information.
+    if (senderVerified(message.headers, from)) {
+      // A reply from someone we emailed marks that lead as replied, and goes on its timeline.
+      await run(env, "UPDATE lead SET status = 'replied' WHERE org_id = ? AND email = ? AND status IN ('new','contacted')", org.id, from);
+      const leadId = await leadForEmail(env, org.id, from);
+      if (leadId) await logActivity(env, { orgId: org.id, leadId, actor: from, kind: "reply", summary: `Reply: ${subject.slice(0, 200) || "(no subject)"}`, refKind: "message", refId: id });
+      if (stop) {
+        await run(env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", from, "reply_stop", nowIso());
+        await run(env, "UPDATE lead SET status = 'unsubscribed' WHERE org_id = ? AND email = ?", org.id, from);
+      }
     }
+    if (stop) return; // an opt-out isn't an enquiry: don't wake the inbox agent to answer it
     await syncOrgSwarms(env, org.id, { force: false }); // at most once every 10 seconds, however much mail arrives
     await wakeOnEvent(env, org.id, "inbox", `New message from ${from}: ${subject}`);
     return;
   }
   const user = await one<any>(env, "SELECT u.id, u.email, m.org_id FROM user u JOIN membership m ON m.user_id = u.id WHERE u.email = ? LIMIT 1", from);
   if (!user) return; // not a customer: drop silently, never reply to strangers
+  if (!senderVerified(message.headers, from)) return; // a forged customer address would spend their register checks
   const parsed = await parseMessage(await new Response(message.raw).arrayBuffer());
   const input = requestFrom(parsed.subject || message.headers.get("subject") || "", parsed.text);
   if (input.length < 2) return;
