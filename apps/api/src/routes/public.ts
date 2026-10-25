@@ -12,6 +12,8 @@ import { limitIp, limitEmail } from "../lib/limits";
 import { checkUnsubToken, unsubLink } from "../lib/crypto";
 
 export const pub = new Hono<{ Bindings: Env }>();
+/** A sign-up waiting for its confirmation link, in KV by the link's hash. */
+export const SIGNUP_PREFIX = "signup:";
 
 async function turnstile(c: Context<{ Bindings: Env }>, token: string | null | undefined) {
   if (!c.env.TURNSTILE_SECRET) return;
@@ -100,8 +102,18 @@ pub.post("/signup", async (c) => {
     await sendMail(c.env, { kind: "transactional", to: email, subject: "Your Agent House sign-in link", text: `You already have a workspace. Sign in: ${c.env.APP_URL}#/sign-in?token=${token}\n\nThis link works once and expires in 15 minutes.` });
     return c.json({ ok: true, message: "Check your email for a link to your workspace." }, 201);
   }
-  await createOrg(c.env, { name: b.business, owner_email: email, owner_name: b.name, profile: Object.fromEntries(Object.entries({ what: b.what, customers: b.customers, area: b.area }).filter(([, v]) => v && v.trim()).map(([k, v]) => [k, v!.trim()])), plan: "trial", by: "signup" });
-  return c.json({ ok: true, message: "Check your email for a link to your new workspace." }, 201);
+  // Nothing is created until the address is proved: the details wait (a day) for the emailed link, which signs the
+  // owner in and creates the workspace (see /api/auth/session). A stranger's address gets one confirmation, no workspace.
+  if (!(await limitEmail(c.env, "signup", email, 3))) return c.json({ ok: true, message: "Check your email for a link to confirm and open your new workspace." }, 201);
+  const token = randomToken(), hash = await sha256Hex(token);
+  const profile = Object.fromEntries(Object.entries({ what: b.what, customers: b.customers, area: b.area }).filter(([, v]) => v && v.trim()).map(([k, v]) => [k, v!.trim()]));
+  await c.env.CACHE.put(SIGNUP_PREFIX + hash, JSON.stringify({ name: b.business, owner_email: email, owner_name: b.name, profile }), { expirationTtl: 86400 });
+  await run(c.env, "INSERT INTO magic_link (token_hash, email, expires_at) VALUES (?,?,?)", hash, email, new Date(Date.now() + 864e5).toISOString());
+  await sendMail(c.env, { kind: "transactional", to: email, subject: "Confirm your email to open your Agent House workspace", text: `Confirm your email and open the workspace for ${b.business}:
+${c.env.APP_URL}#/sign-in?token=${token}
+
+This link works once and expires in 24 hours. If you didn't sign up, ignore this email and nothing is created.` });
+  return c.json({ ok: true, message: "Check your email for a link to confirm and open your new workspace." }, 201);
 });
 
 /* ---------- Developer keys and credits ---------- */

@@ -14,8 +14,8 @@ afterEach(() => vi.restoreAllMocks());
 const ok = () => vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
 
 describe("Companies House budget", () => {
-  it("gives bulk work 60% of a window, alerts 85% and live checks the rest", () => {
-    expect(LANE_SHARE).toEqual({ bulk: 0.6, alert: 0.85, live: 0.97 });
+  it("gives outside API callers 35% of a window, bulk work 60%, alerts 85% and live checks the rest", () => {
+    expect(LANE_SHARE).toEqual({ api: 0.35, bulk: 0.6, alert: 0.85, live: 0.97 });
   });
   it("stops bulk work at its share, while alerts and live checks still go through", async () => {
     ok();

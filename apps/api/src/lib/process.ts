@@ -11,7 +11,7 @@ export type IncomingEvent = { source: string; source_id: string; number: string;
 export async function isWatched(env: Env, number: string) {
   const c = await one(env, "SELECT 1 AS x FROM client WHERE number = ? AND watch_on = 1 LIMIT 1", number);
   if (c) return true;
-  const w = await one(env, "SELECT 1 AS x FROM watch_number WHERE number = ? LIMIT 1", number);
+  const w = await one(env, "SELECT 1 AS x FROM watch_number n JOIN watch_subscription s ON s.id = n.watch_id JOIN api_key k ON k.id = s.key_id WHERE n.number = ? AND s.deleted_at IS NULL AND k.revoked_at IS NULL LIMIT 1", number);
   return !!w;
 }
 
@@ -64,8 +64,14 @@ export async function processCompany(env: Env, number: string, eventId: string, 
 }
 
 /** Developers watching through the Truth API get a signed webhook per change. */
+/** Live watches on a company, from keys that haven't been revoked. */
+export function watchersOf(env: Env, number: string) {
+  return all<any>(env, `SELECT s.* FROM watch_number n JOIN watch_subscription s ON s.id = n.watch_id JOIN api_key k ON k.id = s.key_id
+    WHERE n.number = ? AND s.deleted_at IS NULL AND k.revoked_at IS NULL`, number);
+}
+
 async function notifyWatchSubscribers(env: Env, prev: CompanyRecord, next: CompanyRecord, eventId: string) {
-  const subs = await all<any>(env, "SELECT s.* FROM watch_number n JOIN watch_subscription s ON s.id = n.watch_id WHERE n.number = ? AND s.deleted_at IS NULL", next.number);
+  const subs = await watchersOf(env, next.number);
   if (!subs.length) return;
   const findings = runChecks(prev, next);
   if (!findings.length) return;

@@ -16,8 +16,12 @@ export class UpstreamError extends Error {
  * imports, first reads) may use 60% of a five-minute window, alerts from the stream 85%, and live checks (a person
  * or an agent waiting on the answer) the rest. A busy Monday can no longer lock out a live check or a liquidation alert.
  */
-export type Lane = "live" | "alert" | "bulk";
-export const LANE_SHARE: Record<Lane, number> = { bulk: 0.6, alert: 0.85, live: 0.97 };
+export type Lane = "live" | "alert" | "bulk" | "api";
+/**
+ * Outside callers (the Truth API, MCP, the tool gateway) have the smallest lane: anyone can get a key, so their
+ * traffic may never crowd out a customer's alerts or a person waiting on a check.
+ */
+export const LANE_SHARE: Record<Lane, number> = { api: 0.35, bulk: 0.6, alert: 0.85, live: 0.97 };
 /** The same env, with register calls counted against another lane. */
 export const withLane = <E extends Env>(env: E, lane: Lane): E => ({ ...env, REG_LANE: lane });
 

@@ -7,13 +7,19 @@ import { type Env, one, run } from "../lib/db";
 import { body, bad, notFound, HttpError } from "../lib/http";
 import { withPayment, prices, usdcFor, x402On } from "../lib/pay";
 import { resolveInput, checkInput, profileFields } from "../lib/truth";
-import { companyCached } from "../lib/registers";
+import { companyCached, withLane } from "../lib/registers";
 import { getTool, runTool, catalogue, builtin, creditPublisher, PUBLIC_TOOLS, type Tool } from "../lib/tools";
 import { agentLoop, MAX_STEPS, newLoopOut } from "../lib/agents";
 import { signingKey, publicJwk } from "../lib/crypto";
 import { safeOutboundUrl } from "../lib/web";
 
 export const truth = new Hono<{ Bindings: Env }>();
+/** Outside callers draw on their own, smaller share of the Companies House budget (see LANE_SHARE). */
+const apiLane = async (c: Context<{ Bindings: Env }>, next: () => Promise<void>) => { c.env = withLane(c.env, "api"); await next(); };
+truth.use("*", apiLane);
+
+/** Most companies one API key may watch at once, across its watches. */
+export const WATCH_MAX_PER_KEY = 1000;
 
 truth.get("/prices", (c) => c.json({ currency: { pence: "GBP pence for API-key credits", usdc_atomic: "USDC, 6 decimals, for x402" }, free_calls_per_month: 100, prices: prices(c.env) }));
 
@@ -39,6 +45,8 @@ async function watchOp(env: Env, keyId: string, raw: string[], webhook: string) 
   safeOutboundUrl(env, webhook, env.ALLOW_ANY_WEBHOOK_HOST === "true");
   const numbers = [...new Set(raw.map((n) => n.toUpperCase()))];
   if (numbers.some((n) => !NUMBER.test(n))) throw bad("Company numbers are 8 characters, for example 13985402 or SC123456.");
+  const watching = Number((await one<any>(env, "SELECT COUNT(DISTINCT n.number) AS n FROM watch_number n JOIN watch_subscription s ON s.id = n.watch_id WHERE s.key_id = ? AND s.deleted_at IS NULL", keyId))?.n || 0);
+  if (watching + numbers.length > WATCH_MAX_PER_KEY) throw new HttpError(409, "watch_limit", `One key can watch up to ${WATCH_MAX_PER_KEY} companies; this key watches ${watching}. Stop a watch first, or ask us for more.`);
   const id = newId("wch");
   await run(env, "INSERT INTO watch_subscription (id, key_id, numbers, webhook, created_at) VALUES (?,?,?,?,?)", id, keyId, JSON.stringify(numbers), webhook, nowIso());
   // One row per number, so a stream event finds its watchers by index instead of scanning every watch.
@@ -79,10 +87,11 @@ truth.post("/check", async (c) => {
 truth.post("/watch", async (c) => {
   const b = await body(c, z.object({ numbers: z.array(z.string().regex(/^[A-Z0-9]{8}$/i)).min(1).max(500), webhook: z.string().url() }));
   safeOutboundUrl(c.env, b.webhook, c.env.ALLOW_ANY_WEBHOOK_HOST === "true");
+  // Watching runs for as long as the watch lasts, so it's never one of the free calls.
   const r = await withPayment(c, "watch", async (p) => {
     if (!p.keyId) throw bad(WATCH_NEEDS_KEY);
     return { out: await watchOp(c.env, p.keyId, b.numbers, b.webhook) };
-  });
+  }, { freeTier: false });
   return c.json(r.out, 201);
 });
 
@@ -118,7 +127,7 @@ export async function callTool(c: Context<{ Bindings: Env }>, slugIn: string, in
     const r = await withPayment(c, "watch", async (p) => {
       if (!p.keyId) throw bad(WATCH_NEEDS_KEY);
       return { out: await watchOp(c.env, p.keyId, nums, input.webhook) };
-    });
+    }, { freeTier: false });
     return r.out;
   }
   const tool = await getTool(c.env, slug);
@@ -211,6 +220,7 @@ discovery.get("/llms.txt", async (c) => {
  * Every tool in the catalogue, billed to the API key in the Authorization header like the REST API;
  * initialize and tools/list need no key. */
 export const mcp = new Hono<{ Bindings: Env }>();
+mcp.use("*", apiLane);
 const rpc = (id: unknown, result: unknown) => ({ jsonrpc: "2.0", id, result });
 const rpcErr = (id: unknown, code: number, message: string) => ({ jsonrpc: "2.0", id, error: { code, message } });
 

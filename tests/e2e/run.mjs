@@ -308,11 +308,12 @@ async function main() {
     ok(!tampered, "tampering detected");
   });
 
-  let devKey;
+  let devKey, devKeyId;
   await check("Truth API: developer key by email, free calls, profile with provenance on every field", async () => {
     const r = await call("POST", "/api/public/api-keys", { email: "dev@builder.example" }, { cookie: false });
     ok(r.status === 201, r.text);
     devKey = (await waitFor(async () => (await outbox()).find((m) => m.to_addr === "dev@builder.example"), "key email")).body.match(/ah_live_[A-Za-z0-9_-]+/)[0];
+    devKeyId = r.json.id;
     const p = await call("GET", "/v1/companies/13985402", undefined, { cookie: false, headers: { Authorization: "Bearer " + devKey } });
     ok(p.status === 200, p.text);
     const fields = Object.entries(p.json).filter(([k]) => !["response_id", "signature", "key_id"].includes(k));
@@ -340,6 +341,10 @@ async function main() {
   });
 
   await check("Truth API: watch sends a signed webhook when a watched company changes", async () => {
+    // Watching isn't one of the free calls: refused until the key has credit, then bought by card.
+    const free = await call("POST", "/v1/watch", { numbers: ["13985402"], webhook: MOCK + "/devhook/builder" }, { cookie: false, headers: { Authorization: "Bearer " + devKey } });
+    ok(free.status === 402 && free.json.error.code === "credits_exhausted", free.text);
+    ok((await stripeEvent({ id: "evt_credits_1", type: "checkout.session.completed", data: { object: { id: "cs_credits_1", mode: "payment", payment_status: "paid", amount_total: 1000, metadata: { key_id: devKeyId } } } })).status === 200, "credits bought");
     const w = await call("POST", "/v1/watch", { numbers: ["13985402"], webhook: MOCK + "/devhook/builder" }, { cookie: false, headers: { Authorization: "Bearer " + devKey } });
     ok(w.status === 201, w.text);
     await sleep(3000);

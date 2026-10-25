@@ -241,3 +241,61 @@ describe("S3 auto-reply binding", () => {
     expect((await proposeEmail(env, ctx, { to: "buyer@client.test", subject: "Re: Hi", body: "Happy to quote", message_id: "m_known" })).status).toBe("sent");
   });
 });
+
+/* ---------- S5: outside callers get their own share of the register budget; watching is paid ---------- */
+import { LANE_SHARE } from "../../apps/api/src/lib/registers";
+describe("S5 tool gateway limits", () => {
+  const key = async (raw: any, id = "key_1", raw_ = "ah_live_test_key_value") => { raw.prepare("INSERT INTO api_key (id, key_hash, owner_email, kind, created_at) VALUES (?,?,?,?,?)").run(id, await (await import("../../packages/core/util")).sha256Hex(raw_), "dev@x.test", "credits", iso()); return raw_; };
+  const auth = (k: string) => ({ "Content-Type": "application/json", Authorization: "Bearer " + k });
+
+  it("the API lane stays below the share kept for stream alerts", () => {
+    expect(LANE_SHARE.api).toBeLessThan(LANE_SHARE.alert);
+    expect(LANE_SHARE.api).toBeLessThanOrEqual(0.4);
+  });
+
+  it("API calls stop at the API lane's share of the Companies House window", async () => {
+    const { raw, env } = testEnv({ CH_API_BASE: "https://ch.test", CH_API_KEY: "k", CH_RATE_LIMIT: "100" });
+    const k = await key(raw);
+    raw.prepare("INSERT INTO rate_window (bucket, count) VALUES (?, ?)").run("ch:" + Math.floor(Date.now() / 300000), Math.floor(100 * LANE_SHARE.api));
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    const r = await call(env, "/v1/resolve", { method: "POST", headers: auth(k), body: JSON.stringify({ input: "Acme Widgets Ltd" }) });
+    expect(r.status).toBe(503);
+  });
+
+  it("watching isn't covered by the free calls", async () => {
+    const { raw, env } = testEnv();
+    const k = await key(raw);
+    const r = await call(env, "/v1/watch", { method: "POST", headers: auth(k), body: JSON.stringify({ numbers: ["01234567"], webhook: "https://hook.example/x" }) });
+    expect(r.status).toBe(402);
+    expect((await r.json() as any).error.code).toBe("credits_exhausted");
+  });
+
+  it("a revoked key's watches get no more webhooks", async () => {
+    const { raw, env } = testEnv();
+    raw.prepare("INSERT INTO api_key (id, key_hash, kind, created_at, revoked_at) VALUES ('key_r', 'h', 'credits', ?, ?)").run(iso(), iso());
+    raw.prepare("INSERT INTO watch_subscription (id, key_id, numbers, webhook, created_at) VALUES ('w1', 'key_r', '[\"01234567\"]', 'https://hook.example/x', ?)").run(iso());
+    raw.prepare("INSERT INTO watch_number (watch_id, number) VALUES ('w1', '01234567')").run();
+    const { watchersOf } = await import("../../apps/api/src/lib/process");
+    expect(await watchersOf(env, "01234567")).toEqual([]);
+  });
+});
+
+/* ---------- S6: sign-up proves the address before a workspace exists ---------- */
+describe("S6 sign-up confirmation", () => {
+  const kv = () => { const m = new Map<string, string>(); return { get: async (k: string, t?: string) => (m.has(k) ? (t === "json" ? JSON.parse(m.get(k)!) : m.get(k)) : null), put: async (k: string, v: string) => { m.set(k, v); }, delete: async (k: string) => { m.delete(k); } }; };
+  it("creates the workspace only when the emailed link is used", async () => {
+    const t = testEnv({ COOKIE_SECURE: "false" });
+    const env = { ...t.env, CACHE: kv() };
+    const r = await post(env, "/api/public/signup", { business: "Brightwork", email: "dana@bright.test", what: "Cleaning" });
+    expect(r.status).toBe(201);
+    expect(t.raw.prepare("SELECT COUNT(*) AS n FROM org").get()).toEqual({ n: 0 });
+    const mail = t.raw.prepare("SELECT subject, body FROM dev_outbox WHERE to_addr = 'dana@bright.test'").get() as any;
+    expect(mail.subject).toMatch(/Confirm/);
+    const token = mail.body.match(/token=([A-Za-z0-9_-]+)/)[1];
+    const s = await post(env, "/api/auth/session", { token });
+    expect(s.status).toBe(200);
+    expect(s.headers.get("set-cookie")).toContain("ah_session=");
+    expect(t.raw.prepare("SELECT name, plan FROM org").get()).toEqual({ name: "Brightwork", plan: "trial" });
+    expect(t.raw.prepare("SELECT COUNT(*) AS n FROM dev_outbox WHERE to_addr = 'dana@bright.test'").get()).toEqual({ n: 1 });
+  });
+});

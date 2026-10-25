@@ -126,6 +126,7 @@ describe("the job queue", () => {
 describe("watches and prospects", () => {
   it("finds a Truth API watch by number, by index", async () => {
     const { raw, env } = testEnv();
+    raw.prepare("INSERT INTO api_key (id, key_hash, kind, created_at) VALUES ('key_1', 'h', 'credits', ?)").run(iso());
     raw.prepare("INSERT INTO watch_subscription (id, key_id, numbers, webhook, created_at) VALUES ('wch_1', 'key_1', '[\"01234567\"]', 'https://x.test', ?)").run(iso());
     raw.prepare("INSERT INTO watch_number (watch_id, number) VALUES ('wch_1', '01234567')").run();
     expect(await isWatched(env, "01234567")).toBe(true);

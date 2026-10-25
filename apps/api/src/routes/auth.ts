@@ -7,6 +7,8 @@ import { type Env, one, run, audit, Scoped } from "../lib/db";
 import { body, HttpError, forbidden } from "../lib/http";
 import { sendMail } from "../lib/mail";
 import { limitIp, limitEmail } from "../lib/limits";
+import { createOrg } from "../lib/orgs";
+import { SIGNUP_PREFIX } from "./public";
 
 export type Vars = { user: { id: string; email: string; name: string | null }; orgId: string; role: "owner" | "manager" | "viewer"; db: Scoped };
 const COOKIE = "ah_session";
@@ -35,6 +37,12 @@ auth.post("/session", async (c) => {
   const now = nowIso();
   const link = await one<any>(c.env, "UPDATE magic_link SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? RETURNING email", now, hash, now);
   if (!link) throw new HttpError(400, "link_expired", "That sign-in link has expired or been used. Request a new one.");
+  // A self-serve sign-up's confirmation link: the address is proved now, so create the workspace and sign in.
+  const pending = await c.env.CACHE.get(SIGNUP_PREFIX + hash, "json") as any;
+  if (pending && pending.owner_email === link.email && !(await one(c.env, "SELECT 1 AS x FROM user u JOIN membership m ON m.user_id = u.id WHERE u.email = ?", link.email))) {
+    await createOrg(c.env, { ...pending, plan: "trial", by: "signup", welcome: false });
+    await c.env.CACHE.delete?.(SIGNUP_PREFIX + hash);
+  }
   const user = await one<any>(c.env, "SELECT * FROM user WHERE email = ?", link.email);
   if (!user) throw new HttpError(400, "link_expired", "That sign-in link has expired or been used. Request a new one.");
   const m = await one<any>(c.env, "SELECT * FROM membership WHERE user_id = ? ORDER BY role = 'owner' DESC LIMIT 1", user.id);
