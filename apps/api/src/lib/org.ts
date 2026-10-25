@@ -7,7 +7,8 @@ import type { Blueprint } from "../../../../packages/core/swarms";
 import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
 import { emit, loadSwarm, specFor, syncSwarm } from "./swarm";
-import { hireAgent, setAgentStatus, nextRunAt, startRun, spreadMinute } from "./agents";
+import { hireAgent, setAgentStatus, nextRunAt, startRun, spreadMinute, estimateRun, modeFor } from "./agents";
+import { MODES } from "../../../../config/model-pricing";
 import { badgesOf } from "./orgbase";
 
 export type OrgView = OrgAgent & { key: string; template: string; engine: string; tools: number; last_run_at: string | null; next_run_at: string | null; status: string };
@@ -131,16 +132,24 @@ export async function applyOrg(env: Env, orgId: string, swarmId: string, user: {
 }
 
 /** A task you give an agent yourself, from the Org tab. It starts straight away if the agent is running. */
-export async function ownerTask(env: Env, orgId: string, swarmId: string, user: { id: string }, agentId: string, title: string, detail?: string) {
+export async function ownerTask(env: Env, orgId: string, swarmId: string, user: { id: string }, agentId: string, title: string, detail?: string, opts: { mode?: string | null; confirm?: boolean } = {}) {
   await loadSwarm(env, orgId, swarmId);
   const a = await one<any>(env, "SELECT * FROM agent WHERE id = ? AND swarm_id = ? AND org_id = ?", agentId, swarmId, orgId);
   if (!a) throw new HttpError(404, "not_found", "Agent not found.");
   if (specFor(a)?.engine !== "llm") throw new HttpError(409, "not_runnable", `${a.name} runs from the registers on its own and can't take tasks.`);
+  // A task likely to cost more than the business's threshold asks first, before anything is recorded.
+  const mode = modeFor(a, opts.mode);
+  if (a.status === "running" && !opts.confirm) {
+    const est = await estimateRun(env, orgId, a, mode, `${title} ${detail || ""}`);
+    const org = await one<any>(env, "SELECT confirm_over FROM org WHERE id = ?", orgId);
+    if (est.high > Number(org?.confirm_over ?? 100)) throw new HttpError(409, "needs_confirmation", `This task is likely to use ${est.low}–${est.high} credits in ${MODES[mode].name} mode. Confirm to go ahead.`,
+      { estimate: { low: est.low, high: est.high, mode, from: est.from }, threshold: Number(org?.confirm_over ?? 100) });
+  }
   const id = newId("tsk"), now = nowIso();
-  await run(env, "INSERT INTO agent_task (id, org_id, swarm_id, agent_id, assigned_by, title, detail, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)", id, orgId, swarmId, a.id, "owner", title, detail || null, "todo", now, now);
+  await run(env, "INSERT INTO agent_task (id, org_id, swarm_id, agent_id, assigned_by, title, detail, status, created_at, updated_at, mode) VALUES (?,?,?,?,?,?,?,?,?,?,?)", id, orgId, swarmId, a.id, "owner", title, detail || null, "todo", now, now, mode);
   let runId: string | null = null;
   if (a.status === "running") {
-    runId = await startRun(env, orgId, a.id, "manual", `Task from the owner (task id ${id}): ${title}${detail ? `\nDetail: ${detail}` : ""}\nWhen you're done, finish-task with the task id and a one-line result.`);
+    runId = await startRun(env, orgId, a.id, "manual", `Task from the owner (task id ${id}): ${title}${detail ? `\nDetail: ${detail}` : ""}\nWhen you're done, finish-task with the task id and a one-line result.`, { mode, confirm: true });
     await run(env, "UPDATE agent_task SET status = 'doing', run_id = ?, attempts = 1, updated_at = ? WHERE id = ?", runId, nowIso(), id);
   }
   await emit(env, { orgId, swarmId, agentId: a.id, kind: "task", summary: `You gave ${a.name}: ${title}`, detail: { task_id: id } });

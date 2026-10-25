@@ -1,5 +1,6 @@
 // Swarms: a business's agents set up together, with the stages work moves through and the numbers on its Floor.
 // One source for the API (what a blueprint may contain) and the website (preset cards, the Floor's labels).
+import { recommend } from "./modes";
 
 export type Rhythm = "weekdays" | "daily" | "weekly" | "monthly" | "on_demand" | "on_event";
 export type SourceKind = "lead" | "invoice" | "message";
@@ -46,7 +47,7 @@ export const KPIS: Record<string, { label: string; unit: "count" | "pence" | "da
   inbox_waiting: { label: "Messages waiting", unit: "count" },
   open_alerts: { label: "Open alerts", unit: "count" },
   tasks_open: { label: "Tasks for you", unit: "count" },
-  actions_month: { label: "Actions this month", unit: "count" },
+  credits_month: { label: "Credits used this month", unit: "count" },
 };
 
 /** Tools every swarm agent gets on top of its own: the work board, handoffs and the CRM. */
@@ -58,9 +59,8 @@ export const CUSTOM_TOOLS = [
   "list-leads", "save-lead", "list-invoices", "list-inbox", "triage-message", "propose-email", "create-task", "notify-owner", "recent-activity",
 ];
 
-/** Runs a month for each rhythm, and tool calls a typical run makes: for the price preview. */
+/** Runs a month for each rhythm: for the credits preview. */
 export const RUNS_A_MONTH: Record<Rhythm, number> = { weekdays: 22, daily: 30, weekly: 4, monthly: 1, on_demand: 8, on_event: 30 };
-export const ACTIONS_PER_RUN = 6;
 
 export type Preset = { key: string; title: string; for: string; summary: string; locked?: string; blueprint: Blueprint };
 
@@ -140,7 +140,7 @@ Finish with a one-line summary.`,
         { key: "closed", name: "Closed", agent: "risk", done: true },
       ],
       handoffs: [{ from: "scanner", to: "analyst", when: "A signal is worth a thesis" }, { from: "analyst", to: "risk", when: "A thesis becomes a paper position" }],
-      kpis: ["tasks_open", "actions_month"],
+      kpis: ["tasks_open", "credits_month"],
       skin: "terminal", needs: ["Market data"],
     },
   },
@@ -180,9 +180,12 @@ export function nearestPreset(description: string): Preset {
   return preset("sales-floor")!;
 }
 
-/** Expected actions a month for a blueprint, for the preview. */
-export function estimateActions(b: Pick<Blueprint, "agents">) {
-  return b.agents.reduce((n, a) => n + RUNS_A_MONTH[a.rhythm] * ACTIONS_PER_RUN, 0);
+/** Expected credits a month for a blueprint, for the preview: each agent's runs in the mode its job suits, mid-range. */
+export function estimateCredits(b: Pick<Blueprint, "agents">) {
+  return b.agents.reduce((n, a) => {
+    const r = recommend({ template: a.template, text: a.template === "custom" ? `${a.role} ${a.instructions || ""}` : null });
+    return n + RUNS_A_MONTH[a.rhythm] * (r.low + r.high) / 2;
+  }, 0) | 0;
 }
 
 /** Every swarm is led by an orchestrator. Blueprints without one get this one at the top. */

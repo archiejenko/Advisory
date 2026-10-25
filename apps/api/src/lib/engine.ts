@@ -3,11 +3,13 @@
 import { newId, nowIso } from "../../../../packages/core/util";
 import { addRule } from "./today";
 import { TEMPLATES, PLANS } from "../../../../packages/core/templates";
-import { PRESETS, KPIS, CUSTOM_TOOLS, SWARM_TOOLS, estimateActions, nearestPreset, withOrchestrator, type Blueprint } from "../../../../packages/core/swarms";
+import { PRESETS, KPIS, CUSTOM_TOOLS, SWARM_TOOLS, estimateCredits, nearestPreset, withOrchestrator, type Blueprint } from "../../../../packages/core/swarms";
 import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
-import { claude, modelCost, type Msg } from "./llm";
-import { budgetProblem, requireBudget } from "./budget";
+import { claude, type Msg } from "./llm";
+import { creditsProblem, requireCredits, chargeSystem } from "./credits";
+import { tokensOf, addTokens, noTokens } from "../../../../packages/core/credits";
+import { MODES, SYSTEM_MODE } from "../../../../config/model-pricing";
 import { hireAgent, startRun, setAgentStatus } from "./agents";
 import { orgAccess, accessError } from "./billing";
 import { checkBlueprint, emit, syncSwarm, specFor, loadSwarm, kpi } from "./swarm";
@@ -38,11 +40,11 @@ export async function previewFor(env: Env, orgId: string, raw: Blueprint) {
   const adopt = await adoptions(env, orgId, bp);
   const counted = bp.agents.filter((a) => a.template !== "orchestrator");
   const hires = counted.length - Object.keys(adopt).length;
-  const actions = estimateActions(bp);
+  const credits = estimateCredits(bp);
   return {
     agents: counted.length, orchestrator: true, reuses: Object.entries(adopt).map(([key, a]) => ({ key, agent: a.name })), new_agents: hires,
     plan: plan.name, plan_agents: plan.agents, agents_after: existing + hires, fits: existing + hires <= plan.agents,
-    actions_a_month: actions, allowance: plan.actions, within_allowance: actions <= plan.actions,
+    credits_a_month: credits, plan_credits: plan.credits, within_plan: credits <= plan.credits,
     needs: bp.needs,
   };
 }
@@ -162,22 +164,23 @@ export async function planBlueprint(env: Env, orgId: string, description: string
   const org = await one<any>(env, "SELECT name, profile, plan FROM org WHERE id = ?", orgId);
   const plan = PLANS[org?.plan || "trial"] || PLANS.trial;
   const existing = Number((await one<any>(env, "SELECT COUNT(*) AS n FROM agent WHERE org_id = ? AND swarm_id IS NULL", orgId))?.n || 0);
-  let bp: Blueprint | null = null, note: string | null = null, tokensIn = 0, tokensOut = 0;
-  // With this month's AI budget used, the nearest preset stands in for a drafted blueprint.
-  if (env.ANTHROPIC_API_KEY && !(await budgetProblem(env, { id: orgId, plan: org?.plan }))) {
+  let bp: Blueprint | null = null, note: string | null = null, tokens = noTokens(), requests = 0;
+  const sys = MODES[SYSTEM_MODE];
+  // With this month's credits used, the nearest preset stands in for a drafted blueprint.
+  if (env.ANTHROPIC_API_KEY && !(await creditsProblem(env, orgId))) {
     const system = plannerSystem(plan, existing);
     const messages: Msg[] = [{ role: "user", content: `Business: ${org?.name}\nProfile: ${org?.profile || "{}"}\n\nWhat they told us:\n${desc}` }];
     for (let attempt = 0; attempt < 2 && !bp; attempt++) {
       try {
-        const r = await claude(env, { system, messages, tools: [], max_tokens: 3000 });
-        tokensIn += r.usage?.input_tokens || 0; tokensOut += r.usage?.output_tokens || 0;
+        const r = await claude(env, { system, messages, tools: [], model: sys.model, effort: sys.effort, max_tokens: 8000 });
+        tokens = addTokens(tokens, tokensOf(r.usage)); requests++;
         const text = r.content.filter((x) => x.type === "text").map((x: any) => x.text).join("\n");
         const checked = checkBlueprint(parseJson(text));
         if (checked.ok) bp = checked.blueprint;
         else { messages.push({ role: "assistant", content: text }, { role: "user", content: "Fix these problems and reply with the whole corrected JSON only:\n- " + checked.errors.join("\n- ") }); }
       } catch (e: any) { console.error("blueprint generation failed", e?.message || e); break; }
     }
-    if (tokensIn) await run(env, "INSERT INTO usage_event (id, org_id, kind, units, cost_pence, payment, at) VALUES (?,?,?,1,?,'plan',?)", newId("use"), orgId, "swarm_plan", modelCost(env, tokensIn, tokensOut), nowIso());
+    if (requests) await chargeSystem(env, orgId, sys.model, tokens, requests, "Swarm draft");
   }
   let source: "generated" | "preset" = "generated", presetKey: string | null = null;
   if (!bp) {
@@ -247,9 +250,10 @@ Never approve, send or delete anything: say the owner must do that on screen.
 Agents: ${agents.map((a) => `${a.swarm_key} (${a.name}${a.status !== "running" ? ", paused" : ""}): ${a.role || ""}`).join("; ")}.
 Facts: ${facts.join("; ")}; emails waiting for approval: ${waiting}.
 Recent: ${recent.map((r) => r.summary).join(" | ")}`;
-  await requireBudget(env, { id: orgId, plan: (await one<any>(env, "SELECT plan FROM org WHERE id = ?", orgId))?.plan });
-  const r = await claude(env, { system, messages: [{ role: "user", content: q }], tools: [], max_tokens: 600 });
-  await run(env, "INSERT INTO usage_event (id, org_id, kind, units, cost_pence, payment, at) VALUES (?,?,?,1,?,'plan',?)", newId("use"), orgId, "router", modelCost(env, r.usage?.input_tokens || 0, r.usage?.output_tokens || 0), nowIso());
+  await requireCredits(env, orgId);
+  const sys = MODES[SYSTEM_MODE];
+  const r = await claude(env, { system, messages: [{ role: "user", content: q }], tools: [], model: sys.model, effort: "low", max_tokens: 2000 });
+  await chargeSystem(env, orgId, sys.model, tokensOf(r.usage), 1, "Command bar");
   const j: any = parseJson(r.content.filter((x) => x.type === "text").map((x: any) => x.text).join("\n")) || {};
   if (j.type === "instruct") {
     const a = find(agents, String(j.agent || ""));

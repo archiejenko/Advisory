@@ -3,6 +3,8 @@
 import { newId, nowIso } from "../../../../packages/core/util";
 import { type Env, one, run, audit } from "./db";
 import { HttpError } from "./http";
+import { grantPlanStart, grantTopup, grantUpgrade, ensurePeriod, periodOf } from "./credits";
+import { PLAN_CREDITS } from "../../../../config/model-pricing";
 
 export const TRIAL_DAYS = 14;
 export const PAST_DUE_GRACE_DAYS = 7;
@@ -56,13 +58,20 @@ export async function applyStripeEvent(env: Env, ev: any) {
         status='active', updated_at=excluded.updated_at`,
       orgId, o.customer, o.subscription, now, now);
     const plan = PAID_PLANS.includes(o.metadata?.plan) ? o.metadata.plan : null;
+    // This month's plan credits first, prorated like the first invoice (billing is anchored to the 1st), so the
+    // month's full grant isn't written in between.
+    if (plan) await grantPlanStart(env, orgId, plan);
     // A new subscription brings a cancelled workspace back (unless its data has already been purged).
-    await run(env, "UPDATE org SET plan = COALESCE(?, plan), cancelled_at = NULL WHERE id = ? AND purged_at IS NULL", plan, orgId);
+    await run(env, "UPDATE org SET plan = COALESCE(?, plan), pending_plan = NULL, cancelled_at = NULL WHERE id = ? AND purged_at IS NULL", plan, orgId);
     await audit(env, orgId, "stripe", "subscription_started", o.subscription, { plan });
     return;
   }
   // Credits only once the money has arrived: card payments are "paid" at completion; slower methods send
   // async_payment_succeeded later.
+  if ((ev.type === "checkout.session.completed" || ev.type === "checkout.session.async_payment_succeeded") && o.mode === "payment" && o.metadata?.kind === "topup" && o.metadata?.org_id && o.payment_status === "paid") {
+    if (await one(env, "SELECT id FROM org WHERE id = ? AND purged_at IS NULL", o.metadata.org_id)) await grantTopup(env, o.metadata.org_id, o.id);
+    return;
+  }
   if ((ev.type === "checkout.session.completed" || ev.type === "checkout.session.async_payment_succeeded") && o.mode === "payment" && o.metadata?.key_id && o.payment_status === "paid") {
     await run(env, "INSERT INTO credit_ledger (id, key_id, delta_pence, reason, ref, at) VALUES (?,?,?,?,?,?) ON CONFLICT(reason, ref) DO NOTHING",
       newId("cl"), o.metadata.key_id, o.amount_total, "purchase", o.id, now);
@@ -82,9 +91,19 @@ export async function applyStripeEvent(env: Env, ev: any) {
       await audit(env, sub.org_id, "stripe", "subscription_cancelled", o.id);
       return;
     }
-    // A plan change in the customer portal: follow the price on the subscription.
+    // A plan change: follow the price on the subscription. An upgrade gets its extra credits for the rest of the
+    // month (the same ref the upgrade route uses, so it's granted once whichever arrives first). A downgrade only
+    // reaches here at the 1st, from its schedule, and the reset has applied it already.
     const plan = planForPrice(env, o.items?.data?.[0]?.price?.id ?? o.plan?.id);
-    if (plan) await run(env, "UPDATE org SET plan = ? WHERE id = ?", plan, sub.org_id);
+    if (plan) {
+      const org = await one<any>(env, "SELECT plan FROM org WHERE id = ?", sub.org_id);
+      if (org && org.plan !== plan && (PLAN_CREDITS[plan] || 0) > (PLAN_CREDITS[org.plan] || 0)) await grantUpgrade(env, sub.org_id, org.plan, plan, upgradeRef(o.id, plan));
+      await run(env, "UPDATE org SET plan = ?, pending_plan = CASE WHEN pending_plan = ? THEN NULL ELSE pending_plan END WHERE id = ?", plan, plan, sub.org_id);
+      await ensurePeriod(env, sub.org_id);
+    }
     if (sub.status !== status) await audit(env, sub.org_id, "stripe", "subscription_status", o.id, { from: sub.status, to: status, plan });
   }
 }
+
+/** One upgrade to one plan in one month, whether the route or the webhook records it first. */
+export const upgradeRef = (subscription: string, plan: string) => `${subscription}:${plan}:${periodOf()}`;

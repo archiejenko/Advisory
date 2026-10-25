@@ -136,33 +136,35 @@ describe("S11 inbound sender authentication", () => {
   });
 });
 
-/* ---------- S1: a monthly model budget per plan, and a cap on runs an hour ---------- */
+/* ---------- S1: the AI Team stops when credits run out, and a cap on runs an hour ---------- */
 import { startRun, runAgent } from "../../apps/api/src/lib/agents";
-import { modelBudget } from "../../apps/api/src/lib/budget";
+import { chargeRun } from "../../apps/api/src/lib/credits";
 describe("S1 model spend", () => {
-  const spent = (raw: any, orgId: string, pence: number) => raw.prepare("INSERT INTO usage_event (id, org_id, kind, units, cost_pence, payment, payment_ref, at) VALUES (?, ?, 'agent_run', 1, ?, 'plan', ?, ?)").run("use_" + pence + Math.random(), orgId, pence, "run_old" + Math.random(), iso());
+  const spent = (env: any, orgId: string, credits: number) => chargeRun(env, { orgId, runId: "run_old" + Math.random(), model: "claude-sonnet-5-5", cost: credits, tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 }, requests: 1 });
 
-  it("refuses to start a run once the month's model budget is spent", async () => {
+  it("refuses to start a run once the credits are used", async () => {
     const { raw, env } = testEnv({ ANTHROPIC_API_KEY: "k" });
     const org = seedOrg(raw, { plan: "trial" });
     const agent = seedAgent(raw, org.id, { template: "research" });
-    spent(raw, org.id, modelBudget(env, "trial"));
-    await expect(startRun(env, org.id, agent, "manual", "Who is Acme?")).rejects.toMatchObject({ status: 402, code: "budget_used" });
+    await spent(env, org.id, 150);
+    await expect(startRun(env, org.id, agent, "manual", "Who is Acme?")).rejects.toMatchObject({ status: 402, code: "credits_used" });
   });
 
-  it("stops a run partway when its spend crosses the budget", async () => {
-    const { raw, env } = testEnv({ ANTHROPIC_API_KEY: "k", CLAUDE_RETRIES: "0", MODEL_BUDGETS: JSON.stringify({ growth: 50 }) });
-    const org = seedOrg(raw);
+  it("stops a run partway when its use crosses what's left", async () => {
+    const { raw, env } = testEnv({ ANTHROPIC_API_KEY: "k", CLAUDE_RETRIES: "0" });
+    const org = seedOrg(raw, { plan: "trial" }); // 150 credits
     const agent = seedAgent(raw, org.id, { template: "research" });
-    raw.prepare("INSERT INTO agent_run (id, org_id, agent_id, trigger, input, status, created_at) VALUES ('run_b', ?, ?, 'manual', 'Who is Acme?', 'queued', ?)").run(org.id, agent, iso());
+    raw.prepare("INSERT INTO agent_run (id, org_id, agent_id, trigger, input, status, created_at, mode, model) VALUES ('run_b', ?, ?, 'manual', 'Who is Acme?', 'queued', ?, 'standard', 'claude-sonnet-5-5')").run(org.id, agent, iso());
     let calls = 0;
-    // Every step asks for another tool and costs about 36p (100k tokens in, 10k out at the default prices).
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => { calls++; return new Response(JSON.stringify({ content: [{ type: "tool_use", id: "t" + calls, name: "business-profile", input: {} }], stop_reason: "tool_use", usage: { input_tokens: 100000, output_tokens: 10000 } }), { status: 200 }); });
+    // Every step asks for another tool and costs about 115 credits (500k tokens in, 50k out on Standard).
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => { calls++; return new Response(JSON.stringify({ content: [{ type: "tool_use", id: "t" + calls, name: "business-profile", input: {} }], stop_reason: "tool_use", usage: { input_tokens: 500000, output_tokens: 50000 } }), { status: 200 }); });
     expect(await runAgent(env, "run_b")).toBe("failed");
     const r = raw.prepare("SELECT status, steps, error FROM agent_run WHERE id = 'run_b'").get() as any;
     expect(calls).toBe(2);
     expect(r).toMatchObject({ status: "failed", steps: 2 });
-    expect(r.error).toMatch(/AI budget/);
+    expect(r.error).toMatch(/credits/);
+    // What it used is charged in full, so the balance shows as nothing left (never below zero).
+    expect((raw.prepare("SELECT credits FROM credit_entry WHERE kind = 'run' AND ref = 'run_b'").get() as any).credits).toBeCloseTo(-230.77, 2);
   });
 
   it("caps how many runs a business can start in an hour", async () => {

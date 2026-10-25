@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { readXlsx, XlsxError, excelDate } from "../../packages/core/xlsx";
 import { parseMessage } from "../../apps/api/src/lib/inbound";
 import { safeOutboundUrl, privateHost, readPage } from "../../apps/api/src/lib/web";
-import { claude, withCaching, modelCost } from "../../apps/api/src/lib/llm";
+import { claude, withCaching } from "../../apps/api/src/lib/llm";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -143,11 +143,5 @@ describe("Claude under load", () => {
     expect((c.messages[2].content as any[])[0].cache_control).toEqual({ type: "ephemeral" });
     expect(messages[2].content[0].cache_control).toBeUndefined();
     expect(c.messages[0].content).toBe("start");
-  });
-  it("prices cache reads and writes", () => {
-    const e = { AGENT_PRICE_IN_PENCE: "240", AGENT_PRICE_OUT_PENCE: "1200" } as any;
-    expect(modelCost(e, 1e6, 0)).toBe(240);
-    expect(modelCost(e, 0, 0, 1e6, 0)).toBe(300);
-    expect(modelCost(e, 0, 0, 0, 1e6)).toBe(24);
   });
 });

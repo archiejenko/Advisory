@@ -1,6 +1,7 @@
 // The business's own OS: which apps it runs here, which it outsources or keeps elsewhere, which features
 // are on inside each app, and how much the AI Team may do on its own. One source for the API (what agents
 // may touch) and the web (the OS Builder, the dock, the landing page).
+import { PLAN_CREDITS } from "../../config/model-pricing";
 import { FACETS, KINDS, CATEGORIES, ALWAYS_ON_AREA, facet, type Depth, type Kind } from "./os";
 
 /** here: run in the OS. outsourced: a provider does it, we keep the handover. external: kept in another system, reference only. off: not used. */
@@ -238,10 +239,11 @@ export function effectiveAutonomy(agent: string, os: Autonomy | undefined, pause
 /** The plan that fits, and a rough count of monthly actions, from the apps placed and the people using them. */
 export function estimate(cfg: Pick<OsConfig, "modules">, people = 5) {
   const here = cfg.modules.filter((m) => m.mode === "here");
-  const weight = { suggest: 15, approve: 40, auto: 120 } as const;
-  const actions = here.reduce((n, m) => n + weight[m.autonomy], 0) + cfg.modules.filter((m) => m.mode === "outsourced").length * 10;
-  const plan = people > 25 || actions > 2000 ? "scale" : people > 3 || actions > 500 ? "growth" : "starter";
-  return { plan, apps: here.length, outsourced: cfg.modules.filter((m) => m.mode === "outsourced").length, actions };
+  // Rough credits a month the AI Team uses on each app, by how much it does there on its own.
+  const weight = { suggest: 40, approve: 100, auto: 300 } as const;
+  const credits = here.reduce((n, m) => n + weight[m.autonomy], 0) + cfg.modules.filter((m) => m.mode === "outsourced").length * 25;
+  const plan = people > 25 || credits > PLAN_CREDITS.growth ? "scale" : people > 3 || credits > PLAN_CREDITS.starter ? "growth" : "starter";
+  return { plan, apps: here.length, outsourced: cfg.modules.filter((m) => m.mode === "outsourced").length, credits };
 }
 
 /** The library as the builder shows it: categories of apps, each with its features. */

@@ -3,6 +3,7 @@ import { newId, nowIso, randomToken, sha256Hex } from "../../../../packages/core
 import { type Env, one, run, audit } from "./db";
 import { sendMail } from "./mail";
 import { hireAgent } from "./agents";
+import { ensurePeriod } from "./credits";
 
 const slug = (s: string) => s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "team";
 
@@ -28,6 +29,8 @@ export async function createOrg(env: Env, o: { name: string; owner_email: string
     env.DB.prepare("INSERT INTO api_key (id, key_hash, org_id, kind, created_at) VALUES (?,?,?,'internal',?)").bind(newId("key"), await sha256Hex(randomToken(32)), orgId, now),
     ...(o.welcome === false ? [] : [env.DB.prepare("INSERT INTO magic_link (token_hash, email, expires_at) VALUES (?,?,?)").bind(await sha256Hex(token), email, new Date(Date.now() + 7 * 864e5).toISOString())]),
   ]);
+  // The trial's credits (or a pilot's first month) are on the ledger from the start.
+  await ensurePeriod(env, orgId);
   const u = await one<any>(env, "SELECT id FROM user WHERE email = ?", email);
   for (const t of o.agents || []) {
     try { await hireAgent(env, orgId, u.id, { template: t }); } catch (e: any) { console.error("could not hire", t, "for", orgId, e?.message || e); }

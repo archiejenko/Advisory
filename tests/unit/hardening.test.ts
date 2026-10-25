@@ -2,7 +2,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { testEnv, seedOrg, seedAgent } from "./d1";
 import { proposeEmail } from "../../apps/api/src/lib/actions";
-import { claimAction, sweepRuns, runAgent, startRun, hireAgent, dueAgents } from "../../apps/api/src/lib/agents";
+import { sweepRuns, runAgent, startRun, hireAgent, dueAgents } from "../../apps/api/src/lib/agents";
+import { chargeRun } from "../../apps/api/src/lib/credits";
 import { accessProblem, applyStripeEvent, PAST_DUE_GRACE_DAYS } from "../../apps/api/src/lib/billing";
 import { debitCredits, releasePayment } from "../../apps/api/src/lib/pay";
 import { purgeOrg, retention, ORG_TABLES } from "../../apps/api/src/lib/jobs";
@@ -203,21 +204,23 @@ describe("retention", () => {
 
 /* ---------- Runtime ---------- */
 describe("agent runtime", () => {
-  it("claims actions atomically against the plan and the agent's cap", async () => {
+  it("charges concurrent runs atomically: the month's plan credits are never spent twice", async () => {
     const { raw, env } = testEnv();
-    const org = seedOrg(raw, { plan: "starter" }); // 300 actions a month
-    const agent = seedAgent(raw, org.id, { cap: 3 });
-    const claim = () => claimAction(env, { orgId: org.id, plan: "starter", agentId: agent, cap: 3, runId: "run_x", tool: "read-page" });
-    const got = await Promise.all(Array.from({ length: 6 }, claim));
-    expect(got.filter(Boolean).length).toBe(3);
-    expect((raw.prepare("SELECT COUNT(*) AS n FROM usage_event WHERE agent_id = ? AND kind = 'agent_action'").get(agent) as any).n).toBe(3);
+    const org = seedOrg(raw, { plan: "starter" }); // 1,500 credits a month
+    const agent = seedAgent(raw, org.id);
+    const tokens = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+    const charge = (i: number) => chargeRun(env, { orgId: org.id, runId: "run_" + i, agentId: agent, model: "claude-opus-5-5", mode: "deep", cost: 400, tokens, requests: 1 });
+    await Promise.all(Array.from({ length: 6 }, (_, i) => charge(i)));
+    await charge(0); // a retried settle charges nothing more
+    const r = raw.prepare("SELECT COUNT(*) AS n, SUM(from_plan) AS plan, SUM(from_topup) AS topup FROM credit_entry WHERE org_id = ? AND kind = 'run'").get(org.id) as any;
+    expect(r).toEqual({ n: 6, plan: -1500, topup: -900 });
   });
 
   it("fails stuck runs (recording their cost once) and re-queues lost ones", async () => {
     const { raw, env } = testEnv();
     const org = seedOrg(raw);
     const agent = seedAgent(raw, org.id);
-    raw.prepare("INSERT INTO agent_run (id, org_id, agent_id, trigger, status, cost_pence, created_at, started_at) VALUES ('run_stuck', ?, ?, 'manual', 'running', 7, ?, ?)").run(org.id, agent, iso(20 * 60000), iso(20 * 60000));
+    raw.prepare("INSERT INTO agent_run (id, org_id, agent_id, trigger, status, steps, model, mode, credits, tokens_in, tokens_out, created_at, started_at) VALUES ('run_stuck', ?, ?, 'manual', 'running', 2, 'claude-sonnet-5-5', 'standard', 7.3, 9000, 800, ?, ?)").run(org.id, agent, iso(20 * 60000), iso(20 * 60000));
     raw.prepare("INSERT INTO agent_run (id, org_id, agent_id, trigger, status, created_at, started_at) VALUES ('run_busy', ?, ?, 'manual', 'running', ?, ?)").run(org.id, agent, iso(60000), iso(60000));
     raw.prepare("INSERT INTO agent_run (id, org_id, agent_id, trigger, status, created_at) VALUES ('run_lost', ?, ?, 'manual', 'queued', ?)").run(org.id, agent, iso(40 * 60000));
     expect(await sweepRuns(env)).toEqual({ failed: 1, requeued: 1 });
@@ -226,7 +229,7 @@ describe("agent runtime", () => {
     expect(env.AGENT_JOBS.sent).toHaveLength(1);
     const runs = Object.fromEntries((raw.prepare("SELECT id, status FROM agent_run").all() as any[]).map((r) => [r.id, r.status]));
     expect(runs).toEqual({ run_stuck: "failed", run_busy: "running", run_lost: "queued" });
-    expect(raw.prepare("SELECT cost_pence FROM usage_event WHERE kind = 'agent_run' AND payment_ref = 'run_stuck'").all()).toEqual([{ cost_pence: 7 }]);
+    expect(raw.prepare("SELECT credits, mode, tokens_in FROM credit_entry WHERE kind = 'run' AND ref = 'run_stuck'").all()).toEqual([{ credits: -7.3, mode: "standard", tokens_in: 9000 }]);
     expect(env.AGENT_JOBS.sent[0]).toEqual({ type: "agent_run", run_id: "run_lost" });
   });
 
@@ -242,11 +245,11 @@ describe("agent runtime", () => {
       return new Response("bad request", { status: 400 });
     });
     expect(await runAgent(env, "run_p")).toBe("failed");
-    const r = raw.prepare("SELECT status, steps, tool_calls, cost_pence FROM agent_run WHERE id = 'run_p'").get() as any;
-    expect(r).toMatchObject({ status: "failed", steps: 1, tool_calls: 1 });
-    expect(r.cost_pence).toBeGreaterThan(0);
-    expect((raw.prepare("SELECT COUNT(*) AS n FROM usage_event WHERE kind = 'agent_action' AND agent_id = ?").get(agent) as any).n).toBe(1);
-    expect((raw.prepare("SELECT cost_pence FROM usage_event WHERE kind = 'agent_run' AND payment_ref = 'run_p'").get() as any).cost_pence).toBe(r.cost_pence);
+    const r = raw.prepare("SELECT status, steps, tool_calls, credits, tokens_in, tokens_out FROM agent_run WHERE id = 'run_p'").get() as any;
+    expect(r).toMatchObject({ status: "failed", steps: 1, tool_calls: 1, tokens_in: 1000, tokens_out: 100 });
+    expect(r.credits).toBeGreaterThan(0);
+    // The one model step is on the ledger, at the per-run minimum (it cost well under a credit).
+    expect(raw.prepare("SELECT credits, requests FROM credit_entry WHERE kind = 'run' AND ref = 'run_p'").get()).toEqual({ credits: -1, requests: 1 });
     expect(env.FILES.store.has(`runs/${org.id}/run_p.json`)).toBe(true);
   });
 });

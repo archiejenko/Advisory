@@ -11,6 +11,7 @@ import { renderReport } from "./report";
 import { sendMail } from "./mail";
 import { pruneRateWindows, hit } from "./limits";
 import { runAgent, dueAgents, sweepRuns, startDue } from "./agents";
+import { ensurePeriod, periodOf } from "./credits";
 import { safeOutboundUrl } from "./web";
 import { logError } from "./log";
 import { TRIAL_DAYS } from "./billing";
@@ -240,7 +241,7 @@ export const ORG_TABLES = [
   "agent", "agent_run", "agent_action", "lead", "task", "invoice", "inbox_message",
   "usage_event", "api_key", "session", "membership",
   "swarm", "work_item", "swarm_event", "contact", "deal", "activity", "agent_task", "house_rule",
-  "os_record", "os_channel", "os_message",
+  "os_record", "os_channel", "os_message", "credit_entry",
   "org_os", "org_module", "custom_field", "custom_app", "os_change", "org_layout",
 ] as const;
 
@@ -416,6 +417,7 @@ async function runScheduled(controller: ScheduledController, env: Env) {
   if (cron === "*/30 * * * *") return pollGazette(env);
   if (cron === "*/15 * * * *") {
     await sweepRuns(env, new Date(controller.scheduledTime));
+    await resetCredits(env, new Date(controller.scheduledTime));
     return dueAgents(env, new Date(controller.scheduledTime));
   }
   if (cron === "0 6 * * *") return reconcile(env, new Date(controller.scheduledTime));
@@ -429,4 +431,21 @@ async function runScheduled(controller: ScheduledController, env: Env) {
     return;
   }
   if (cron === "0 3 * * *") return retention(env);
+}
+
+/** Most businesses one tick brings into the new month. The rest follow on the next tick (or when they're next read). */
+export const RESETS_PER_TICK = 500;
+
+/**
+ * Plan credits reset on the 1st (UK time): lapse what's left and grant the month's credits. Each business is also
+ * brought up to date whenever its balance is read, so a missed tick only delays the entries, never the credits.
+ */
+export async function resetCredits(env: Env, now = new Date()) {
+  const period = periodOf(now);
+  const due = await all<any>(env, `SELECT o.id FROM org o WHERE o.cancelled_at IS NULL AND o.purged_at IS NULL AND o.plan != 'trial'
+    AND NOT EXISTS (SELECT 1 FROM credit_entry e WHERE e.org_id = o.id AND e.kind = 'plan_grant' AND e.ref = ?) LIMIT ?`, period, RESETS_PER_TICK);
+  for (const o of due) {
+    try { await ensurePeriod(env, o.id, now); } catch (e) { console.error("credit reset failed", o.id, e); }
+  }
+  return due.length;
 }

@@ -115,16 +115,12 @@ SENDS_LIVE = "false"
 COOKIE_SECURE = "true"
 ALLOW_ANY_WEBHOOK_HOST = "false"
 STRIPE_BASE = "https://api.stripe.com"
-AGENT_MODEL = "claude-sonnet-5-5"
 INBOUND_DOMAIN = "in.ejtech.co.uk"   # route <alias>@ this domain to the Worker for business inboxes
 TURNSTILE_SITE_KEY = ""   # public site key; set TURNSTILE_SECRET as a secret to enforce it
 # Pricing, per deployment. Model prices are pence per million tokens; cache writes/reads are multiples of the input price.
 USDC_PER_PENNY = "0.0125"          # x402 conversion for per-tool prices (80p to the dollar)
 AGENT_RUN_STEP_PENCE = "12"        # /v1/agents/run: price per model step allowed (max_steps, default 4)
-AGENT_PRICE_IN_PENCE = "240"
-AGENT_PRICE_OUT_PENCE = "1200"
-AGENT_CACHE_WRITE_X = "1.25"
-AGENT_CACHE_READ_X = "0.1"
+# Models and their rates for the AI Team's modes are in config/model-pricing.ts (1 credit = 1p of model cost).
 VOICE_SPEAKER = "angus"            # Deepgram Aura voice for spoken replies
 VOICE_LANGUAGE = "en"
 
