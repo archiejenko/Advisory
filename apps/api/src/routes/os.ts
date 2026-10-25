@@ -125,7 +125,7 @@ export function registerOsRoutes(ws: App) {
   ws.post("/os/records/:id/messages", async (c) => {
     const b = await body(c, z.object({ body: z.string().min(1).max(4000) }));
     const { channel } = await recordChannel(c.env, c.get("orgId"), c.req.param("id")!);
-    return c.json(await say(c.env, c.get("orgId"), channel, who(c), b.body), 201);
+    return c.json(await say(c.env, c.get("orgId"), channel, who(c), b.body, { canAsk: c.get("role") !== "viewer" }), 201);
   });
 
   /* ---------- Team channels ---------- */
@@ -141,6 +141,6 @@ export function registerOsRoutes(ws: App) {
   ws.post("/os/channels/:id/messages", async (c) => {
     const b = await body(c, z.object({ body: z.string().min(1).max(4000) }));
     const ch = await channelById(c.env, c.get("orgId"), c.req.param("id")!);
-    return c.json(await say(c.env, c.get("orgId"), ch, who(c), b.body), 201);
+    return c.json(await say(c.env, c.get("orgId"), ch, who(c), b.body, { canAsk: c.get("role") !== "viewer" }), 201);
   });
 }

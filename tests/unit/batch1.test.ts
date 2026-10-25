@@ -299,3 +299,32 @@ describe("S6 sign-up confirmation", () => {
     expect(t.raw.prepare("SELECT COUNT(*) AS n FROM dev_outbox WHERE to_addr = 'dana@bright.test'").get()).toEqual({ n: 1 });
   });
 });
+
+/* ---------- S9: only a manager or owner can start an agent by @mentioning it; a paused AI Team stays paused ---------- */
+import { say } from "../../apps/api/src/lib/os";
+describe("S9 mention runs", () => {
+  function setup() {
+    const { raw, env } = testEnv({ ANTHROPIC_API_KEY: "k" });
+    const org = seedOrg(raw);
+    raw.prepare("INSERT INTO agent (id, org_id, template, name, brief, autonomy, monthly_cap, status, created_at) VALUES ('agt_r', ?, 'research', 'Researcher', 'b', 'approve_all', 300, 'running', ?)").run(org.id, iso());
+    raw.prepare("INSERT INTO os_channel (id, org_id, name, kind, created_at) VALUES ('ch_1', ?, 'general', 'team', ?)").run(org.id, iso());
+    const runs = () => (raw.prepare("SELECT COUNT(*) AS n FROM agent_run").get() as any).n;
+    return { raw, env, org, runs, ch: { id: "ch_1", kind: "team", name: "general" } };
+  }
+  it("a viewer's @mention is posted but starts no run", async () => {
+    const { env, org, runs, ch } = setup();
+    const r = await say(env, org.id, ch, { id: "u", name: "Viv" }, "@Researcher who is Acme?", { canAsk: false });
+    expect(runs()).toBe(0);
+    expect(r.asked[0].error).toMatch(/manager or owner/);
+  });
+  it("a manager's @mention starts a run, unless the AI Team is paused", async () => {
+    const { raw, env, org, runs, ch } = setup();
+    await say(env, org.id, ch, { id: "u", name: "Max" }, "@Researcher who is Acme?", { canAsk: true });
+    expect(runs()).toBe(1);
+    const { setPaused } = await import("../../apps/api/src/lib/osbuilder");
+    await setPaused(env, org.id, true, "owner@x.test");
+    const r = await say(env, org.id, ch, { id: "u", name: "Max" }, "@Researcher and Beta?", { canAsk: true });
+    expect(runs()).toBe(1);
+    expect(r.asked[0].error).toMatch(/paused/);
+  });
+});

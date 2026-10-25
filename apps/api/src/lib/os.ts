@@ -122,7 +122,7 @@ export async function messages(env: Env, orgId: string, channelId: string, after
  * A person says something in a channel. Each @mentioned agent is asked, with the message (and the record,
  * on a record's thread) as its input; its answer is posted back here when the run ends.
  */
-export async function say(env: Env, orgId: string, ch: any, who: { id: string; name: string }, body: string) {
+export async function say(env: Env, orgId: string, ch: any, who: { id: string; name: string }, body: string, opts: { canAsk: boolean }) {
   const text = body.trim().slice(0, 4000);
   if (!text) throw new HttpError(400, "invalid_request", "Write a message.");
   const mentions = await findMentions(env, orgId, text);
@@ -134,8 +134,12 @@ export async function say(env: Env, orgId: string, ch: any, who: { id: string; n
     if (rec) context = `\n\nThis is the thread on a record in the ${rec.module} module:\n${JSON.stringify(rec)}`;
   }
   const where = ch.kind === "record" ? "on a record's thread" : `in #${ch.name}`;
+  // Asking an agent starts a run that can act for the business, so it takes a manager or owner, and a paused AI Team
+  // stays paused (the owner can still run an agent on purpose from Agents).
+  const refusal = !opts.canAsk ? "Only a manager or owner can ask agents to do things." : (await loadOs(env, orgId))?.ai_paused ? "The AI Team is paused in Your OS." : null;
   for (const m of mentions) {
     try {
+      if (refusal) throw new HttpError(403, "forbidden", refusal);
       const agent = m.agent_id ? await one<any>(env, "SELECT * FROM agent WHERE id = ?", m.agent_id) : await ensureRoleAgent(env, orgId, m.name, who.name);
       const spec = agent && specFor(agent);
       if (!agent || !spec || spec.engine !== "llm") throw new HttpError(409, "not_runnable", `${m.name} works from the registers on its own schedule and can't be asked in a channel.`);

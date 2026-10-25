@@ -7,7 +7,7 @@ const jwk = await c.subtle.exportKey("jwk", kp.privateKey);
 const MOCK = process.env.MOCK_URL || "http://127.0.0.1:8788";
 const vars = {
   APP_URL: "http://127.0.0.1:8787/", API_URL: "http://127.0.0.1:8787",
-  CH_API_BASE: MOCK + "/ch", CH_API_KEY: "dev-key", CH_RATE_LIMIT: "600",
+  CH_API_BASE: MOCK + "/ch", CH_API_KEY: "dev-key", CH_RATE_LIMIT: "3000", // the mock has no limit; the e2e run makes hundreds of calls in one window
   GAZETTE_BASE: MOCK + "/gazette", FCA_BASE: MOCK + "/fca", FCA_EMAIL: "dev@example.com", FCA_KEY: "dev",
   FACILITATOR_URL: MOCK + "/facilitator", X402_PAY_TO: "0x000000000000000000000000000000000000dEaD", X402_ASSET: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   STRIPE_BASE: MOCK + "/stripe", STRIPE_SECRET: "sk_test_dev", STRIPE_WEBHOOK_SECRET: "whsec_dev", STRIPE_PRICE_STARTER: "price_starter", STRIPE_PRICE_GROWTH: "price_growth", STRIPE_PRICE_SCALE: "price_scale",
