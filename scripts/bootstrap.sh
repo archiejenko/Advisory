@@ -4,6 +4,10 @@
 # migration, and generates this deployment's own keys into .prod-secrets.local (never committed).
 # Safe to re-run: anything that already exists is reused, and the keys are only generated once.
 # Doesn't need the ejtech.co.uk zone to be active yet, so you can run it while the nameservers propagate.
+# Runs without questions when these are set (none of them are keys):
+#   X402_WALLET=0x...                        the public wallet address that receives x402 payments
+#   STORE_ID=<32 hex>                         which Secrets Store, if the account has more than one
+#   SECRETS_MAP="ANTHROPIC_API_KEY=name,..."  Worker key name = Secrets Store entry name; "none" for no store
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -51,10 +55,14 @@ let t = fs.readFileSync("wrangler.toml", "utf8");
 t = t.replace(/database_id = "[^"]*"/, `database_id = "${db}"`).replace(/(\[\[kv_namespaces\]\][^\[]*?\nid = )"[^"]*"/, `$1"${kv}"`);
 fs.writeFileSync("wrangler.toml", t);
 EOF
+TTY=; [ -t 0 ] && TTY=1
+need() { echo "$1"; exit 1; }
 if grep -q REPLACE_WITH_RECEIVING_WALLET wrangler.toml; then
-  while :; do
+  W=${X402_WALLET:-}
+  while ! [[ "$W" =~ ^0x[0-9a-fA-F]{40}$ ]]; do
+    [ -n "$W" ] && echo "That isn't a 0x address with 40 hex characters."
+    [ -n "$TTY" ] || need "Set X402_WALLET to the receiving wallet's public 0x address and run this again."
     read -r -p "Base wallet address that receives x402 payments (0x…, the public address only): " W
-    [[ "$W" =~ ^0x[0-9a-fA-F]{40}$ ]] && break; echo "That isn't a 0x address with 40 hex characters."
   done
   node -e 'const fs=require("fs");fs.writeFileSync("wrangler.toml",fs.readFileSync("wrangler.toml","utf8").replace("REPLACE_WITH_RECEIVING_WALLET",process.argv[1]))' "$W"
 fi
@@ -67,16 +75,22 @@ STORES=$($WR secrets-store store list --remote </dev/null 2>/dev/null | node -e 
 if [ -z "$STORES" ]; then
   echo "No Secrets Store found; launch.sh will ask for every key."
 else
-  if [ "$(wc -l <<<"$STORES")" -gt 1 ]; then
+  if [ -n "${STORE_ID:-}" ]; then :
+  elif [ "$(wc -l <<<"$STORES")" -gt 1 ]; then
     $WR secrets-store store list --remote </dev/null 2>/dev/null || true
+    [ -n "$TTY" ] || need "This account has more than one Secrets Store. Set STORE_ID to the one holding the keys and run this again."
     read -r -p "Which store id holds your keys? " STORE_ID
   else STORE_ID=$STORES; fi
   LISTING=$($WR secrets-store secret list "$STORE_ID" --remote --per-page 100 </dev/null 2>&1 || true)
   echo "$LISTING"
-  echo "For each key below, type the name it has in the list above, or press Enter if it isn't there."
+  if [ -z "${SECRETS_MAP+x}" ]; then
+    [ -n "$TTY" ] || need "Set SECRETS_MAP (e.g. \"ANTHROPIC_API_KEY=anthropic,SEARCH_API_KEY=brave\", or \"none\") from the names above and run this again."
+    echo "For each key below, type the name it has in the list above, or press Enter if it isn't there."
+  fi
   BLOCK="# BEGIN secrets-store (written by scripts/bootstrap.sh; re-run it to change)"
   for k in ANTHROPIC_API_KEY SEARCH_API_KEY MAIL_HTTP_KEY CH_API_KEY FCA_EMAIL FCA_KEY TURNSTILE_SECRET OPERATOR_EMAIL STRIPE_SECRET; do
-    read -r -p "  $k: " NAME
+    if [ -n "${SECRETS_MAP+x}" ]; then NAME=$(tr ',' '\n' <<<"$SECRETS_MAP" | sed -n "s/^ *$k *= *//p" | head -1 | sed 's/ *$//')
+    else read -r -p "  $k: " NAME; fi
     [ -z "$NAME" ] && continue
     grep -qF -- "$NAME" <<<"$LISTING" || echo "  (not in the list above; using it anyway, check the spelling)"
     BLOCK+=$'\n'"[[secrets_store_secrets]]"$'\n'"binding = \"$k\""$'\n'"store_id = \"$STORE_ID\""$'\n'"secret_name = \"$NAME\""

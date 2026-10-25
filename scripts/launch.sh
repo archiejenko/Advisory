@@ -4,6 +4,8 @@
 # Deploys the Worker (website, API, MCP, tool gateway), then asks for each third-party key with hidden input and
 # uploads them as Worker secrets in one go. Press Enter to skip a key you don't have yet; run this again later to
 # add it (already-set secrets you skip are left alone). Keys never touch the repo or your shell history.
+# Run without a terminal (by an agent, say), it asks nothing: keys not in Secrets Store are skipped, Stripe too.
+# OPERATOR_EMAIL can be passed in the environment, since it isn't a secret.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 WR="npx wrangler"
@@ -23,6 +25,8 @@ add() { node -e 'const fs=require("fs"),[f,k,v]=process.argv.slice(1),o=JSON.par
 instore() { grep -q "^binding = \"$1\"" wrangler.toml && grep -q "secrets_store_secrets" wrangler.toml; }
 ask() { # name, what it is
   if instore "$1"; then echo "$1: read from Cloudflare Secrets Store"; return; fi
+  if [ "$1" = OPERATOR_EMAIL ] && [ -n "${OPERATOR_EMAIL:-}" ]; then add "$1" "$OPERATOR_EMAIL"; echo "$1: from the environment"; return; fi
+  if [ ! -t 0 ]; then echo "$1: skipped (no terminal to ask in)"; return; fi
   local v; read -r -s -p "$1 ($2): " v; echo
   if [ -n "$v" ]; then add "$1" "$v"; echo "  set"; else echo "  skipped"; fi
 }
@@ -35,7 +39,8 @@ ask SEARCH_API_KEY      "Brave Search API key"
 ask MAIL_HTTP_KEY       "Resend API key, re_…"
 ask TURNSTILE_SECRET    "Turnstile secret key (optional)"
 
-read -r -s -p "STRIPE_SECRET (Stripe secret key sk_live_… or sk_test_…): " STRIPE_SECRET; echo
+STRIPE_SECRET=
+if [ -t 0 ]; then read -r -s -p "STRIPE_SECRET (Stripe secret key sk_live_… or sk_test_…): " STRIPE_SECRET; echo; fi
 if [ -n "$STRIPE_SECRET" ]; then
   instore STRIPE_SECRET || add STRIPE_SECRET "$STRIPE_SECRET"
   say "3/4 Stripe prices and webhook"
