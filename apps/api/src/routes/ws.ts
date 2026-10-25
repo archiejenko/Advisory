@@ -20,6 +20,7 @@ import { PLANS } from "../../../../packages/core/templates";
 import { planCheckout, portal } from "../lib/stripe";
 import { sendMail } from "../lib/mail";
 import { storedCompany, companyCached } from "../lib/registers";
+import { modelBudget, modelSpend } from "../lib/budget";
 
 export const ws = new Hono<{ Bindings: Env; Variables: Vars }>();
 ws.use("*", requireSession);
@@ -329,7 +330,7 @@ async function usage(c: any, month: string) {
   const byAgent = await db.all("SELECT g.name, g.template, COUNT(r.id) AS runs, COALESCE(SUM(r.tool_calls),0) AS actions FROM agent g LEFT JOIN agent_run r ON r.agent_id = g.id AND r.created_at >= ?2 AND r.created_at < ?3 WHERE g.org_id = ?1 GROUP BY g.id ORDER BY actions DESC", from, to);
   const sent = (await db.one("SELECT COUNT(*) AS n FROM agent_action WHERE org_id = ?1 AND status = 'sent' AND decided_at >= ?2 AND decided_at < ?3", from, to)).n as number;
   const p = PLANS[orgPlan] || PLANS.trial;
-  return { plan: orgPlan, plan_name: p.name, plan_actions: p.actions, plan_agents: p.agents, actions, model_pence: modelPence, emails_sent: sent, by_agent: byAgent, month, clients, runs, briefs, alerts, markup_pct: org.markup_pct, cost_pence: costPence, rebill_pence: Math.round(costPence * (1 + org.markup_pct / 100)), weeks, per_client: perClient.map((r: any) => ({ ...r, cost_pence: Math.round(share) })) };
+  return { plan: orgPlan, plan_name: p.name, plan_actions: p.actions, plan_agents: p.agents, actions, model_pence: modelPence, model_budget_pence: modelBudget(c.env, orgPlan), model_spend_pence: await modelSpend(c.env, c.get("orgId")), emails_sent: sent, by_agent: byAgent, month, clients, runs, briefs, alerts, markup_pct: org.markup_pct, cost_pence: costPence, rebill_pence: Math.round(costPence * (1 + org.markup_pct / 100)), weeks, per_client: perClient.map((r: any) => ({ ...r, cost_pence: Math.round(share) })) };
 }
 const nextMonth = (m: string) => { const [y, mo] = m.split("-").map(Number); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`; };
 const monthOf = (c: any) => { const m = c.req.query("month") || nowIso().slice(0, 7); if (!/^\d{4}-\d{2}$/.test(m)) throw bad("month must look like 2026-10"); return m; };

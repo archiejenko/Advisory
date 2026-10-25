@@ -128,3 +128,42 @@ describe("S11 inbound sender authentication", () => {
     expect(raw.prepare("SELECT email FROM suppression").all()).toEqual([{ email: "boss@co.test" }]);
   });
 });
+
+/* ---------- S1: a monthly model budget per plan, and a cap on runs an hour ---------- */
+import { startRun, runAgent } from "../../apps/api/src/lib/agents";
+import { modelBudget } from "../../apps/api/src/lib/budget";
+describe("S1 model spend", () => {
+  const spent = (raw: any, orgId: string, pence: number) => raw.prepare("INSERT INTO usage_event (id, org_id, kind, units, cost_pence, payment, payment_ref, at) VALUES (?, ?, 'agent_run', 1, ?, 'plan', ?, ?)").run("use_" + pence + Math.random(), orgId, pence, "run_old" + Math.random(), iso());
+
+  it("refuses to start a run once the month's model budget is spent", async () => {
+    const { raw, env } = testEnv({ ANTHROPIC_API_KEY: "k" });
+    const org = seedOrg(raw, { plan: "trial" });
+    const agent = seedAgent(raw, org.id, { template: "research" });
+    spent(raw, org.id, modelBudget(env, "trial"));
+    await expect(startRun(env, org.id, agent, "manual", "Who is Acme?")).rejects.toMatchObject({ status: 402, code: "budget_used" });
+  });
+
+  it("stops a run partway when its spend crosses the budget", async () => {
+    const { raw, env } = testEnv({ ANTHROPIC_API_KEY: "k", CLAUDE_RETRIES: "0", MODEL_BUDGETS: JSON.stringify({ growth: 50 }) });
+    const org = seedOrg(raw);
+    const agent = seedAgent(raw, org.id, { template: "research" });
+    raw.prepare("INSERT INTO agent_run (id, org_id, agent_id, trigger, input, status, created_at) VALUES ('run_b', ?, ?, 'manual', 'Who is Acme?', 'queued', ?)").run(org.id, agent, iso());
+    let calls = 0;
+    // Every step asks for another tool and costs about 36p (100k tokens in, 10k out at the default prices).
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => { calls++; return new Response(JSON.stringify({ content: [{ type: "tool_use", id: "t" + calls, name: "business-profile", input: {} }], stop_reason: "tool_use", usage: { input_tokens: 100000, output_tokens: 10000 } }), { status: 200 }); });
+    expect(await runAgent(env, "run_b")).toBe("failed");
+    const r = raw.prepare("SELECT status, steps, error FROM agent_run WHERE id = 'run_b'").get() as any;
+    expect(calls).toBe(2);
+    expect(r).toMatchObject({ status: "failed", steps: 2 });
+    expect(r.error).toMatch(/AI budget/);
+  });
+
+  it("caps how many runs a business can start in an hour", async () => {
+    const { raw, env } = testEnv({ ANTHROPIC_API_KEY: "k", RUNS_PER_HOUR: "2" });
+    const org = seedOrg(raw);
+    const agent = seedAgent(raw, org.id, { template: "research" });
+    await startRun(env, org.id, agent, "manual", "one");
+    await startRun(env, org.id, agent, "manual", "two");
+    await expect(startRun(env, org.id, agent, "manual", "three")).rejects.toMatchObject({ status: 429, code: "slow_down" });
+  });
+});

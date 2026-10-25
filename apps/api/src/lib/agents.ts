@@ -14,8 +14,12 @@ import type { Blueprint } from "../../../../packages/core/swarms";
 import { getTool, runTool, toolDefs, type Tool, type ToolCtx } from "./tools";
 import { notifyChannel } from "./delivery";
 import { activeRules } from "./today";
+import { budgetProblem, requireBudget } from "./budget";
+import { hit } from "./limits";
 
 export const MAX_STEPS = 8;
+/** Runs one business may start in an hour, whatever starts them (RUNS_PER_HOUR overrides). */
+export const RUNS_PER_HOUR = 120;
 const SCHEDULED = new Set(["weekdays", "daily", "weekly", "monthly"]);
 
 /* ---------- Scheduling (in UK time) ---------- */
@@ -141,6 +145,9 @@ export async function startRun(env: Env, orgId: string, agentId: string, trigger
   const { org, problem } = await orgAccess(env, orgId);
   if (problem) throw accessError(problem);
   if ((await orgActionsLeft(env, org)) <= 0) throw new HttpError(402, "allowance_used", "Your agents have used this month's actions. They start again on the 1st, or move to a bigger plan in Usage and plan.");
+  await requireBudget(env, org);
+  // However runs are started (asked, mentioned, handed off, woken by mail), one business can't start more than this an hour.
+  if (!(await hit(env, "runs", orgId, Number(env.RUNS_PER_HOUR || RUNS_PER_HOUR)))) throw new HttpError(429, "slow_down", "Your agents have started a lot of runs this hour. New ones can start again shortly.");
   const id = newId("run");
   await run(env, "INSERT INTO agent_run (id, org_id, agent_id, trigger, input, status, created_at, reply_channel) VALUES (?,?,?,?,?,?,?,?)", id, orgId, agentId, trigger, input?.slice(0, 4000) ?? null, "queued", nowIso(), opts.replyChannel ?? null);
   await (env.AGENT_JOBS ?? env.JOBS).send({ type: "agent_run", run_id: id });
@@ -156,6 +163,8 @@ export const loopCost = (env: Env, o: LoopOut) => modelCost(env, o.tokensIn, o.t
 
 export type LoopOpts = {
   system: string; user: string; tools: Tool[]; ctx: ToolCtx; maxSteps?: number;
+  /** Called before each model step. Return a message to stop the run there (the AI budget is used up, say). */
+  beforeStep?: () => Promise<string | null>;
   /** Called before each tool call. Return false (or a message) to refuse the call. */
   budget?: (tool: string) => Promise<boolean | string>;
   /** Called after every model step, so the caller can record cost as it accrues. */
@@ -179,6 +188,8 @@ export async function agentLoop(env: Env, o: LoopOpts): Promise<LoopOut> {
   const byName = new Map(o.tools.map((t) => [t.slug, t]));
   const maxChars = o.maxResultChars ?? 14000;
   for (let step = 0; step < (o.maxSteps || MAX_STEPS); step++) {
+    const stop = o.beforeStep ? await o.beforeStep() : null;
+    if (stop) throw new HttpError(402, "budget_used", stop);
     const r = await claude(env, { system: o.system, messages, tools: defs });
     out.steps++;
     out.tokensIn += r.usage?.input_tokens || 0; out.tokensOut += r.usage?.output_tokens || 0;
@@ -311,6 +322,7 @@ export async function runAgent(env: Env, runId: string) {
       system: systemFor(t, agent, org, swarmLines, await activeRules(env, org.id)), user: [t.kickoff || "Do your work.", r.input || ""].filter(Boolean).join("\n\n"), tools, out,
       onTool: agent.swarm_id ? async (tool, ok) => { await swarmEv("tool", tool, { ok }); } : undefined,
       ctx: { env, orgId: org.id, agentId: agent.id, runId },
+      beforeStep: () => budgetProblem(env, org),
       budget: async (tool) => (await claimAction(env, { orgId: org.id, plan: org.plan, agentId: agent.id, cap: agent.monthly_cap, runId, tool })) || "Monthly action limit reached for this agent or business. Stop and summarise.",
       // Keep running totals on the run row, so a run that dies partway still shows what it cost.
       onStep: async (o) => { await run(env, "UPDATE agent_run SET steps = ?, tool_calls = ?, tokens_in = ?, tokens_out = ?, cost_pence = ? WHERE id = ?", o.steps, o.toolCalls.length, o.tokensIn + o.cacheWrite + o.cacheRead, o.tokensOut, loopCost(env, o), runId); },

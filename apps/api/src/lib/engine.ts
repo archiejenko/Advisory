@@ -7,6 +7,7 @@ import { PRESETS, KPIS, CUSTOM_TOOLS, SWARM_TOOLS, estimateActions, nearestPrese
 import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
 import { claude, modelCost, type Msg } from "./llm";
+import { budgetProblem, requireBudget } from "./budget";
 import { hireAgent, startRun, setAgentStatus } from "./agents";
 import { orgAccess, accessError } from "./billing";
 import { checkBlueprint, emit, syncSwarm, specFor, loadSwarm, kpi } from "./swarm";
@@ -162,7 +163,8 @@ export async function planBlueprint(env: Env, orgId: string, description: string
   const plan = PLANS[org?.plan || "trial"] || PLANS.trial;
   const existing = Number((await one<any>(env, "SELECT COUNT(*) AS n FROM agent WHERE org_id = ? AND swarm_id IS NULL", orgId))?.n || 0);
   let bp: Blueprint | null = null, note: string | null = null, tokensIn = 0, tokensOut = 0;
-  if (env.ANTHROPIC_API_KEY) {
+  // With this month's AI budget used, the nearest preset stands in for a drafted blueprint.
+  if (env.ANTHROPIC_API_KEY && !(await budgetProblem(env, { id: orgId, plan: org?.plan }))) {
     const system = plannerSystem(plan, existing);
     const messages: Msg[] = [{ role: "user", content: `Business: ${org?.name}\nProfile: ${org?.profile || "{}"}\n\nWhat they told us:\n${desc}` }];
     for (let attempt = 0; attempt < 2 && !bp; attempt++) {
@@ -245,6 +247,7 @@ Never approve, send or delete anything: say the owner must do that on screen.
 Agents: ${agents.map((a) => `${a.swarm_key} (${a.name}${a.status !== "running" ? ", paused" : ""}): ${a.role || ""}`).join("; ")}.
 Facts: ${facts.join("; ")}; emails waiting for approval: ${waiting}.
 Recent: ${recent.map((r) => r.summary).join(" | ")}`;
+  await requireBudget(env, { id: orgId, plan: (await one<any>(env, "SELECT plan FROM org WHERE id = ?", orgId))?.plan });
   const r = await claude(env, { system, messages: [{ role: "user", content: q }], tools: [], max_tokens: 600 });
   await run(env, "INSERT INTO usage_event (id, org_id, kind, units, cost_pence, payment, at) VALUES (?,?,?,1,?,'plan',?)", newId("use"), orgId, "router", modelCost(env, r.usage?.input_tokens || 0, r.usage?.output_tokens || 0), nowIso());
   const j: any = parseJson(r.content.filter((x) => x.type === "text").map((x: any) => x.text).join("\n")) || {};
