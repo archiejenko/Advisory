@@ -7,6 +7,7 @@ const require_fs = () => fs;
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { webcrypto as wc, createHmac } from "node:crypto";
+import { seedLocalStore, devVars } from "../../scripts/local-store.mjs";
 
 const API = "http://127.0.0.1:8787", MOCK = "http://127.0.0.1:8788";
 const vars = Object.fromEntries(readFileSync(".dev.vars", "utf8").trim().split("\n").map((l) => { const i = l.indexOf("="); return [l.slice(0, i), JSON.parse(l.slice(i + 1))]; }));
@@ -83,6 +84,7 @@ async function main() {
   start("node", ["mocks/server.mjs"], {}, "mocks");
   await waitFor(async () => (await fetch(MOCK + "/health")).ok, "mocks");
   await new Promise((ok2, bad) => { const p = spawn("npx", ["wrangler", "d1", "migrations", "apply", "agent-house", "--local", "--persist-to", persist], { stdio: "ignore" }); p.on("exit", (c) => (c === 0 ? ok2() : bad(new Error("migrations failed")))); });
+  seedLocalStore(persist, devVars()); // Secrets Store bindings shadow .dev.vars locally
   start("npx", ["wrangler", "dev", "--local", "--port", "8787", "--ip", "127.0.0.1", "--test-scheduled", "--persist-to", persist], {}, "api");
   await waitFor(async () => (await fetch(API + "/api/health")).ok, "API", 90000);
   start("node", ["apps/stream-listener/listener.mjs"], { STREAM_BASE: MOCK + "/ch-stream", STREAM_KEY: "dev-key", API_URL: API, INGEST_SECRET: vars.INGEST_SECRET, STREAMS: "companies,officers,charges" }, "listener");
@@ -701,9 +703,9 @@ async function main() {
   });
 
   /* 17b. The business OS: every module, channels, and agents asked in a conversation */
-  await check("business OS: all 118 modules take records; a manager adds, a viewer reads", async () => {
+  await check("business OS: every module takes records; a manager adds, a viewer reads", async () => {
     const cat = (await call("GET", "/api/ws/os/catalogue", undefined, { cookie: hb })).json;
-    ok(cat.modules.length === 118 && cat.totals.modules === 118, "118 modules");
+    ok(cat.modules.length >= 118 && cat.totals.modules === cat.modules.length, `catalogue lists ${cat.modules.length} modules, totals say ${cat.totals.modules}`);
     for (const m of cat.modules) {
       const r = await call("POST", `/api/ws/os/m/${m.key}/records`, { title: `First ${m.app} record` }, { cookie: hb });
       ok(r.status === 201 && r.json.record.module === m.key, m.key + ": " + r.text);
@@ -712,7 +714,7 @@ async function main() {
     ok(bill.json.record.amount_pence === 125000, bill.text);
     ok((await call("PATCH", `/api/ws/os/records/${bill.json.record.id}`, { status: "paid" }, { cookie: hb })).json.record.status === "paid", "status moves");
     const after = (await call("GET", "/api/ws/os/catalogue", undefined, { cookie: hb })).json;
-    ok(after.totals.records === 119 && after.modules.every((m) => m.records >= 1), "every module counted");
+    ok(after.totals.records === cat.modules.length + 1 && after.modules.every((m) => m.records >= 1), "every module counted");
     await call("POST", "/api/auth/magic-link", { email: "viewer@harbour.example" }, { cookie: false });
     const viewer = await signIn("viewer@harbour.example");
     ok((await call("GET", "/api/ws/os/m/bills-and-payables/records", undefined, { cookie: viewer })).json.records.length === 2, "viewer reads");

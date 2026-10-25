@@ -15,7 +15,9 @@ say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 [ -d node_modules ] || npm ci --no-audit --no-fund
 [ -d apps/web/node_modules ] || npm --prefix apps/web ci --no-audit --no-fund
 
-say "1/4 Deploy"
+say "1/4 Checks, then deploy"
+# Never deploy what fails its own checks. SKIP_CHECKS=1 only for an emergency redeploy of a known-good commit.
+if [ -z "${SKIP_CHECKS:-}" ]; then npm run typecheck && npm test; fi
 npm run deploy
 
 say "2/4 Keys (hidden input; Enter skips)"

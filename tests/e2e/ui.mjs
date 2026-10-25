@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
+import { seedLocalStore, devVars } from "../../scripts/local-store.mjs";
 
 const API = "http://127.0.0.1:8787", MOCK = "http://127.0.0.1:8788";
 const SHOTS = process.env.UI_SHOTS || "ui-shots";
@@ -42,6 +43,7 @@ async function main() {
   start("node", ["mocks/server.mjs"], {}, "mocks");
   await waitFor(async () => (await fetch(MOCK + "/health")).ok, "mocks");
   await new Promise((y, n) => { const p = spawn("npx", ["wrangler", "d1", "migrations", "apply", "agent-house", "--local", "--persist-to", persist], { stdio: "ignore" }); p.on("exit", (c) => (c === 0 ? y() : n(new Error("migrations failed")))); });
+  seedLocalStore(persist, devVars()); // Secrets Store bindings shadow .dev.vars locally
   start("npx", ["wrangler", "dev", "--local", "--port", "8787", "--ip", "127.0.0.1", "--persist-to", persist], {}, "api");
   await waitFor(async () => (await fetch(API + "/api/health")).ok, "API", 90000);
   start("node", ["apps/stream-listener/listener.mjs"], { STREAM_BASE: MOCK + "/ch-stream", STREAM_KEY: "dev-key", API_URL: API, INGEST_SECRET: vars.INGEST_SECRET, STREAMS: "companies,officers,charges" }, "listener");

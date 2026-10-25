@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Agent House: AI agents for small businesses, a tool catalogue for developers, and pay-per-call tools for agents (x402). One Cloudflare Worker.",
   "scripts": {
-    "setup": "node scripts/dev-secrets.mjs && wrangler d1 migrations apply agent-house --local",
+    "setup": "node scripts/dev-secrets.mjs && wrangler d1 migrations apply agent-house --local && node scripts/local-store.mjs",
     "mocks": "node mocks/server.mjs",
     "dev": "wrangler dev",
     "listener": "node --env-file=.dev.vars apps/stream-listener/listener.mjs",
