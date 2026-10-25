@@ -105,7 +105,7 @@ FCA_BASE = "https://register.fca.org.uk/services/V0.1"
 FACILITATOR_URL = "https://x402.org/facilitator"
 X402_NETWORK = "eip155:8453"
 X402_ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-X402_PAY_TO = "REPLACE_WITH_RECEIVING_WALLET"
+X402_PAY_TO = ""
 SIGNING_KID = "ah-2026-10"
 MAIL_MODE = "http"                 # Resend: its /emails API takes exactly the JSON mail.ts sends
 MAIL_HTTP_URL = "https://api.resend.com/emails"
@@ -126,3 +126,26 @@ AGENT_CACHE_WRITE_X = "1.25"
 AGENT_CACHE_READ_X = "0.1"
 VOICE_SPEAKER = "angus"            # Deepgram Aura voice for spoken replies
 VOICE_LANGUAGE = "en"
+
+# BEGIN secrets-store (written by scripts/bootstrap.sh; re-run it to change)
+[[secrets_store_secrets]]
+binding = "ANTHROPIC_API_KEY"
+store_id = "592bd2167de0450595700e2992cfb315"
+secret_name = "ANTHROPIC_API"
+[[secrets_store_secrets]]
+binding = "SEARCH_API_KEY"
+store_id = "592bd2167de0450595700e2992cfb315"
+secret_name = "Brave_Search-API"
+[[secrets_store_secrets]]
+binding = "MAIL_HTTP_KEY"
+store_id = "592bd2167de0450595700e2992cfb315"
+secret_name = "RESEND_API"
+[[secrets_store_secrets]]
+binding = "CH_API_KEY"
+store_id = "592bd2167de0450595700e2992cfb315"
+secret_name = "CH_API_KEY"
+[[secrets_store_secrets]]
+binding = "FCA_KEY"
+store_id = "592bd2167de0450595700e2992cfb315"
+secret_name = "FCA-API"
+# END secrets-store
