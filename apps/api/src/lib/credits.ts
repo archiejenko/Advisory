@@ -118,14 +118,18 @@ export type Spend = { orgId: string; credits: number; cost: number; tokens: Toke
 
 /**
  * Put use on the ledger, split between plan and top-up credits in one statement so concurrent writes can't both
- * take the same plan credits. Idempotent by ref (a run id), so a retried settle or a sweep can't charge twice.
+ * take the same credits. Plan credits go first, then top-up credits. Anything past both (the last step of a run
+ * that started with credits left) goes against the month's plan credits, and is forgiven when they reset.
+ * Idempotent by ref (a run id), so a retried settle or a sweep can't charge twice.
  */
 export async function spend(env: Env, s: Spend, now = new Date()) {
   await ensurePeriod(env, s.orgId, now);
   const period = periodOf(now), c = toLedger(s.credits);
   const r = await run(env, `INSERT INTO credit_entry (id, org_id, kind, credits, from_plan, from_topup, period, agent_id, run_id, mode, model, task_type, tokens_in, cache_read, cache_write, tokens_out, requests, cost, ref, note, at)
-    SELECT ?1, ?2, ?3, -?4, -MIN(?4, MAX(p, 0)), -(?4 - MIN(?4, MAX(p, 0))), ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
-    FROM (SELECT COALESCE(SUM(from_plan), 0) AS p FROM credit_entry WHERE org_id = ?2 AND period = ?5) WHERE true -- (SQLite needs a WHERE before an upsert's ON CONFLICT)
+    SELECT ?1, ?2, ?3, -?4, -(?4 - MIN(?4 - MIN(?4, MAX(p, 0)), MAX(t, 0))), -MIN(?4 - MIN(?4, MAX(p, 0)), MAX(t, 0)), ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
+    FROM (SELECT (SELECT COALESCE(SUM(from_plan), 0) FROM credit_entry WHERE org_id = ?2 AND period = ?5) AS p,
+                 (SELECT COALESCE(SUM(from_topup), 0) FROM credit_entry WHERE org_id = ?2) AS t)
+    WHERE true -- (SQLite needs a WHERE before an upsert's ON CONFLICT)
     ON CONFLICT(org_id, kind, ref) DO NOTHING`,
     newId("cr"), s.orgId, s.kind, c, period, s.agentId ?? null, s.runId ?? null, s.mode ?? null, s.model, s.taskType ?? null,
     s.tokens.input, s.tokens.cacheRead, s.tokens.cacheWrite, s.tokens.output, s.requests, s.cost, s.ref, s.note ?? null, now.toISOString());

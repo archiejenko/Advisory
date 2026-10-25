@@ -19,8 +19,8 @@ const WORDS: [TaskType, RegExp][] = [
   ["research", /\b(research\w*|investigat\w*|find out|look into|competitor\w*|market|sources?|prospect\w*)\b/i],
   ["briefing", /\b(brief(ing)?|summar\w*|round[- ]?up|digest|weekly update|report)\b/i],
   ["bookkeeping", /\b(receipts?|bookkeep\w*|categor\w* transactions?|ledger|vat|expenses?)\b/i],
-  ["drafting", /\b(draft\w*|write|email\w*|reply|replies|chase|chasing|follow[- ]?up|post\w*|letter|quote)\b/i],
   ["triage", /\b(sort\w*|tag\w*|label\w*|triage|route|forward|classif\w*|check (if|whether)|remind\w*|tidy|file (it|them|these))\b/i],
+  ["drafting", /\b(draft\w*|write|email\w*|reply|replies|chase|chasing|follow[- ]?up|post\w*|letter|quote)\b/i],
 ];
 
 const RECOMMEND: Record<TaskType, { mode: ModeKey; why: string }> = {

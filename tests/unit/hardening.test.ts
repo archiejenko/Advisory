@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { testEnv, seedOrg, seedAgent } from "./d1";
 import { proposeEmail } from "../../apps/api/src/lib/actions";
 import { sweepRuns, runAgent, startRun, hireAgent, dueAgents } from "../../apps/api/src/lib/agents";
-import { chargeRun } from "../../apps/api/src/lib/credits";
+import { chargeRun, grantTopup } from "../../apps/api/src/lib/credits";
 import { accessProblem, applyStripeEvent, PAST_DUE_GRACE_DAYS } from "../../apps/api/src/lib/billing";
 import { debitCredits, releasePayment } from "../../apps/api/src/lib/pay";
 import { purgeOrg, retention, ORG_TABLES } from "../../apps/api/src/lib/jobs";
@@ -210,10 +210,12 @@ describe("agent runtime", () => {
     const agent = seedAgent(raw, org.id);
     const tokens = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
     const charge = (i: number) => chargeRun(env, { orgId: org.id, runId: "run_" + i, agentId: agent, model: "claude-opus-5-5", mode: "deep", cost: 400, tokens, requests: 1 });
+    await grantTopup(env, org.id, "cs_1", 600);
     await Promise.all(Array.from({ length: 6 }, (_, i) => charge(i)));
     await charge(0); // a retried settle charges nothing more
+    // 2,400 used: all 1,500 plan credits, all 600 top-up credits, and 300 past both (forgiven at the reset).
     const r = raw.prepare("SELECT COUNT(*) AS n, SUM(from_plan) AS plan, SUM(from_topup) AS topup FROM credit_entry WHERE org_id = ? AND kind = 'run'").get(org.id) as any;
-    expect(r).toEqual({ n: 6, plan: -1500, topup: -900 });
+    expect(r).toEqual({ n: 6, plan: -1800, topup: -600 });
   });
 
   it("fails stuck runs (recording their cost once) and re-queues lost ones", async () => {
