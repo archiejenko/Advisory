@@ -328,3 +328,44 @@ describe("S9 mention runs", () => {
     expect(r.asked[0].error).toMatch(/paused/);
   });
 });
+
+/* ---------- S7: no framing, HTTPS pinned, and a strict policy on report pages ---------- */
+describe("S7 security headers", () => {
+  it("every response refuses framing and pins HTTPS", async () => {
+    const { env } = testEnv();
+    const r = await call(env, "/api/health", { method: "GET" });
+    expect(r.headers.get("x-frame-options")).toBe("DENY");
+    expect(r.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(r.headers.get("strict-transport-security")).toMatch(/max-age=\d{7,}/);
+  });
+  it("a report page can't run scripts", async () => {
+    const { raw, env } = testEnv();
+    raw.prepare("INSERT INTO health_check (id, token, name, email, company, file_key, status, report_key, created_at, approved_at) VALUES ('hc1', 'tok123', 'n', 'e@x.test', 'Co', 'f', 'sent', 'reports/tok123.html', ?, ?)").run(iso(), iso());
+    await env.FILES.put("reports/tok123.html", "<html><body>report</body></html>");
+    const r = await call(env, "/r/tok123", { method: "GET" });
+    expect(r.status).toBe(200);
+    const csp = r.headers.get("content-security-policy") || "";
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).not.toContain("script-src");
+  });
+});
+
+/* ---------- R5: each cron leaves a heartbeat, and /api/health says which are overdue ---------- */
+import { onScheduled, CRON_EVERY_MIN } from "../../apps/api/src/lib/jobs";
+describe("R5 cron heartbeat", () => {
+  const kvMap = () => { const m = new Map<string, string>(); return { m, get: async (k: string) => m.get(k) ?? null, put: async (k: string, v: string) => { m.set(k, v); }, list: async ({ prefix }: any) => ({ keys: [...m.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })) }) }; };
+  it("records the run and reports an overdue cron", async () => {
+    const t = testEnv();
+    const kv = kvMap();
+    const env = { ...t.env, CACHE: kv };
+    await onScheduled({ cron: "*/30 * * * *", scheduledTime: Date.now() } as any, env);
+    expect(kv.m.get("cron:*/30 * * * *")).toBeTruthy();
+    kv.m.set("cron:0 3 * * *", new Date(Date.now() - 3 * 864e5).toISOString());
+    const j: any = await (await call(env, "/api/health", { method: "GET" })).json();
+    expect(j.ok).toBe(true);
+    expect(j.crons["*/30 * * * *"].overdue).toBe(false);
+    expect(j.crons["0 3 * * *"].overdue).toBe(true);
+    expect(j.crons["*/15 * * * *"].last).toBeNull();
+    expect(Object.keys(CRON_EVERY_MIN).length).toBe(6);
+  });
+});

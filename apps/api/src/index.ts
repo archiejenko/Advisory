@@ -11,7 +11,7 @@ import { truth, wellKnown, mcp, discovery } from "./routes/truth";
 import { dev } from "./routes/dev";
 import { pub, reports } from "./routes/public";
 import { internal, admin, hooks } from "./routes/ops";
-import { onQueue, onScheduled } from "./lib/jobs";
+import { onQueue, onScheduled, cronHealth } from "./lib/jobs";
 import { onEmail } from "./lib/inbound";
 import { withStoreSecrets } from "./lib/storesecrets";
 
@@ -36,6 +36,11 @@ app.use("*", async (c, next) => {
   await next();
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+  // Nothing here is meant to be framed (clickjacking the approve and send buttons), and the site is HTTPS only.
+  // The website's script policy is a meta tag in index.html (hashes made at build time); report pages set their own.
+  c.header("X-Frame-Options", "DENY");
+  if (!c.res.headers.get("Content-Security-Policy")) c.header("Content-Security-Policy", "frame-ancestors 'none'");
+  c.header("Strict-Transport-Security", "max-age=15552000");
   if (c.req.path.startsWith("/v1") || c.req.path.startsWith("/mcp") || c.req.path === "/llms.txt" || c.req.path.startsWith("/.well-known")) {
     c.header("Access-Control-Allow-Origin", "*");
     c.header("Access-Control-Expose-Headers", "PAYMENT-REQUIRED, PAYMENT-RESPONSE");
@@ -44,7 +49,8 @@ app.use("*", async (c, next) => {
 app.options("/mcp", (c) => new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version", "Access-Control-Allow-Methods": "GET, POST" } }));
 app.options("/v1/*", (c) => new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Authorization, Content-Type, PAYMENT-SIGNATURE, X-PAYMENT", "Access-Control-Allow-Methods": "GET, POST, DELETE" } }));
 
-app.get("/api/health", (c) => c.json({ ok: true, at: new Date().toISOString() }));
+// ok says the Worker answers; crons says when each scheduled task last ran, and which are overdue (smoke checks it).
+app.get("/api/health", async (c) => c.json({ ok: true, at: new Date().toISOString(), crons: await cronHealth(c.env).catch(() => null) }));
 app.route("/api/public", pub);
 app.route("/api/auth", auth);
 app.route("/api/ws", ws);

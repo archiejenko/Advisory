@@ -2,6 +2,7 @@
 // The same file also opens straight from disk, where it runs as an offline demo.
 import { build } from "esbuild";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 // DEMO=1 builds a stand-alone demo (no API needed) into dist-demo/, for static hosting such as Vercel or Cloudflare Pages.
 const DEMO = process.env.DEMO === "1";
@@ -13,10 +14,20 @@ const out = await build({
 });
 const js = out.outputFiles[0].text.replace(/<\/script/g, "<\\/script");
 const css = ["src/styles.css", "src/theme.css", "src/floor.css", "src/landing.css", "src/os.css"].map((f) => readFileSync(f, "utf8")).join("\n");
+const sw = `if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });`;
+// Content Security Policy for the hosted site: only these two inline scripts (by hash), our own origin, and
+// Turnstile may run, so an injected <script> can't. (Inline styles stay allowed: React sets them. The demo build,
+// opened from disk, has no policy.) frame-ancestors can't go in a meta tag; the Worker sends it as a header.
+const hash = (s) => "'sha256-" + createHash("sha256").update(s).digest("base64") + "'";
+const csp = [
+  "default-src 'self'", `script-src 'self' ${hash(js)} ${hash(sw)} https://challenges.cloudflare.com`, "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:", "font-src 'self' data:", "connect-src 'self'", "media-src 'self' blob:", "frame-src https://challenges.cloudflare.com",
+  "worker-src 'self'", "manifest-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'",
+].join("; ");
 const html = `<!doctype html>
 <html lang="en-GB">
 <head>
-<meta charset="utf-8">
+<meta charset="utf-8">${DEMO ? "" : `\n<meta http-equiv="Content-Security-Policy" content="${csp}">`}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent House</title>
 <meta name="description" content="Agent House: the all-in-one business operating system. Drag together the apps your business runs on, all on one database, and let your AI Team do the manual work. For UK businesses of 1 to 100 people.">
@@ -32,7 +43,7 @@ const html = `<!doctype html>
 <div id="root"></div>
 <noscript><p style="padding:40px;font-family:Helvetica,Arial,sans-serif">Agent House needs JavaScript.</p></noscript>
 <script>${js}</script>
-<script>if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });</script>
+<script>${sw}</script>
 </body>
 </html>`;
 mkdirSync(OUT, { recursive: true });

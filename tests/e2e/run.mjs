@@ -770,18 +770,22 @@ async function main() {
     const spec = { instructions: "You check UK companies before payment.", input: "Tarnbrook Logistics, INV-2207", tools: ["uk-check"] };
     const tl = (await call("GET", "/v1/tools", undefined, { cookie: false })).json.agents_run;
     ok(tl.price.per_step_pence === 12 && tl.price.default_steps === 4 && tl.free_calls === false, JSON.stringify(tl));
-    // The developer key still has free calls left, but agent runs aren't covered by them.
-    const free = await call("POST", "/v1/agents/run", spec, { cookie: false, headers: { Authorization: "Bearer " + devKey } });
-    ok(free.status === 402 && free.json.error.code === "credits_exhausted" && /48p/.test(free.json.error.message), free.text);
+    // The developer key still has free calls left, but agent runs aren't covered by them: this key bought credit
+    // to watch companies, so the run (4 steps x 12p) comes out of that credit.
+    const credit = async () => (await call("GET", "/api/dev/me", undefined, { cookie: false, headers: { Authorization: "Bearer " + devKey } })).json.credit_pence;
+    const before = await credit();
+    const paid = await call("POST", "/v1/agents/run", spec, { cookie: false, headers: { Authorization: "Bearer " + devKey } });
+    ok(paid.status === 200 && paid.json.price.pence === 48, paid.text.slice(0, 200));
+    ok(before - (await credit()) === 48, "a run is charged to credit, never to the free calls");
     const quote = await call("POST", "/v1/agents/run", { ...spec, max_steps: 3 }, { cookie: false });
     const accept = JSON.parse(Buffer.from(quote.headers.get("payment-required"), "base64")).accepts[0];
     ok(quote.status === 402 && accept.amount === "450000", "3 steps x 12p = 36p = 0.45 USDC: " + accept.amount);
     const short = await call("POST", "/v1/agents/run", { ...spec, max_steps: 3 }, { cookie: false, headers: { "PAYMENT-SIGNATURE": b64({ x402Version: 2, payload: { signature: "valid", authorization: { from: "0xA9e1", to: accept.payTo, value: "100" } } }) } });
     ok(short.status === 402, "underpayment refused: " + short.text);
-    const before = (await mock("GET", "/control/captured")).captured.filter((c) => c.target === "/anthropic").length;
+    const sent = (await mock("GET", "/control/captured")).captured.filter((c) => c.target === "/anthropic").length;
     const r = await call("POST", "/v1/agents/run", { ...spec, max_steps: 3 }, { cookie: false, headers: { "PAYMENT-SIGNATURE": b64({ x402Version: 2, payload: { signature: "valid", authorization: { from: "0xA9e1", to: accept.payTo, value: accept.amount } } }) } });
     ok(r.status === 200 && r.headers.get("payment-response") && r.json.steps[0].tool === "uk-check" && r.json.steps[0].ok && r.json.output.startsWith("Answer:") && r.json.signature && r.json.price.pence === 36, r.text.slice(0, 300));
-    const calls = (await mock("GET", "/control/captured")).captured.filter((c) => c.target === "/anthropic").slice(before);
+    const calls = (await mock("GET", "/control/captured")).captured.filter((c) => c.target === "/anthropic").slice(sent);
     ok(calls.length >= 2 && calls.every((c) => c.body.cached), "every model call marks the prompt for caching");
     const bad = await call("POST", "/v1/agents/run", { instructions: "You check UK companies before payment.", input: "x", tools: ["propose-email"] }, { cookie: false, headers: { Authorization: "Bearer " + devKey } });
     ok(bad.status === 400, "only first-party public tools: " + bad.text);

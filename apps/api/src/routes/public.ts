@@ -55,7 +55,9 @@ reports.get("/:token", async (c) => {
   if (!hc || !hc.approved_at || !hc.report_key) return c.text("This report isn't available. It may have expired: reports are deleted after 30 days.", 404);
   const obj = await c.env.FILES.get(hc.report_key);
   if (!obj) return c.text("This report has been deleted.", 404);
-  return new Response(obj.body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store", "X-Robots-Tag": "noindex" } });
+  return new Response(obj.body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store", "X-Robots-Tag": "noindex",
+    // The report is built from a customer's uploaded names: escaped, and on top of that no script may run in it.
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" } });
 });
 
 /* ---------- Booking ---------- */

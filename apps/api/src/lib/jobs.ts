@@ -365,7 +365,28 @@ export async function retention(env: Env, nowMs = Date.now()) {
   return done;
 }
 
+/**
+ * Each cron and how often it runs, in minutes (the monthly one is checked as if daily, since it fires on the 1st to
+ * 3rd). Every run leaves a heartbeat in KV, and /api/health reports a cron as overdue at twice its interval, so a
+ * cron that was never attached, or stopped, is visible instead of silent.
+ */
+export const CRON_EVERY_MIN: Record<string, number> = { "*/15 * * * *": 15, "*/30 * * * *": 30, "0 6 * * *": 1440, "0 7 * * *": 1440, "0 8 1-3 * *": 1440 * 31, "0 3 * * *": 1440 };
+
+export async function cronHealth(env: Env, now = Date.now()) {
+  const out: Record<string, { last: string | null; overdue: boolean }> = {};
+  for (const [cron, every] of Object.entries(CRON_EVERY_MIN)) {
+    const last = await env.CACHE.get("cron:" + cron);
+    out[cron] = { last, overdue: !!last && now - Date.parse(last) > 2 * every * 60000 };
+  }
+  return out;
+}
+
 export async function onScheduled(controller: ScheduledController, env: Env) {
+  try { return await runScheduled(controller, env); }
+  finally { await env.CACHE.put("cron:" + controller.cron, nowIso()).catch((e: any) => console.error("cron heartbeat not saved", e)); }
+}
+
+async function runScheduled(controller: ScheduledController, env: Env) {
   const cron = controller.cron;
   if (cron === "*/30 * * * *") return pollGazette(env);
   if (cron === "*/15 * * * *") {

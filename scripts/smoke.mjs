@@ -27,7 +27,16 @@ if (APEX !== BASE) await check("apex redirects to www", async () => {
   const to = r.headers.get("location") || "";
   if (r.status !== 301 || !to.startsWith(BASE + "/pricing?x=1")) return `status ${r.status} -> ${to || "nowhere"}`;
 });
-await check("API health", async () => { const j = await (await get("/api/health")).json(); if (!j.ok) return JSON.stringify(j); });
+let health;
+await check("API health", async () => { health = await (await get("/api/health")).json(); if (!health.ok) return JSON.stringify(health); });
+await check("scheduled tasks running", async () => {
+  const crons = Object.entries(health?.crons || {});
+  if (!crons.length) return "health doesn't report crons (older deploy?)";
+  const overdue = crons.filter(([, v]) => v.overdue).map(([k]) => k);
+  if (overdue.length) return "overdue: " + overdue.join(", ");
+  const never = crons.filter(([, v]) => !v.last).map(([k]) => k);
+  if (never.length === crons.length) console.log("  note  no scheduled task has run yet (a fresh deploy, or crons not attached: check again in 20 minutes)");
+});
 await check("tool catalogue", async () => { const j = await (await get("/v1/tools")).json(); if (!j.tools?.length) return "no tools listed"; });
 let jwk;
 await check("signing key published", async () => { const j = await (await get("/.well-known/agent-house-key")).json(); jwk = j.keys?.[0]; if (jwk?.kty !== "OKP" || !jwk.x || jwk.d) return "missing, or not a public Ed25519 key"; });
