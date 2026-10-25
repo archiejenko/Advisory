@@ -66,8 +66,11 @@ export async function proposeEmail(env: Env, ctx: { orgId: string; agentId: stri
 export async function boundRecipient(env: Env, orgId: string, p: EmailPayload, runId?: string) {
   const to = p.to.toLowerCase();
   if (p.message_id) {
+    // Anyone can write to the inbox, and a stranger's message can ask for the business's data in the reply. So a
+    // reply goes on its own only to a sender the business already knew before this run: a lead, a contact, an invoice
+    // customer, or someone a person has already approved an email to. First contact waits for a person.
     const m = await one<any>(env, "SELECT from_addr FROM inbox_message WHERE id = ? AND org_id = ?", p.message_id, orgId);
-    if (m && String(m.from_addr).toLowerCase() === to) return true;
+    if (m && String(m.from_addr).toLowerCase() === to && (await knownBefore(env, orgId, to, runId))) return true;
   }
   if (p.invoice_id) {
     const i = await one<any>(env, "SELECT email FROM invoice WHERE id = ? AND org_id = ?", p.invoice_id, orgId);
@@ -84,7 +87,20 @@ export async function boundRecipient(env: Env, orgId: string, p: EmailPayload, r
   return false;
 }
 
-const HELD = "Held for the owner's approval: emails only go out on their own to the lead, customer or sender this email is about.";
+/** Was `email` on the business's records before this run started (or ever, outside a run)? */
+async function knownBefore(env: Env, orgId: string, email: string, runId?: string) {
+  const r = runId ? await one<any>(env, "SELECT COALESCE(started_at, created_at) AS t FROM agent_run WHERE id = ?", runId) : null;
+  const before = r?.t || "9999";
+  const hit = await one(env, `SELECT 1 AS x WHERE
+       EXISTS (SELECT 1 FROM lead WHERE org_id = ?1 AND lower(email) = ?2 AND created_at < ?3)
+    OR EXISTS (SELECT 1 FROM contact WHERE org_id = ?1 AND lower(email) = ?2 AND created_at < ?3)
+    OR EXISTS (SELECT 1 FROM invoice WHERE org_id = ?1 AND lower(email) = ?2)
+    OR EXISTS (SELECT 1 FROM agent_action WHERE org_id = ?1 AND status = 'sent' AND decided_by != 'agent' AND json_extract(payload, '$.to') = ?2)`,
+    orgId, email, before);
+  return !!hit;
+}
+
+const HELD ="Held for the owner's approval: emails only go out on their own to the lead, customer or sender this email is about.";
 
 /** auto: send when the recipient is bound. approve_first: follow-ups and second reminders go on their own once the first was approved. */
 async function mayAutoSend(env: Env, agent: any, p: EmailPayload, runId?: string): Promise<true | string | null> {

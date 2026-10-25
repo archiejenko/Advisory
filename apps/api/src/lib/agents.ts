@@ -11,7 +11,7 @@ import { accessError, orgAccess, trialOver, TRIAL_DAYS } from "./billing";
 import { specFor, emit, swarmContext, syncSwarm } from "./swarm";
 import { settleTasksForRun } from "./orgbase";
 import type { Blueprint } from "../../../../packages/core/swarms";
-import { getTool, runTool, toolDefs, type Tool, type ToolCtx } from "./tools";
+import { getTool, runTool, toolDefs, noteTrustedUrls, type Tool, type ToolCtx } from "./tools";
 import { notifyChannel } from "./delivery";
 import { activeRules } from "./today";
 import { budgetProblem, requireBudget } from "./budget";
@@ -214,6 +214,7 @@ export async function agentLoop(env: Env, o: LoopOpts): Promise<LoopOut> {
       try {
         if (!tool) throw new HttpError(400, "unknown_tool", `No tool called ${u.name}.`);
         const res = await runTool(o.ctx, tool, u.input);
+        noteTrustedUrls(o.ctx, u.name, res);
         out.toolCalls.push({ tool: u.name, input: u.input, ok: true, result: res });
         results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(res).slice(0, maxChars) });
         if (o.onTool) await o.onTool(u.name, true, res);
@@ -244,6 +245,16 @@ function systemFor(t: { key: string; instructions?: string }, agent: any, org: a
     ...(rules.length ? ["", "House rules (the owner set these; follow them in everything you write and do):", ...rules.map((r) => "- " + r)] : []),
     ...(swarmLines ? ["", "Your swarm:", swarmLines] : []),
   ].join("\n");
+}
+
+/** Pages a business run may read from the start: the business's website, and links in what the owner asked. */
+function seedTrustedUrls(org: any, r: { trigger: string; input?: string | null }) {
+  const ctx: ToolCtx = { env: {} as Env, trustedUrls: new Set() };
+  let profile: any = {}; try { profile = JSON.parse(org.profile || "{}"); } catch {}
+  noteTrustedUrls(ctx, "business-profile", { website: profile.website || "" });
+  // Event runs carry text from outside (a sender's subject line, a hand-off note), so only an owner's own request counts.
+  if (r.trigger === "manual" || r.trigger === "schedule") noteTrustedUrls(ctx, "owner", r.input || "");
+  return ctx.trustedUrls!;
 }
 
 /** Record what a run cost and did, whether it finished or failed partway. */
@@ -321,7 +332,7 @@ export async function runAgent(env: Env, runId: string) {
     await agentLoop(env, {
       system: systemFor(t, agent, org, swarmLines, await activeRules(env, org.id)), user: [t.kickoff || "Do your work.", r.input || ""].filter(Boolean).join("\n\n"), tools, out,
       onTool: agent.swarm_id ? async (tool, ok) => { await swarmEv("tool", tool, { ok }); } : undefined,
-      ctx: { env, orgId: org.id, agentId: agent.id, runId },
+      ctx: { env, orgId: org.id, agentId: agent.id, runId, trustedUrls: seedTrustedUrls(org, r) },
       beforeStep: () => budgetProblem(env, org),
       budget: async (tool) => (await claimAction(env, { orgId: org.id, plan: org.plan, agentId: agent.id, cap: agent.monthly_cap, runId, tool })) || "Monthly action limit reached for this agent or business. Stop and summarise.",
       // Keep running totals on the run row, so a run that dies partway still shows what it cost.

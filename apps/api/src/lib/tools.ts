@@ -16,7 +16,39 @@ import { logActivity } from "./crm";
 import { syncSwarm } from "./swarm";
 import type { ToolDef } from "./llm";
 
-export type ToolCtx = { env: Env; orgId?: string; agentId?: string; runId?: string };
+/**
+ * `trustedUrls` is set for a business's own runs: the pages read-page may open. It starts with the business's website
+ * and links the owner gave, and grows with URLs from search results and saved records (see noteTrustedUrls). Text from
+ * inbox messages and fetched pages never adds to it, so an instruction hidden there can't send data to its own URL.
+ */
+export type ToolCtx = { env: Env; orgId?: string; agentId?: string; runId?: string; trustedUrls?: Set<string> };
+
+/** Tools whose results name pages we may read: search results, and websites on the business's own records. */
+const URL_SOURCES = new Set(["web-research", "company-research", "business-profile", "list-leads"]);
+const normUrl = (raw: string) => { try { const u = new URL(raw); u.hash = ""; return u.toString(); } catch { return null; } };
+
+/** Add the URLs a trusted tool returned (or the owner wrote) to the run's trusted pages. */
+export function noteTrustedUrls(ctx: ToolCtx, source: string, result: unknown) {
+  if (!ctx.trustedUrls || (source !== "owner" && !URL_SOURCES.has(source))) return;
+  const text = typeof result === "string" ? result : JSON.stringify(result ?? "");
+  for (const m of text.matchAll(/https?:\/\/[^\s"'<>\\)]+/g)) { const u = normUrl(m[0].replace(/[.,;]+$/, "")); if (u) ctx.trustedUrls.add(u); }
+  // A bare domain in the business profile ("brightwork.co.uk") counts as its home page.
+  if (source === "business-profile" && result && typeof (result as any).website === "string" && !/^https?:/i.test((result as any).website)) {
+    const u = normUrl("https://" + (result as any).website.trim()); if (u) ctx.trustedUrls.add(u);
+  }
+}
+
+/** In a business run: the exact page was trusted, or it's on a trusted site and carries no query string. */
+function checkTrusted(ctx: ToolCtx, raw: string) {
+  if (!ctx.trustedUrls) return;
+  const u = normUrl(raw);
+  if (u && ctx.trustedUrls.has(u)) return;
+  const url = u ? new URL(u) : null;
+  const hosts = new Set([...ctx.trustedUrls].map((t) => new URL(t).hostname));
+  if (url && !url.search && hosts.has(url.hostname)) return;
+  console.warn("read-page refused", ctx.orgId, ctx.runId, url?.hostname);
+  throw new HttpError(403, "url_not_trusted", "In a business run, read-page only opens pages from search results, the business's or a lead's own website, or a link the owner gave. Search for the page first.");
+}
 export type Tool = {
   slug: string;
   name: string;
@@ -97,7 +129,7 @@ const PUBLIC: Tool[] = [
     slug: "read-page", name: "Read a web page", audience: "public", price_pence: 1,
     description: "The readable text of one public web page, its title, and any email addresses published on it.",
     input_schema: S({ url: str("Full https URL") }, ["url"]),
-    run: async ({ env }, i) => readPage(env, text(i.url, 2000)),
+    run: async (ctx, i) => { const url = text(i.url, 2000); checkTrusted(ctx, url); return readPage(ctx.env, url); },
   },
   {
     slug: "company-research", name: "Company research", audience: "public", price_pence: 8,
