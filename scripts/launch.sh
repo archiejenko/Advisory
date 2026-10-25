@@ -63,6 +63,9 @@ node -e '
   const keep=["SIGNING_JWK","SIGNING_KID","CHANNEL_KEY"].concat(["ADMIN_TOKEN","INGEST_SECRET"].filter(k=>!process.env[k]));
   if (have.includes("SIGNING_JWK")) for (const k of keep) if (have.includes(k)) { delete o[k]; console.log(k+": already set on the Worker, kept"); }
   for (const k of ["ADMIN_TOKEN","INGEST_SECRET"]) if (process.env[k]) o[k]=process.env[k];
+  // A name set in [vars] (SIGNING_KID, say) cannot also be a secret: Cloudflare refuses the whole upload (code 10053).
+  const vars=(fs.readFileSync("wrangler.toml","utf8").match(/^\[vars\]\n([\s\S]*?)(?=^\[)/m)||[,""])[1];
+  for (const k of Object.keys(o)) if (new RegExp("^"+k+"\\s*=","m").test(vars)) { delete o[k]; console.log(k+": set in wrangler.toml [vars], not uploaded as a secret"); }
   fs.writeFileSync(f,JSON.stringify(o));' "$TMP" "$SET"
 $WR secret bulk "$TMP"
 rm -f "$TMP"
