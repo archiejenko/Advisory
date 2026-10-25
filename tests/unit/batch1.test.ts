@@ -117,11 +117,18 @@ describe("S11 inbound sender authentication", () => {
     expect(senderVerified(new Headers(), "a@co.test")).toBe(false);
   });
 
+  it("reads the results as pass, fail or unknown", async () => {
+    const { senderAuth } = await import("../../apps/api/src/lib/inbound");
+    expect(senderAuth(new Headers({ "authentication-results": "mx; spf=pass smtp.mailfrom=a@co.test" }), "a@co.test")).toBe("pass");
+    expect(senderAuth(new Headers({ "authentication-results": "mx; spf=fail smtp.mailfrom=a@co.test" }), "a@co.test")).toBe("fail");
+    expect(senderAuth(new Headers(), "a@co.test")).toBe("unknown");
+  });
+
   it("a forged STOP doesn't suppress the address; an authenticated one does", async () => {
     const { raw, env } = testEnv();
     const org = seedOrg(raw);
     raw.prepare("INSERT INTO lead (id, org_id, company, email, status, created_at) VALUES ('lead_1', ?, 'Co', 'boss@co.test', 'contacted', ?)").run(org.id, iso());
-    await onEmail(email("boss@co.test", `${org.id}-in@in.test`, "STOP"), env);
+    await onEmail(email("boss@co.test", `${org.id}-in@in.test`, "STOP", "spf=fail smtp.mailfrom=boss@co.test; dkim=pass header.d=evil.test"), env);
     expect(raw.prepare("SELECT COUNT(*) AS n FROM suppression").get()).toEqual({ n: 0 });
     expect((raw.prepare("SELECT status FROM lead").get() as any).status).toBe("contacted");
     await onEmail(email("boss@co.test", `${org.id}-in@in.test`, "STOP", "spf=pass smtp.mailfrom=boss@co.test"), env);

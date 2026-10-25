@@ -484,8 +484,8 @@ async function main() {
     ok(act && act.payload.to === "facilities@quayside.example" && act.payload.subject.startsWith("Re: "), JSON.stringify(act));
     ok((await call("POST", `/api/ws/actions/${act.id}/reject`, {}, { cookie: biz })).status === 200, "reject");
     ok((await call("GET", "/api/ws/actions?status=rejected", undefined, { cookie: biz })).json.actions.some((a) => a.id === act.id), "rejected listed");
-    // A forged STOP (no authentication results for the sender's domain) is kept but changes nothing.
-    const forged = ["From: hello@ashworth-hale-solicitors.example", `To: ${to}`, "Subject: Re: Office cleaning", "Message-ID: <f1@forger.example>", "", "STOP", ""].join("\r\n");
+    // A forged STOP (authentication failed for the sender's domain) is kept but changes nothing.
+    const forged = ["From: hello@ashworth-hale-solicitors.example", "Authentication-Results: mx.cloudflare.net; spf=fail smtp.mailfrom=hello@ashworth-hale-solicitors.example; dkim=pass header.d=forger.example", `To: ${to}`, "Subject: Re: Office cleaning", "Message-ID: <f1@forger.example>", "", "STOP", ""].join("\r\n");
     await fetch(`${API}/cdn-cgi/handler/email?from=hello@ashworth-hale-solicitors.example&to=${encodeURIComponent(to)}`, { method: "POST", body: forged });
     ok((await call("GET", "/api/ws/leads", undefined, { cookie: biz })).json.leads.find((l) => l.email === "hello@ashworth-hale-solicitors.example").status !== "unsubscribed", "a forged STOP changes nothing");
     const stop = ["From: hello@ashworth-hale-solicitors.example", "Authentication-Results: mx.cloudflare.net; spf=pass smtp.mailfrom=hello@ashworth-hale-solicitors.example", `To: ${to}`, "Subject: Re: Office cleaning", "Message-ID: <s1@ashworth.example>", "", "STOP", ""].join("\r\n");

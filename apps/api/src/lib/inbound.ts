@@ -21,10 +21,18 @@ import { logActivity, leadForEmail } from "./crm";
 import PostalMime from "postal-mime";
 
 /**
- * Did the sender's domain vouch for this message? Email Routing records SPF, DKIM and DMARC results in
- * Authentication-Results (and ARC-Authentication-Results). A pass counts only when it is for the sender's own domain,
- * so a message from an attacker's domain passing its own checks doesn't vouch for someone else's address.
+ * Did the sender's domain vouch for this message? A pass counts only when it is for the sender's own domain, so a
+ * message from an attacker's domain passing its own checks doesn't vouch for someone else's address.
+ * "pass": SPF, DKIM or DMARC passed for the sender's domain. "fail": results are present and none did.
+ * "unknown": no Authentication-Results header at all. Email Routing itself rejects mail that fails both SPF and DKIM
+ * (and mail failing the sender's DMARC policy), so unknown is treated as acceptable, and logged.
  */
+export function senderAuth(h: { get(name: string): string | null }, from: string): "pass" | "fail" | "unknown" {
+  const results = [h.get("authentication-results"), h.get("arc-authentication-results")].filter(Boolean).join(";").toLowerCase();
+  if (!results) return "unknown";
+  return senderVerified(h, from) ? "pass" : "fail";
+}
+/** True when SPF, DKIM or DMARC passed for the sender's own domain. */
 export function senderVerified(h: { get(name: string): string | null }, from: string) {
   const domain = (from.split("@")[1] || "").toLowerCase().replace(/[>\s]/g, "");
   if (!domain) return false;
@@ -92,9 +100,11 @@ export async function onEmail(message: ForwardableEmailMessage, env: Env) {
     await run(env, "INSERT INTO inbox_message (id, org_id, from_addr, subject, body, status, category, received_at) VALUES (?,?,?,?,?,?,?,?)", id, org.id, from, subject.slice(0, 300), body.slice(0, 20000),
       automated || stop ? "ignored" : "new", automated ? "automated" : stop ? "unsubscribe" : null, nowIso());
     if (automated) return;
-    // The envelope sender can be forged. Only a sender whose own domain vouched for the message can change a lead
-    // or opt out an address; anything else is kept for the inbox agent to read, as information.
-    if (senderVerified(message.headers, from)) {
+    // The envelope sender can be forged. Mail whose authentication results show the sender's domain didn't vouch for
+    // it can't change a lead or opt out an address; it's kept for the inbox agent to read, as information.
+    const auth = senderAuth(message.headers, from);
+    if (auth === "unknown") console.warn("inbound mail without Authentication-Results; relying on Email Routing's own SPF/DKIM check", org.id);
+    if (auth !== "fail") {
       // A reply from someone we emailed marks that lead as replied, and goes on its timeline.
       await run(env, "UPDATE lead SET status = 'replied' WHERE org_id = ? AND email = ? AND status IN ('new','contacted')", org.id, from);
       const leadId = await leadForEmail(env, org.id, from);
@@ -111,7 +121,7 @@ export async function onEmail(message: ForwardableEmailMessage, env: Env) {
   }
   const user = await one<any>(env, "SELECT u.id, u.email, m.org_id FROM user u JOIN membership m ON m.user_id = u.id WHERE u.email = ? LIMIT 1", from);
   if (!user) return; // not a customer: drop silently, never reply to strangers
-  if (!senderVerified(message.headers, from)) return; // a forged customer address would spend their register checks
+  if (senderAuth(message.headers, from) === "fail") return; // a forged customer address would spend their register checks
   const parsed = await parseMessage(await new Response(message.raw).arrayBuffer());
   const input = requestFrom(parsed.subject || message.headers.get("subject") || "", parsed.text);
   if (input.length < 2) return;
