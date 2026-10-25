@@ -13,6 +13,7 @@ import { pruneRateWindows, hit } from "./limits";
 import { runAgent, dueAgents, sweepRuns, startDue } from "./agents";
 import { safeOutboundUrl } from "./web";
 import { logError } from "./log";
+import { TRIAL_DAYS } from "./billing";
 
 export type Job =
   | { type: "import"; id: string; org_id: string; step: "split" | "match"; from?: number }
@@ -317,7 +318,8 @@ const REMOVED = "(Removed after 90 days.)";
  * chunks, so one slow step can't stop the rest. Counts go to the audit log, never contents.
  */
 export async function retention(env: Env, nowMs = Date.now()) {
-  const cutoff = isoAgo(30, nowMs), d90 = isoAgo(90, nowMs), d97 = isoAgo(97, nowMs);
+  // Bodies are cleared from 90 days back to a year: wide enough to catch up after missed days, narrow enough to stay small.
+  const cutoff = isoAgo(30, nowMs), d90 = isoAgo(90, nowMs), yearBack = isoAgo(455, nowMs);
   const done: Record<string, number | string> = {};
   const step = async (name: string, f: () => Promise<number>) => {
     try { done[name] = await f(); } catch (e: any) { done[name] = "failed: " + String(e?.message || e).slice(0, 120); console.error("retention step failed", name, e); }
@@ -333,6 +335,21 @@ export async function retention(env: Env, nowMs = Date.now()) {
       ]);
     }
     return old.length;
+  });
+  // A trial that ended without a plan is closed 30 days after it ended (so it's purged with the cancelled ones below),
+  // and its owner is warned a week before.
+  await step("trials", async () => {
+    const warnFrom = isoAgo(TRIAL_DAYS + 24, nowMs), warnTo = isoAgo(TRIAL_DAYS + 23, nowMs);
+    const warn = await all<any>(env, "SELECT id, name FROM org WHERE plan = 'trial' AND cancelled_at IS NULL AND created_at >= ? AND created_at < ?", warnFrom, warnTo);
+    for (const o of warn) {
+      const owner = await one<any>(env, "SELECT u.email FROM membership m JOIN user u ON u.id = m.user_id WHERE m.org_id = ? AND m.role = 'owner' LIMIT 1", o.id);
+      if (owner) await sendMail(env, { kind: "transactional", to: owner.email, subject: `Your Agent House workspace for ${o.name} will be deleted in 7 days`, text: `Your free trial ended over three weeks ago. In 7 days we'll delete the workspace and everything in it.
+To keep it, choose a plan: ${env.APP_URL}#/workspace/usage
+To take a copy first, export it from the same page.` });
+    }
+    const ended = await all<any>(env, "SELECT id, created_at FROM org WHERE plan = 'trial' AND cancelled_at IS NULL AND created_at < ? LIMIT 500", isoAgo(TRIAL_DAYS + 30, nowMs));
+    for (const o of ended) await run(env, "UPDATE org SET cancelled_at = ? WHERE id = ? AND cancelled_at IS NULL", new Date(Date.parse(o.created_at) + TRIAL_DAYS * DAY_MS).toISOString(), o.id);
+    return ended.length;
   });
   // Each cancelled business is purged by its own queued job, so one large workspace can't stall the rest.
   await step("orgs", async () => {
@@ -360,10 +377,10 @@ export async function retention(env: Env, nowMs = Date.now()) {
   });
   await step("register_events", () => chunked(env, `DELETE FROM register_event WHERE rowid IN (SELECT rowid FROM register_event WHERE processed_at < ? LIMIT ${CHUNK})`, [d90]));
   // Message and draft bodies are cleared after 90 days; the rows stay, so history and counts still add up.
-  // Only the last week past the line is looked at each day, so the scan stays small however old the workspace.
-  await step("inbox_bodies", () => chunked(env, `UPDATE inbox_message SET body = NULL WHERE rowid IN (SELECT rowid FROM inbox_message WHERE received_at < ? AND received_at >= ? AND body IS NOT NULL LIMIT ${CHUNK})`, [d90, d97]));
+  // Only the year past the line is looked at each day, so the scan stays bounded however old the workspace.
+  await step("inbox_bodies", () => chunked(env, `UPDATE inbox_message SET body = NULL WHERE rowid IN (SELECT rowid FROM inbox_message WHERE received_at < ? AND received_at >= ? AND body IS NOT NULL LIMIT ${CHUNK})`, [d90, yearBack]));
   await step("draft_bodies", () => chunked(env, `UPDATE agent_action SET payload = json_set(payload, '$.body', '${REMOVED}') WHERE rowid IN (SELECT rowid FROM agent_action
-    WHERE decided_at < ? AND decided_at >= ? AND status != 'proposed' AND json_extract(payload, '$.body') IS NOT NULL AND json_extract(payload, '$.body') != '${REMOVED}' LIMIT ${CHUNK})`, [d90, d97]));
+    WHERE decided_at < ? AND decided_at >= ? AND status != 'proposed' AND json_extract(payload, '$.body') IS NOT NULL AND json_extract(payload, '$.body') != '${REMOVED}' LIMIT ${CHUNK})`, [d90, yearBack]));
   await run(env, "INSERT INTO audit_log (id, org_id, actor, action, detail, at) VALUES (?,?,?,?,?,?)", newId("aud"), null, "system", "retention", JSON.stringify(done), nowIso());
   return done;
 }

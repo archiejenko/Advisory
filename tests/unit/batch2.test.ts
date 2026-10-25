@@ -74,3 +74,75 @@ describe("R4 error reporting", () => {
     expect(raw.prepare("SELECT COUNT(*) AS n FROM dev_outbox WHERE to_addr = 'op@ah.test'").get()).toEqual({ n: 1 });
   });
 });
+
+/* ---------- D2: close and export a workspace; ended trials don't keep data for ever ---------- */
+import { retention } from "../../apps/api/src/lib/jobs";
+import { sha256Hex } from "../../packages/core/util";
+async function signedIn(raw: any, env: any, orgId: string, userId: string) {
+  raw.prepare("INSERT INTO session (id_hash, user_id, org_id, expires_at) VALUES (?, ?, ?, ?)").run(await sha256Hex("sid_" + userId), userId, orgId, iso(-864e5));
+  return (path: string, init: RequestInit = {}) => call(env, "/api/ws" + path, { ...init, headers: { "Content-Type": "application/json", Cookie: "ah_session=sid_" + userId, ...(init.headers || {}) } });
+}
+describe("D2 close, export, trial expiry", () => {
+  it("an owner can close the workspace: agents stop, and it's purged after 30 days", async () => {
+    const { raw, env } = testEnv();
+    const org = seedOrg(raw, { plan: "growth" });
+    raw.prepare("UPDATE subscription SET status = 'pilot' WHERE org_id = ?").run(org.id);
+    const ws = await signedIn(raw, env, org.id, org.user);
+    expect((await ws("/org/close", { method: "POST", body: JSON.stringify({ confirm: "wrong name" }) })).status).toBe(400);
+    expect((await ws("/org/close", { method: "POST", body: JSON.stringify({ confirm: "Brightwork org_a" }) })).status).toBe(200);
+    expect((raw.prepare("SELECT cancelled_at FROM org").get() as any).cancelled_at).toBeTruthy();
+  });
+  it("closing waits for an active paid plan to be cancelled in billing first", async () => {
+    const { raw, env } = testEnv();
+    const org = seedOrg(raw, { plan: "growth" });
+    raw.prepare("UPDATE subscription SET status = 'active', stripe_subscription = 'sub_1' WHERE org_id = ?").run(org.id);
+    const ws = await signedIn(raw, env, org.id, org.user);
+    expect((await ws("/org/close", { method: "POST", body: JSON.stringify({ confirm: "Brightwork org_a" }) })).status).toBe(409);
+  });
+  it("an owner can export the workspace's data, without credentials", async () => {
+    const { raw, env } = testEnv();
+    const org = seedOrg(raw);
+    raw.prepare("INSERT INTO lead (id, org_id, company, email, created_at) VALUES ('l1', ?, 'Co', 'a@co.test', ?)").run(org.id, iso());
+    raw.prepare("INSERT INTO channel (id, org_id, kind, label, target_enc, created_at) VALUES ('c1', ?, 'slack', 'S', 'secret', ?)").run(org.id, iso());
+    const ws = await signedIn(raw, env, org.id, org.user);
+    const r = await ws("/export");
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-disposition")).toContain("attachment");
+    const j: any = await r.json();
+    expect(j.tables.lead).toEqual([expect.objectContaining({ id: "l1", company: "Co" })]);
+    expect(j.tables.channel[0].target_enc).toBeUndefined();
+    expect(j.tables.session).toBeUndefined();
+    expect(j.tables.api_key).toBeUndefined();
+  });
+  it("a viewer can't export or close", async () => {
+    const { raw, env } = testEnv();
+    const org = seedOrg(raw);
+    raw.prepare("INSERT INTO user (id, email, created_at) VALUES ('usr_v', 'v@x.test', ?)").run(iso());
+    raw.prepare("INSERT INTO membership (org_id, user_id, role) VALUES (?, 'usr_v', 'viewer')").run(org.id);
+    const ws = await signedIn(raw, env, org.id, "usr_v");
+    expect((await ws("/export")).status).toBe(403);
+    expect((await ws("/org/close", { method: "POST", body: JSON.stringify({ confirm: "Brightwork org_a" }) })).status).toBe(403);
+  });
+  it("retention warns a week before, then closes a trial that ended 30 days ago with no plan", async () => {
+    const { raw, env } = testEnv();
+    seedOrg(raw, { id: "org_old", plan: "trial", created_at: iso(45 * 864e5) });
+    seedOrg(raw, { id: "org_warn", plan: "trial", created_at: iso(37.5 * 864e5) });
+    seedOrg(raw, { id: "org_new", plan: "trial", created_at: iso(5 * 864e5) });
+    raw.prepare("UPDATE subscription SET status = 'trialing'").run();
+    await retention(env);
+    const closed = (raw.prepare("SELECT id FROM org WHERE cancelled_at IS NOT NULL ORDER BY id").all() as any[]).map((r) => r.id);
+    expect(closed).toEqual(["org_old"]);
+    expect((raw.prepare("SELECT to_addr, subject FROM dev_outbox").all() as any[]).map((m) => m.to_addr)).toEqual(["owner@org_warn.test"]);
+  });
+});
+
+/* ---------- D3: clearing old message bodies catches up after missed days ---------- */
+describe("D3 retention catch-up", () => {
+  it("clears bodies older than 90 days even when retention missed weeks", async () => {
+    const { raw, env } = testEnv();
+    const org = seedOrg(raw);
+    raw.prepare("INSERT INTO inbox_message (id, org_id, from_addr, subject, body, received_at) VALUES ('m1', ?, 'a@b.test', 's', 'old text', ?)").run(org.id, iso(120 * 864e5));
+    await retention(env);
+    expect((raw.prepare("SELECT body FROM inbox_message WHERE id = 'm1'").get() as any).body).toBeNull();
+  });
+});

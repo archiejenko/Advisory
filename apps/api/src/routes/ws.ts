@@ -11,7 +11,7 @@ import { seal } from "../lib/crypto";
 import { testChannel } from "../lib/delivery";
 import { checkInput, profileFields } from "../lib/truth";
 import { addClient, summarise } from "../lib/imports";
-import { prospectRows } from "../lib/jobs";
+import { prospectRows, ORG_TABLES } from "../lib/jobs";
 import { registerAgentRoutes } from "./agents";
 import { registerSwarmRoutes } from "./swarms";
 import { registerTodayRoutes } from "./today";
@@ -357,6 +357,45 @@ ws.get("/prospects/file", async (c) => {
   const obj = await c.env.FILES.get(`prospects/${c.get("orgId")}/${month}.csv`);
   if (!obj) throw notFound("Prospect list for " + month);
   return new Response(obj.body, { headers: { "Content-Type": "text/csv", "Content-Disposition": `attachment; filename="prospects-${month}.csv"` } });
+});
+
+/* ---------- Closing a workspace, and taking its data ---------- */
+/**
+ * The owner closes the workspace: agents stop at once (a cancelled org can't run), the team can still sign in to
+ * export for 30 days, then retention deletes everything (purgeOrg). A paid plan is cancelled in billing first, so
+ * Stripe stays the source of truth for money.
+ */
+ws.post("/org/close", owner, async (c) => {
+  const b = await body(c, z.object({ confirm: z.string().max(200) }));
+  const db = c.get("db");
+  const org = await db.one<any>("SELECT name, cancelled_at FROM org WHERE id = ?1");
+  if (b.confirm.trim() !== org.name) throw bad("Type the workspace's name exactly to confirm.");
+  if (org.cancelled_at) return c.json({ ok: true, cancelled_at: org.cancelled_at });
+  const sub = await db.one<any>("SELECT status, stripe_subscription FROM subscription WHERE org_id = ?1");
+  if (sub?.stripe_subscription && ["active", "trialing", "past_due", "incomplete"].includes(sub.status)) throw new HttpError(409, "plan_active", "Cancel your plan in Usage and plan first, then close the workspace.");
+  const at = nowIso();
+  await db.run("UPDATE org SET cancelled_at = ?2 WHERE id = ?1", at);
+  await audit(c.env, c.get("orgId"), c.get("user").id, "org_closed", c.get("orgId"));
+  return c.json({ ok: true, cancelled_at: at, deleted_after_days: 30 });
+});
+
+/** Everything the workspace holds, as JSON (UK GDPR portability). Credentials and sessions are left out. */
+const EXPORT_SKIP = new Set(["session", "api_key"]);
+const EXPORT_DROP: Record<string, string[]> = { channel: ["target_enc"] };
+ws.get("/export", owner, async (c) => {
+  const db = c.get("db");
+  const tables: Record<string, any[]> = {};
+  for (const t of ORG_TABLES) {
+    if (EXPORT_SKIP.has(t)) continue;
+    const rows = await db.all<any>(`SELECT * FROM ${t} WHERE org_id = ?1 LIMIT 50000`);
+    tables[t] = rows.map((r) => { for (const k of EXPORT_DROP[t] || []) delete r[k]; return r; });
+  }
+  const org = await db.one<any>("SELECT id, name, profile, plan, created_at FROM org WHERE id = ?1");
+  const people = await db.all<any>("SELECT u.id, u.email, u.name, m.role FROM membership m JOIN user u ON u.id = m.user_id WHERE m.org_id = ?1");
+  await audit(c.env, c.get("orgId"), c.get("user").id, "workspace_exported");
+  return new Response(JSON.stringify({ exported_at: nowIso(), org, people, tables, note: "Agent run transcripts are kept separately; ask us for them." }), {
+    headers: { "Content-Type": "application/json; charset=utf-8", "Content-Disposition": `attachment; filename="agent-house-export-${org.id}.json"`, "Cache-Control": "no-store" },
+  });
 });
 
 /* ---------- Audit and billing ---------- */
