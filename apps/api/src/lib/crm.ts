@@ -48,6 +48,7 @@ export async function saveContact(env: Env, orgId: string, c: { lead_id?: string
 export async function saveDeal(env: Env, orgId: string, d: { deal_id?: string; lead_id?: string | null; contact_id?: string | null; title?: string; value_pence?: number; stage?: string; status?: "open" | "won" | "lost"; expected_close?: string | null }, by: { actor: string; agentId?: string | null }) {
   const now = nowIso();
   if (d.lead_id && !(await one(env, "SELECT id FROM lead WHERE id = ? AND org_id = ?", d.lead_id, orgId))) throw new HttpError(404, "not_found", "No company with that id.");
+  if (d.contact_id && !(await one(env, "SELECT id FROM contact WHERE id = ? AND org_id = ?", d.contact_id, orgId))) throw new HttpError(404, "not_found", "No contact with that id.");
   if (d.value_pence !== undefined && (!Number.isInteger(d.value_pence) || d.value_pence < 0 || d.value_pence > 1e11)) throw new HttpError(400, "invalid_request", "Give the value in whole pence.");
   const close = d.expected_close && /^\d{4}-\d{2}-\d{2}$/.test(d.expected_close) ? d.expected_close : null;
   let id = d.deal_id;

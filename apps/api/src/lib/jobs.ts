@@ -367,6 +367,10 @@ To take a copy first, export it from the same page.` });
     await pruneRateWindows(env, new Date(nowMs));
     return 1;
   });
+  // Bookings a year after the call, local outbox mail after 30 days, seen webhook ids after 90 (Stripe retries for 3).
+  await step("bookings", () => chunked(env, `DELETE FROM booking WHERE rowid IN (SELECT rowid FROM booking WHERE slot < ? LIMIT ${CHUNK})`, [isoAgo(365, nowMs).slice(0, 16)]));
+  await step("dev_outbox", () => chunked(env, `DELETE FROM dev_outbox WHERE rowid IN (SELECT rowid FROM dev_outbox WHERE at < ? LIMIT ${CHUNK})`, [cutoff]));
+  await step("webhook_seen", () => chunked(env, `DELETE FROM webhook_seen WHERE rowid IN (SELECT rowid FROM webhook_seen WHERE at < ? LIMIT ${CHUNK})`, [d90]));
   await step("x402_payments", () => chunked(env, `DELETE FROM x402_payment WHERE rowid IN (SELECT rowid FROM x402_payment WHERE at < ? LIMIT ${CHUNK})`, [isoAgo(1, nowMs)]));
   await step("magic_links", () => chunked(env, `DELETE FROM magic_link WHERE rowid IN (SELECT rowid FROM magic_link WHERE expires_at < ? LIMIT ${CHUNK})`, [cutoff]));
   await step("sessions", () => chunked(env, `DELETE FROM session WHERE rowid IN (SELECT rowid FROM session WHERE expires_at < ? LIMIT ${CHUNK})`, [new Date(nowMs).toISOString()]));

@@ -258,6 +258,8 @@ mcp.post("/", async (c) => {
     return ok(await callTool(c, slug, a));
   } catch (e: any) {
     if (e instanceof HttpError) return fail(e.message); // invalid key, credits exhausted, not found
-    throw e;
+    // Anything else is still answered in JSON-RPC, so an MCP client gets an error it can show, not a bare 500.
+    console.error(JSON.stringify({ level: "error", event: "mcp_tool_failed", tool: slug, error: String(e?.message || e).slice(0, 300) }));
+    return c.json(rpcErr(id, -32603, "The tool failed on our side. It has been logged; try again shortly."));
   }
 });

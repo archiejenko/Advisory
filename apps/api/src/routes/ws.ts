@@ -364,9 +364,17 @@ ws.get("/usage/export", async (c) => {
 });
 
 /* ---------- Prospects ---------- */
+const PreviewQuery = z.object({
+  districts: z.string().optional().transform((v) => v?.split(",").map((d) => d.trim().toUpperCase()).filter(Boolean))
+    .pipe(z.array(z.string().regex(/^[A-Z]{1,2}\d{1,2}[A-Z]?$/, "districts: postcode districts like M1, SK4")).max(200).optional()),
+  sic: z.string().optional().transform((v) => v?.split(",").map((s) => s.trim()).filter(Boolean)).pipe(z.array(z.string().regex(/^\d{2}$/, "sic: two-digit codes like 69")).max(40).optional()),
+  age: z.coerce.number().int().min(0).max(50).optional(),
+});
 ws.get("/prospects/preview", async (c) => {
   const org = await c.get("db").one("SELECT * FROM org WHERE id = ?1");
-  const o = { ...org, prospect_districts: c.req.query("districts") ? JSON.stringify(c.req.query("districts")!.split(",")) : org.prospect_districts, prospect_sic: c.req.query("sic") ? JSON.stringify(c.req.query("sic")!.split(",")) : org.prospect_sic, prospect_min_age: c.req.query("age") ?? org.prospect_min_age };
+  const q = PreviewQuery.safeParse({ districts: c.req.query("districts"), sic: c.req.query("sic"), age: c.req.query("age") });
+  if (!q.success) throw bad(q.error.issues[0].message);
+  const o = { ...org, prospect_districts: q.data.districts?.length ? JSON.stringify(q.data.districts) : org.prospect_districts, prospect_sic: q.data.sic?.length ? JSON.stringify(q.data.sic) : org.prospect_sic, prospect_min_age: q.data.age ?? org.prospect_min_age };
   const rows = await prospectRows(c.env, o, 50);
   const loaded = await one<any>(c.env, "SELECT MAX(loaded_month) AS m, COUNT(*) AS n FROM company_index");
   return c.json({ index_month: loaded?.m || null, index_size: loaded?.n || 0, rows: rows.map((r) => ({ name: r.name, number: r.number, district: r.district, sic: r.sic, incorporated: r.incorporated })) });
