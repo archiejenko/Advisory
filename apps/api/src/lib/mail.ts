@@ -1,6 +1,7 @@
 // Outbound email. MAIL_MODE: "outbox" (local development: stored in dev_outbox),
 // "cloudflare" (Cloudflare Email Service binding SEND_EMAIL), or "http" (any provider with a JSON send endpoint).
 import { newId, nowIso } from "../../../../packages/core/util";
+import { fetchT } from "./fetch";
 import { type Env, one, run } from "./db";
 
 /**
@@ -28,7 +29,7 @@ export async function sendMail(env: Env, m: Mail): Promise<"sent" | "suppressed"
     await env.SEND_EMAIL.send({ to: m.to, from: env.MAIL_FROM, subject: m.subject, text: m.text, ...(m.replyTo ? { replyTo: m.replyTo } : {}) });
     return "sent";
   }
-  const res = await fetch(env.MAIL_HTTP_URL, {
+  const res = await fetchT(env.MAIL_HTTP_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.MAIL_HTTP_KEY },
     body: JSON.stringify({ from: env.MAIL_FROM, to: [m.to], subject: m.subject, text: m.text, ...(m.replyTo ? { reply_to: m.replyTo } : {}) }),

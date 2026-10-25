@@ -1,6 +1,7 @@
 // Adapters for the three public registers. Each returns facts with their source and retrieval time.
 // Companies House calls go through a shared rate limiter (600 requests per 5 minutes by default).
 import type { CompanyRecord } from "../../../../packages/core/checks";
+import { fetchT } from "./fetch";
 import { nowIso } from "../../../../packages/core/util";
 import { type Env, one, run } from "./db";
 
@@ -40,7 +41,7 @@ async function takeToken(env: Env, cost = 1) {
 
 async function ch(env: Env, path: string): Promise<any | null> {
   await takeToken(env);
-  const res = await fetch(env.CH_API_BASE.replace(/\/$/, "") + path, {
+  const res = await fetchT(env.CH_API_BASE.replace(/\/$/, "") + path, {
     headers: { Authorization: "Basic " + btoa(env.CH_API_KEY + ":"), Accept: "application/json" },
   });
   if (res.status === 404) return null;
@@ -100,7 +101,7 @@ export async function fetchCompany(env: Env, number: string): Promise<CompanyRec
 export async function gazetteNotices(env: Env, number: string): Promise<NonNullable<CompanyRecord["gazette"]>> {
   if (!env.GAZETTE_BASE) return [];
   try {
-    const res = await fetch(`${env.GAZETTE_BASE.replace(/\/$/, "")}/notice/data.json?company-number=${number}`);
+    const res = await fetchT(`${env.GAZETTE_BASE.replace(/\/$/, "")}/notice/data.json?company-number=${number}`);
     if (!res.ok) return [];
     const j: any = await res.json();
     return (j.notices || []).map((n: any) => ({
@@ -114,7 +115,7 @@ export async function gazetteNotices(env: Env, number: string): Promise<NonNulla
 export async function fcaStatus(env: Env, number: string): Promise<{ status: string | null; frn: string | null; unavailable?: boolean }> {
   if (!env.FCA_BASE) return { status: null, frn: null, unavailable: true };
   try {
-    const res = await fetch(`${env.FCA_BASE.replace(/\/$/, "")}/Firm/search?companyNumber=${number}`, {
+    const res = await fetchT(`${env.FCA_BASE.replace(/\/$/, "")}/Firm/search?companyNumber=${number}`, {
       headers: { "X-Auth-Email": env.FCA_EMAIL || "", "X-Auth-Key": env.FCA_KEY || "" },
     });
     if (!res.ok) return { status: null, frn: null, unavailable: true };

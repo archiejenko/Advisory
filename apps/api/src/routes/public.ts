@@ -1,6 +1,7 @@
 // Public forms: health checks, call booking, developer API keys and credits. No sign-in;
 // protected by a per-IP rate limit and, when TURNSTILE_SECRET is set, Cloudflare Turnstile.
 import { Hono, type Context } from "hono";
+import { fetchT } from "../lib/fetch";
 import { z } from "zod";
 import { newId, nowIso, randomToken, sha256Hex } from "../../../../packages/core/util";
 import { type Env, one, all, run } from "../lib/db";
@@ -17,7 +18,7 @@ export const SIGNUP_PREFIX = "signup:";
 
 async function turnstile(c: Context<{ Bindings: Env }>, token: string | null | undefined) {
   if (!c.env.TURNSTILE_SECRET) return;
-  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+  const res = await fetchT("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
     method: "POST", body: new URLSearchParams({ secret: c.env.TURNSTILE_SECRET, response: token || "", remoteip: c.req.header("CF-Connecting-IP") || "" }),
   });
   const j: any = await res.json();

@@ -3,6 +3,7 @@
 // The legacy v1 X-PAYMENT header is accepted too. Field names follow the x402 spec; confirm against the
 // facilitator you choose before going live.
 import type { Context } from "hono";
+import { fetchT } from "./fetch";
 import { b64json, fromB64json, newId, nowIso, sha256Hex } from "../../../../packages/core/util";
 import { type Env, one, run } from "./db";
 import { HttpError } from "./http";
@@ -45,7 +46,7 @@ function requirements(env: Env, price: Price, url: string) {
 }
 
 async function facilitator(env: Env, path: "/verify" | "/settle", payload: unknown, req: any) {
-  const res = await fetch(env.FACILITATOR_URL.replace(/\/$/, "") + path, {
+  const res = await fetchT(env.FACILITATOR_URL.replace(/\/$/, "") + path, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ x402Version: 2, paymentPayload: payload, paymentRequirements: req }),
   });

@@ -1,6 +1,7 @@
 // Sending alerts to an MSP's channels: Teams (Workflows webhook, Adaptive Card), Slack (incoming webhook), email.
 // Each (alert, channel, kind) is sent at most once: the delivery row is the lock.
 import { newId, nowIso, longDate } from "../../../../packages/core/util";
+import { fetchT } from "./fetch";
 import { type Env, one, all, run } from "./db";
 import { unseal } from "./crypto";
 import { sendMail } from "./mail";
@@ -48,7 +49,8 @@ function emailText(env: Env, a: AlertRow, company: string) {
 }
 
 async function post(url: string, payload: unknown) {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  // A Teams or Slack URL is checked against its host when saved; don't follow it anywhere else.
+  const res = await fetchT(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), redirect: "manual" });
   if (!res.ok) throw new Error(`Channel returned ${res.status}`);
 }
 

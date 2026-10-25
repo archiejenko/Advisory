@@ -1,5 +1,6 @@
 // The job runner: one queue consumer and the scheduled tasks. Every step is safe to retry.
 import { newId, nowIso, longDate } from "../../../../packages/core/util";
+import { fetchT } from "./fetch";
 import { toCsv } from "../../../../packages/core/csv";
 import { type Env, one, all, run } from "./db";
 import { RateLimited, withLane } from "./registers";
@@ -53,7 +54,7 @@ export async function handleJob(rawEnv: Env, job: Job) {
       // Checked again at send time, and redirects are not followed: a webhook can't be pointed at a private address.
       let url: URL;
       try { url = safeOutboundUrl(env, job.url, env.ALLOW_ANY_WEBHOOK_HOST === "true"); } catch (e: any) { console.error("webhook refused", job.url, e?.message); return; }
-      const res = await fetch(url.toString(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(job.body), redirect: "manual" });
+      const res = await fetchT(url.toString(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(job.body), redirect: "manual" });
       if (!res.ok) throw new Error(`Webhook returned ${res.status}`);
       return;
     }
@@ -146,7 +147,7 @@ export async function pollGazette(env: Env) {
   if (!env.GAZETTE_BASE) return 0;
   const since = (await env.CACHE.get("gazette:since")) || new Date(Date.now() - 864e5).toISOString();
   let newest = since;
-  const res = await fetch(`${env.GAZETTE_BASE.replace(/\/$/, "")}/notice/latest.json?since=${encodeURIComponent(since)}`);
+  const res = await fetchT(`${env.GAZETTE_BASE.replace(/\/$/, "")}/notice/latest.json?since=${encodeURIComponent(since)}`);
   if (!res.ok) return 0;
   const j: any = await res.json();
   let n = 0;

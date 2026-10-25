@@ -1,5 +1,6 @@
 // Stripe over its REST API (no SDK, so it runs in a Worker). Stripe stays the source of truth for payment.
 import { HttpError } from "./http";
+import { fetchT } from "./fetch";
 import type { Env } from "./db";
 
 function form(obj: Record<string, string | number | undefined>) {
@@ -9,7 +10,7 @@ function form(obj: Record<string, string | number | undefined>) {
 }
 
 export async function stripe(env: Env, path: string, params: Record<string, string | number | undefined>) {
-  const res = await fetch((env.STRIPE_BASE || "https://api.stripe.com").replace(/\/$/, "") + path, {
+  const res = await fetchT((env.STRIPE_BASE || "https://api.stripe.com").replace(/\/$/, "") + path, {
     method: "POST",
     headers: { Authorization: "Bearer " + env.STRIPE_SECRET, "Content-Type": "application/x-www-form-urlencoded" },
     body: form(params),

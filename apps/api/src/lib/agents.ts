@@ -18,6 +18,11 @@ import { budgetProblem, requireBudget } from "./budget";
 import { hit } from "./limits";
 
 export const MAX_STEPS = 8;
+/**
+ * No new model step starts after this long. One step can take about 7.5 minutes at worst (four retries of a
+ * 90-second call), so a run always ends before the stuck-run sweep (STUCK_MINUTES) would fail it mid-work.
+ */
+export const RUN_DEADLINE_MS = 6 * 60000;
 /** Runs one business may start in an hour, whatever starts them (RUNS_PER_HOUR overrides). */
 export const RUNS_PER_HOUR = 120;
 const SCHEDULED = new Set(["weekdays", "daily", "weekly", "monthly"]);
@@ -189,7 +194,7 @@ export async function agentLoop(env: Env, o: LoopOpts): Promise<LoopOut> {
   const maxChars = o.maxResultChars ?? 14000;
   for (let step = 0; step < (o.maxSteps || MAX_STEPS); step++) {
     const stop = o.beforeStep ? await o.beforeStep() : null;
-    if (stop) throw new HttpError(402, "budget_used", stop);
+    if (stop) throw new HttpError(409, "run_stopped", stop);
     const r = await claude(env, { system: o.system, messages, tools: defs });
     out.steps++;
     out.tokensIn += r.usage?.input_tokens || 0; out.tokensOut += r.usage?.output_tokens || 0;
@@ -299,6 +304,7 @@ export async function runAgent(env: Env, runId: string) {
     await (env.AGENT_JOBS ?? env.JOBS).send({ type: "agent_run", run_id: runId }, { delaySeconds: SLOT_WAIT_SEC });
     return "deferred";
   }
+  const startedAt = Date.now();
   const r = await one<any>(env, "SELECT * FROM agent_run WHERE id = ?", runId);
   if (!r) return "skipped"; // deleted between claim and read (the workspace was purged)
   const agent = await one<any>(env, "SELECT * FROM agent WHERE id = ?", r.agent_id);
@@ -333,7 +339,9 @@ export async function runAgent(env: Env, runId: string) {
       system: systemFor(t, agent, org, swarmLines, await activeRules(env, org.id)), user: [t.kickoff || "Do your work.", r.input || ""].filter(Boolean).join("\n\n"), tools, out,
       onTool: agent.swarm_id ? async (tool, ok) => { await swarmEv("tool", tool, { ok }); } : undefined,
       ctx: { env, orgId: org.id, agentId: agent.id, runId, trustedUrls: seedTrustedUrls(org, r) },
-      beforeStep: () => budgetProblem(env, org),
+      beforeStep: async () => Date.now() - startedAt > Number(env.RUN_DEADLINE_MS || RUN_DEADLINE_MS)
+        ? "The run reached its time limit. What it did so far is saved; run it again to carry on."
+        : budgetProblem(env, org),
       budget: async (tool) => (await claimAction(env, { orgId: org.id, plan: org.plan, agentId: agent.id, cap: agent.monthly_cap, runId, tool })) || "Monthly action limit reached for this agent or business. Stop and summarise.",
       // Keep running totals on the run row, so a run that dies partway still shows what it cost.
       onStep: async (o) => { await run(env, "UPDATE agent_run SET steps = ?, tool_calls = ?, tokens_in = ?, tokens_out = ?, cost_pence = ? WHERE id = ?", o.steps, o.toolCalls.length, o.tokensIn + o.cacheWrite + o.cacheRead, o.tokensOut, loopCost(env, o), runId); },

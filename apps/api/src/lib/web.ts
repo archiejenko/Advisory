@@ -1,5 +1,6 @@
 // Web research for agents: search (Brave Search API shape) and reading one public page as text.
 import type { Env } from "./db";
+import { fetchT } from "./fetch";
 import { UpstreamError } from "./registers";
 import { HttpError } from "./http";
 
@@ -11,7 +12,7 @@ export async function webSearch(env: Env, query: string, count = 8): Promise<Sea
   const cacheKey = `search:${count}:${query.toLowerCase().trim()}`;
   const hit = await env.CACHE.get(cacheKey, "json");
   if (hit) return hit as SearchResult[];
-  const res = await fetch(`${base}/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=GB`, {
+  const res = await fetchT(`${base}/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=GB`, {
     headers: { Accept: "application/json", "X-Subscription-Token": env.SEARCH_API_KEY },
   });
   if (!res.ok) throw new UpstreamError("Web search", res.status, `Search returned ${res.status}`);
