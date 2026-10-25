@@ -3,6 +3,13 @@ main = "apps/api/src/index.ts"
 compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Live at www.ejtech.co.uk. The apex is attached too and redirects to www (see CANONICAL_HOST).
+# Both need the ejtech.co.uk zone active on this Cloudflare account before `wrangler deploy` will attach them.
+routes = [
+  { pattern = "www.ejtech.co.uk", custom_domain = true },
+  { pattern = "ejtech.co.uk", custom_domain = true },
+]
+
 # Run the Worker near the database, not near the visitor: a Floor poll or an agent run makes many D1 queries in a row.
 [placement]
 mode = "smart"
@@ -16,7 +23,8 @@ head_sampling_rate = 0.2
 [assets]
 directory = "./apps/web/dist"
 binding = "ASSETS"
-run_worker_first = ["/api/*", "/v1/*", "/r/*", "/.well-known/*", "/mcp", "/mcp/*", "/llms.txt"]
+# Every request reaches the Worker first so the apex can redirect to www; the catch-all route serves the assets.
+run_worker_first = true
 
 [[d1_databases]]
 binding = "DB"
@@ -72,8 +80,8 @@ name = "WS_LIMITER"
 namespace_id = "1001"
 simple = { limit = 300, period = 60 }
 
-# Outbound email (MAIL_MODE = "cloudflare"). Uncomment once Cloudflare email sending is enabled on the account,
-# or set MAIL_MODE = "http" with MAIL_HTTP_URL and MAIL_HTTP_KEY for another provider.
+# Outbound email goes through Resend (MAIL_MODE = "http" in [vars], key in the MAIL_HTTP_KEY secret).
+# To switch to Cloudflare's own sending later, uncomment this and set MAIL_MODE = "cloudflare".
 # [[send_email]]
 # name = "SEND_EMAIL"
 
@@ -87,8 +95,9 @@ binding = "AI"
 crons = ["*/15 * * * *", "*/30 * * * *", "0 6 * * *", "0 7 * * *", "0 8 1-3 * *", "0 3 * * *"]
 
 [vars]
-APP_URL = "https://agenthouse.example"
-API_URL = "https://agenthouse.example"
+APP_URL = "https://www.ejtech.co.uk/"
+API_URL = "https://www.ejtech.co.uk"
+CANONICAL_HOST = "www.ejtech.co.uk"   # any other host on the zone (the apex) gets a 301 to this one
 CH_API_BASE = "https://api.company-information.service.gov.uk"
 CH_RATE_LIMIT = "600"
 GAZETTE_BASE = ""
@@ -98,14 +107,15 @@ X402_NETWORK = "eip155:8453"
 X402_ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 X402_PAY_TO = "REPLACE_WITH_RECEIVING_WALLET"
 SIGNING_KID = "ah-2026-10"
-MAIL_MODE = "cloudflare"
-MAIL_FROM = "Agent House <alerts@agenthouse.example>"
+MAIL_MODE = "http"                 # Resend: its /emails API takes exactly the JSON mail.ts sends
+MAIL_HTTP_URL = "https://api.resend.com/emails"
+MAIL_FROM = "Agent House <hello@ejtech.co.uk>"
 SENDS_LIVE = "false"
 COOKIE_SECURE = "true"
 ALLOW_ANY_WEBHOOK_HOST = "false"
 STRIPE_BASE = "https://api.stripe.com"
 AGENT_MODEL = "claude-sonnet-5-5"
-INBOUND_DOMAIN = "in.agenthouse.example"   # route <alias>@ this domain to the Worker for business inboxes
+INBOUND_DOMAIN = "in.ejtech.co.uk"   # route <alias>@ this domain to the Worker for business inboxes
 TURNSTILE_SITE_KEY = ""   # public site key; set TURNSTILE_SECRET as a secret to enforce it
 # Pricing, per deployment. Model prices are pence per million tokens; cache writes/reads are multiples of the input price.
 USDC_PER_PENNY = "0.0125"          # x402 conversion for per-tool prices (80p to the dollar)

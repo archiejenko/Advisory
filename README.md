@@ -127,6 +127,29 @@ Plans (in `packages/core/templates.ts`) are per business, not per person or agen
 
 ## Deploy to Cloudflare
 
+### www.ejtech.co.uk (this branch)
+
+`wrangler.toml` is already set for www.ejtech.co.uk: both hosts are attached as custom domains, the apex redirects to www (`CANONICAL_HOST`), and outbound mail goes through Resend (`MAIL_MODE = "http"`). Three commands on your own machine:
+
+```bash
+npm ci
+bash scripts/bootstrap.sh   # any time: sign in, create D1/KV/R2/queues, fill wrangler.toml, migrate, make keys
+bash scripts/launch.sh      # once ejtech.co.uk shows Active in Cloudflare: deploy, enter keys (hidden), Stripe, checks
+```
+
+`bootstrap.sh` keeps this deployment's own keys (signing key, channel key, ingest secret, admin token) in `.prod-secrets.local`, which git ignores. Back it up: losing `SIGNING_JWK` means published signatures stop matching a new key. `launch.sh` asks for each third-party key with hidden input, runs `scripts/stripe-setup.mjs` (three GBP monthly prices and the webhook) when you give it a Stripe key, uploads everything with `wrangler secret bulk`, then runs `scripts/smoke.mjs`. Re-run it to add a key you skipped. `node scripts/smoke.mjs` checks the live site any time; with `AH_KEY` set it also verifies a signed response.
+
+In the Cloudflare dashboard, once:
+- Workers & Pages → Plans: Workers Paid (queues need it). R2 → Purchase (free tier) before `bootstrap.sh`.
+- Email → Email Routing on `ejtech.co.uk`: add the subdomain `in.ejtech.co.uk`, then a catch-all rule sending to the Worker `agent-house`.
+- Turnstile (optional): add a widget for `www.ejtech.co.uk`, put the site key in `TURNSTILE_SITE_KEY` and the secret in `TURNSTILE_SECRET`.
+
+In Resend: add the domain `ejtech.co.uk` and add the DNS records it shows in Cloudflare DNS (DKIM, SPF on `send`, optional DMARC), then create an API key with sending access for `launch.sh`.
+
+Before real customers: `SENDS_LIVE = "true"`, `GAZETTE_BASE` once confirmed, a live Stripe key, and the stream listener running (below).
+
+### Any other domain
+
 ```bash
 wrangler d1 create agent-house           # put the id in wrangler.toml
 wrangler kv namespace create CACHE       # put the id in wrangler.toml

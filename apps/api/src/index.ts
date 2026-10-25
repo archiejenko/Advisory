@@ -16,6 +16,21 @@ import { onEmail } from "./lib/inbound";
 
 const app = new Hono<{ Bindings: Env }>();
 
+// One canonical host. The apex (ejtech.co.uk) is attached to this Worker too, so send it to www with the path
+// and query intact. Only the bare apex of CANONICAL_HOST is redirected; workers.dev and preview URLs pass through.
+app.use("*", async (c, next) => {
+  const canon = c.env.CANONICAL_HOST as string | undefined;
+  if (canon) {
+    const url = new URL(c.req.url);
+    if (url.hostname === canon.replace(/^www\./, "") && url.hostname !== canon) {
+      url.hostname = canon;
+      url.protocol = "https:";
+      return c.redirect(url.toString(), 301);
+    }
+  }
+  await next();
+});
+
 app.use("*", async (c, next) => {
   await next();
   c.header("X-Content-Type-Options", "nosniff");
