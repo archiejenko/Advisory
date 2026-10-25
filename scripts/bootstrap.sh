@@ -60,6 +60,35 @@ if grep -q REPLACE_WITH_RECEIVING_WALLET wrangler.toml; then
 fi
 node scripts/predeploy-check.mjs
 
+say "Keys you've already saved in Cloudflare Secrets Store"
+# The Worker reads these from the store directly (apps/api/src/lib/storesecrets.ts), so launch.sh won't ask for them.
+# Each table row is Name | ID | AccountID, so the store id is the first 32-hex value on its row.
+STORES=$($WR secrets-store store list --remote </dev/null 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const ids=[...new Set(s.split("\n").map(l=>(l.match(/[0-9a-f]{32}/)||[])[0]).filter(Boolean))];process.stdout.write(ids.join("\n"))})' || true)
+if [ -z "$STORES" ]; then
+  echo "No Secrets Store found; launch.sh will ask for every key."
+else
+  if [ "$(wc -l <<<"$STORES")" -gt 1 ]; then
+    $WR secrets-store store list --remote </dev/null 2>/dev/null || true
+    read -r -p "Which store id holds your keys? " STORE_ID
+  else STORE_ID=$STORES; fi
+  LISTING=$($WR secrets-store secret list "$STORE_ID" --remote --per-page 100 </dev/null 2>&1 || true)
+  echo "$LISTING"
+  echo "For each key below, type the name it has in the list above, or press Enter if it isn't there."
+  BLOCK="# BEGIN secrets-store (written by scripts/bootstrap.sh; re-run it to change)"
+  for k in ANTHROPIC_API_KEY SEARCH_API_KEY MAIL_HTTP_KEY CH_API_KEY FCA_EMAIL FCA_KEY TURNSTILE_SECRET OPERATOR_EMAIL STRIPE_SECRET; do
+    read -r -p "  $k: " NAME
+    [ -z "$NAME" ] && continue
+    grep -qF -- "$NAME" <<<"$LISTING" || echo "  (not in the list above; using it anyway, check the spelling)"
+    BLOCK+=$'\n'"[[secrets_store_secrets]]"$'\n'"binding = \"$k\""$'\n'"store_id = \"$STORE_ID\""$'\n'"secret_name = \"$NAME\""
+  done
+  BLOCK+=$'\n'"# END secrets-store"
+  node -e '
+    const fs = require("fs"); let t = fs.readFileSync("wrangler.toml", "utf8");
+    t = t.replace(/\n*# BEGIN secrets-store[\s\S]*?# END secrets-store\n?/, "\n");
+    fs.writeFileSync("wrangler.toml", t.replace(/\n*$/, "\n\n") + process.argv[1] + "\n");' "$BLOCK"
+  echo "Wrote the Secrets Store bindings into wrangler.toml."
+fi
+
 say "6/6 Migrations and this deployment's own keys"
 $WR d1 migrations apply agent-house --remote
 if [ ! -f .prod-secrets.local ]; then

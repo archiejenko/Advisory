@@ -20,7 +20,9 @@ say "2/4 Keys (hidden input; Enter skips)"
 TMP=$(mktemp); chmod 600 "$TMP"; trap 'rm -f "$TMP"' EXIT
 cp .prod-secrets.local "$TMP"
 add() { node -e 'const fs=require("fs"),[f,k,v]=process.argv.slice(1),o=JSON.parse(fs.readFileSync(f));o[k]=v;fs.writeFileSync(f,JSON.stringify(o))' "$TMP" "$1" "$2"; }
+instore() { grep -q "^binding = \"$1\"" wrangler.toml && grep -q "secrets_store_secrets" wrangler.toml; }
 ask() { # name, what it is
+  if instore "$1"; then echo "$1: read from Cloudflare Secrets Store"; return; fi
   local v; read -r -s -p "$1 ($2): " v; echo
   if [ -n "$v" ]; then add "$1" "$v"; echo "  set"; else echo "  skipped"; fi
 }
@@ -35,7 +37,7 @@ ask TURNSTILE_SECRET    "Turnstile secret key (optional)"
 
 read -r -s -p "STRIPE_SECRET (Stripe secret key sk_live_… or sk_test_…): " STRIPE_SECRET; echo
 if [ -n "$STRIPE_SECRET" ]; then
-  add STRIPE_SECRET "$STRIPE_SECRET"
+  instore STRIPE_SECRET || add STRIPE_SECRET "$STRIPE_SECRET"
   say "3/4 Stripe prices and webhook"
   STRIPE_JSON=$(STRIPE_SECRET="$STRIPE_SECRET" node scripts/stripe-setup.mjs)
   node -e 'const fs=require("fs"),[f,j]=process.argv.slice(1),o=JSON.parse(fs.readFileSync(f));Object.assign(o,JSON.parse(j));fs.writeFileSync(f,JSON.stringify(o))' "$TMP" "$STRIPE_JSON"

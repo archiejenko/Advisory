@@ -13,6 +13,7 @@ import { pub, reports } from "./routes/public";
 import { internal, admin, hooks } from "./routes/ops";
 import { onQueue, onScheduled } from "./lib/jobs";
 import { onEmail } from "./lib/inbound";
+import { withStoreSecrets } from "./lib/storesecrets";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -74,8 +75,8 @@ app.all("*", async (c) => {
 });
 
 export default {
-  fetch: app.fetch,
-  queue: onQueue,
-  scheduled: (controller: ScheduledController, env: Env, ctx: ExecutionContext) => ctx.waitUntil(onScheduled(controller, env)),
-  email: (message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) => ctx.waitUntil(onEmail(message, env)),
+  fetch: async (req: Request, env: Env, ctx: ExecutionContext) => app.fetch(req, await withStoreSecrets(env), ctx),
+  queue: async (batch: MessageBatch<any>, env: Env) => onQueue(batch, await withStoreSecrets(env)),
+  scheduled: (controller: ScheduledController, env: Env, ctx: ExecutionContext) => ctx.waitUntil(withStoreSecrets(env).then((e) => onScheduled(controller, e))),
+  email: (message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) => ctx.waitUntil(withStoreSecrets(env).then((e) => onEmail(message, e))),
 };
