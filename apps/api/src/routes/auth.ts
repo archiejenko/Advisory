@@ -23,7 +23,7 @@ auth.post("/magic-link", async (c) => {
   if (user && (await limitEmail(c.env, "link", user.email, 3))) {
     const token = randomToken();
     await run(c.env, "INSERT INTO magic_link (token_hash, email, expires_at) VALUES (?,?,?)", await sha256Hex(token), user.email, new Date(Date.now() + 15 * 60000).toISOString());
-    await sendMail(c.env, { to: user.email, subject: "Your Agent House sign-in link", text: `Sign in to Agent House: ${c.env.APP_URL}#/sign-in?token=${token}\n\nThis link works once and expires in 15 minutes.` });
+    await sendMail(c.env, { kind: "transactional", to: user.email, subject: "Your Agent House sign-in link", text: `Sign in to Agent House: ${c.env.APP_URL}#/sign-in?token=${token}\n\nThis link works once and expires in 15 minutes.` });
   }
   return c.json({ sent: true, message: "If that address has an account, a sign-in link is on its way." });
 });

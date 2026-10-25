@@ -31,7 +31,7 @@ export async function createOrg(env: Env, o: { name: string; owner_email: string
   for (const t of o.agents || []) {
     try { await hireAgent(env, orgId, u.id, { template: t }); } catch (e: any) { console.error("could not hire", t, "for", orgId, e?.message || e); }
   }
-  await sendMail(env, { to: email, subject: "Your Agent House workspace is ready", text: `Your workspace for ${o.name} is ready.\nSign in: ${env.APP_URL}#/sign-in?token=${token}\nThis link works once and expires in 7 days.` });
+  await sendMail(env, { kind: "transactional", to: email, subject: "Your Agent House workspace is ready", text: `Your workspace for ${o.name} is ready.\nSign in: ${env.APP_URL}#/sign-in?token=${token}\nThis link works once and expires in 7 days.` });
   await audit(env, orgId, o.by, "org_created", orgId, { name: o.name });
   return { org_id: orgId, owner_id: u.id, inbox_address: `${alias}@${env.INBOUND_DOMAIN || "in.agenthouse.example"}` };
 }

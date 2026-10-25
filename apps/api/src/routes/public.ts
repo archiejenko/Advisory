@@ -41,7 +41,7 @@ pub.post("/health-checks", async (c) => {
   await run(c.env, "INSERT INTO health_check (id, token, name, email, company, file_key, status, created_at) VALUES (?,?,?,?,?,?,?,?)",
     id, token, f.data.name, f.data.email.toLowerCase(), f.data.company, key, "queued", nowIso());
   await c.env.JOBS.send({ type: "health_check", id, step: "split" });
-  await sendMail(c.env, { to: f.data.email, subject: "We've received your client list", text: `Thanks, ${f.data.name}. We're running ${f.data.company}'s client list against Companies House, The Gazette and the FCA register. Your health check will arrive within 24 hours.\n\nYour list is used only for this check and deleted after 30 days.` });
+  await sendMail(c.env, { kind: "transactional", to: f.data.email, subject: "We've received your client list", text: `Thanks, ${f.data.name}. We're running ${f.data.company}'s client list against Companies House, The Gazette and the FCA register. Your health check will arrive within 24 hours.\n\nYour list is used only for this check and deleted after 30 days.` });
   return c.json({ id, status: "queued", message: "Your health check will arrive within 24 hours." }, 202);
 });
 
@@ -79,8 +79,8 @@ pub.post("/bookings", async (c) => {
   if (!ins.meta.changes) throw new HttpError(409, "slot_taken", "Someone has just booked that time. Choose another.");
   const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Agent House//Booking//EN", "BEGIN:VEVENT", `UID:${id}@agenthouse`, `DTSTAMP:${nowIso().replace(/[-:]/g, "").slice(0, 15)}Z`,
     `DTSTART;TZID=Europe/London:${b.date.replace(/-/g, "")}T${b.time.replace(":", "")}00`, "DURATION:PT20M", "SUMMARY:Agent House: 20 minutes on your client book", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
-  await sendMail(c.env, { to: b.email, subject: `Booked: ${b.date} at ${b.time}`, text: `Thanks, ${b.name}. You're booked for 20 minutes on ${b.date} at ${b.time} UK time.\n\nCalendar entry:\n${ics}` });
-  if (c.env.OPERATOR_EMAIL) await sendMail(c.env, { to: c.env.OPERATOR_EMAIL, subject: `New call: ${b.company}, ${b.date} ${b.time}`, text: `${b.name} <${b.email}>, ${b.company}` });
+  await sendMail(c.env, { kind: "transactional", to: b.email, subject: `Booked: ${b.date} at ${b.time}`, text: `Thanks, ${b.name}. You're booked for 20 minutes on ${b.date} at ${b.time} UK time.\n\nCalendar entry:\n${ics}` });
+  if (c.env.OPERATOR_EMAIL) await sendMail(c.env, { kind: "transactional", to: c.env.OPERATOR_EMAIL, subject: `New call: ${b.company}, ${b.date} ${b.time}`, text: `${b.name} <${b.email}>, ${b.company}` });
   return c.json({ id, slot, message: `Booked for ${b.date} at ${b.time} UK time.` }, 201);
 });
 
@@ -96,7 +96,7 @@ pub.post("/signup", async (c) => {
     if (!(await limitEmail(c.env, "link", email, 3))) return c.json({ ok: true, message: "Check your email for a link to your workspace." }, 201);
     const token = randomToken();
     await run(c.env, "INSERT INTO magic_link (token_hash, email, expires_at) VALUES (?,?,?)", await sha256Hex(token), email, new Date(Date.now() + 15 * 60000).toISOString());
-    await sendMail(c.env, { to: email, subject: "Your Agent House sign-in link", text: `You already have a workspace. Sign in: ${c.env.APP_URL}#/sign-in?token=${token}\n\nThis link works once and expires in 15 minutes.` });
+    await sendMail(c.env, { kind: "transactional", to: email, subject: "Your Agent House sign-in link", text: `You already have a workspace. Sign in: ${c.env.APP_URL}#/sign-in?token=${token}\n\nThis link works once and expires in 15 minutes.` });
     return c.json({ ok: true, message: "Check your email for a link to your workspace." }, 201);
   }
   await createOrg(c.env, { name: b.business, owner_email: email, owner_name: b.name, profile: Object.fromEntries(Object.entries({ what: b.what, customers: b.customers, area: b.area }).filter(([, v]) => v && v.trim()).map(([k, v]) => [k, v!.trim()])), plan: "trial", by: "signup" });
@@ -109,7 +109,7 @@ pub.post("/api-keys", async (c) => {
   const b = await body(c, z.object({ email: z.string().email() }));
   const raw = "ah_live_" + randomToken(24), id = newId("key");
   await run(c.env, "INSERT INTO api_key (id, key_hash, owner_email, kind, created_at) VALUES (?,?,?,?,?)", id, await sha256Hex(raw), b.email.toLowerCase(), "credits", nowIso());
-  await sendMail(c.env, { to: b.email, subject: "Your Agent House API key", text: `Your API key: ${raw}\n\nIt is shown once; we only store a hash. It includes 100 free calls a month. Buy credits for more, or pay per call with x402.\nKey id: ${id}` });
+  await sendMail(c.env, { kind: "transactional", to: b.email, subject: "Your Agent House API key", text: `Your API key: ${raw}\n\nIt is shown once; we only store a hash. It includes 100 free calls a month. Buy credits for more, or pay per call with x402.\nKey id: ${id}` });
   return c.json({ id, message: "Your key has been emailed to you. It is shown once." }, 201);
 });
 

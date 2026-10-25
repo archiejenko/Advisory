@@ -69,7 +69,7 @@ ws.post("/users", owner, async (c) => {
   await c.get("db").run("INSERT INTO membership (org_id, user_id, role) VALUES (?1, ?2, ?3) ON CONFLICT(org_id, user_id) DO UPDATE SET role = excluded.role", u.id, b.role);
   const token = randomToken();
   await run(c.env, "INSERT INTO magic_link (token_hash, email, expires_at) VALUES (?,?,?)", await sha256Hex(token), email, new Date(Date.now() + 7 * 864e5).toISOString());
-  await sendMail(c.env, { to: email, subject: "You've been invited to Agent House", text: `${c.get("user").email} invited you to their Agent House workspace.\nAccept: ${c.env.APP_URL}#/sign-in?token=${token}\nThis link works once and expires in 7 days.` });
+  await sendMail(c.env, { kind: "transactional", to: email, subject: "You've been invited to Agent House", text: `${c.get("user").email} invited you to their Agent House workspace.\nAccept: ${c.env.APP_URL}#/sign-in?token=${token}\nThis link works once and expires in 7 days.` });
   await audit(c.env, c.get("orgId"), c.get("user").id, "user_invited", email, { role: b.role });
   return c.json({ ok: true, user_id: u.id }, 201);
 });

@@ -95,5 +95,5 @@ export async function onEmail(message: ForwardableEmailMessage, env: Env) {
     newId("brf"), user.org_id, input, b.match?.number ?? null, JSON.stringify(b), b.response_id, user.id, nowIso());
   await run(env, "INSERT INTO usage_event (id, org_id, kind, number, units, cost_pence, payment, at) VALUES (?,?,?,?,1,0,'internal',?)", newId("use"), user.org_id, "brief", b.match?.number ?? null, nowIso());
   await audit(env, user.org_id, user.id, "brief_by_email", b.response_id);
-  await sendMail(env, { to: user.email, subject: `Brief: ${b.match?.name || input}`, text: briefText(env, b) });
+  await sendMail(env, { kind: "transactional", to: user.email, subject: `Brief: ${b.match?.name || input}`, text: briefText(env, b) });
 }

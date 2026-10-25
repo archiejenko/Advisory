@@ -92,6 +92,8 @@ async function mayAutoSend(env: Env, agent: any, p: EmailPayload, runId?: string
   return null;
 }
 
+export const DRY_RUN_NOTE = "Not sent: outbound email is in test mode (SENDS_LIVE is off).";
+
 /** Send an approved action, once. */
 export async function executeAction(env: Env, orgId: string, actionId: string, decidedBy: string, edits?: { subject?: string; body?: string }) {
   const a = await one<any>(env, "SELECT * FROM agent_action WHERE id = ? AND org_id = ?", actionId, orgId);
@@ -116,6 +118,13 @@ export async function executeAction(env: Env, orgId: string, actionId: string, d
   if (result === "suppressed") {
     await run(env, "UPDATE agent_action SET status = 'failed', result = 'suppressed' WHERE id = ?", actionId);
     return { status: "failed", result };
+  }
+  // SENDS_LIVE is off: nothing left the building, so don't record it as sent or move the lead or invoice on.
+  // (The status column only allows proposed/sent/rejected/failed; the result says why.)
+  if (result === "dry_run") {
+    await run(env, "UPDATE agent_action SET status = 'failed', result = ? WHERE id = ?", DRY_RUN_NOTE, actionId);
+    await audit(env, orgId, decidedBy, "action_dry_run", actionId, { to: p.to });
+    return { status: "dry_run", result };
   }
   await run(env, "UPDATE agent_action SET result = ? WHERE id = ?", result, actionId);
   if (p.lead_id) await run(env, "UPDATE lead SET status = CASE WHEN status = 'new' THEN 'contacted' ELSE status END, last_contact_at = ? WHERE id = ? AND org_id = ?", nowIso(), p.lead_id, orgId);

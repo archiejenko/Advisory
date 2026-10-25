@@ -94,7 +94,7 @@ export async function handleJob(rawEnv: Env, job: Job) {
       await env.FILES.put(key, html, { httpMetadata: { contentType: "text/html; charset=utf-8" } });
       await run(env, "UPDATE health_check SET status = 'awaiting_approval', summary = ?, report_key = ? WHERE id = ?", JSON.stringify(summary), key, hc.id);
       // Tell the operator there is a report to approve. The customer hears nothing until approval.
-      if (env.OPERATOR_EMAIL) await sendMail(env, { to: env.OPERATOR_EMAIL, subject: `Health check ready to approve: ${hc.company}`, text: `${summary.sent} clients, ${summary.flagged} flagged.\nApprove it in the admin queue: ${env.APP_URL}#/admin` });
+      if (env.OPERATOR_EMAIL) await sendMail(env, { kind: "transactional", to: env.OPERATOR_EMAIL, subject: `Health check ready to approve: ${hc.company}`, text: `${summary.sent} clients, ${summary.flagged} flagged.\nApprove it in the admin queue: ${env.APP_URL}#/admin` });
       return;
     }
   }
@@ -113,7 +113,7 @@ export async function onDeadLetters(batch: MessageBatch<any>, env: Env) {
   for (const m of batch.messages) m.ack();
   if (env.OPERATOR_EMAIL && (await hit(env, "dead_alert", "all", 1))) {
     const types = [...new Set(batch.messages.map((m) => m.body?.type || "unknown"))].join(", ");
-    await sendMail(env, { to: env.OPERATOR_EMAIL, subject: `${batch.messages.length} jobs failed for good`, text: `Types: ${types}.\nThey are recorded in dead_job. See the admin queue: ${env.APP_URL}#/admin` });
+    await sendMail(env, { kind: "transactional", to: env.OPERATOR_EMAIL, subject: `${batch.messages.length} jobs failed for good`, text: `Types: ${types}.\nThey are recorded in dead_job. See the admin queue: ${env.APP_URL}#/admin` });
   }
 }
 
@@ -215,7 +215,7 @@ async function buildProspects(env: Env, orgId: string, month: string) {
   await env.FILES.put(key, toCsv([["Company", "Company no.", "District", "SIC", "Incorporated"], ...rows.map((r) => [r.name, r.number, r.district, r.sic, r.incorporated])]), { httpMetadata: { contentType: "text/csv" } });
   await run(env, "INSERT INTO usage_event (id, org_id, kind, units, cost_pence, payment, at) VALUES (?,?,?,?,0,'plan',?)", newId("use"), o.id, "prospect_build", rows.length, nowIso());
   const owner = await one<any>(env, "SELECT u.email FROM membership m JOIN user u ON u.id = m.user_id WHERE m.org_id = ? AND m.role = 'owner' LIMIT 1", o.id);
-  if (owner) await sendMail(env, { to: owner.email, subject: `Your prospect list for ${month}`, text: `${rows.length} active companies match your districts and industries.\nDownload it from the workspace: ${env.APP_URL}#/workspace/prospects` });
+  if (owner) await sendMail(env, { kind: "transactional", to: owner.email, subject: `Your prospect list for ${month}`, text: `${rows.length} active companies match your districts and industries.\nDownload it from the workspace: ${env.APP_URL}#/workspace/prospects` });
 }
 
 export async function prospectRows(env: Env, o: any, limit: number) {

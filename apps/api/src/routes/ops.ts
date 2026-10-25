@@ -59,7 +59,7 @@ admin.post("/tools/:slug/:decision", async (c) => {
   const t = await one<any>(c.env, "SELECT t.*, k.owner_email FROM tool t LEFT JOIN api_key k ON k.id = t.owner_key_id WHERE t.slug = ?", c.req.param("slug"));
   if (!t) throw notFound("Tool");
   await run(c.env, "UPDATE tool SET status = ?, review_note = ?, reviewed_at = ? WHERE slug = ?", d === "approve" ? "live" : "rejected", b.note ?? null, nowIso(), t.slug);
-  if (t.owner_email) await sendMail(c.env, { to: t.owner_email, subject: d === "approve" ? `${t.name} is live on Agent House` : `${t.name} wasn't approved`, text: d === "approve" ? `Your tool ${t.slug} is now in the catalogue and the MCP server. You earn 80% of every paid call.` : `We couldn't list ${t.slug}.${b.note ? " " + b.note : ""} Update it from your developer dashboard and it comes back to us.` });
+  if (t.owner_email) await sendMail(c.env, { kind: "transactional", to: t.owner_email, subject: d === "approve" ? `${t.name} is live on Agent House` : `${t.name} wasn't approved`, text: d === "approve" ? `Your tool ${t.slug} is now in the catalogue and the MCP server. You earn 80% of every paid call.` : `We couldn't list ${t.slug}.${b.note ? " " + b.note : ""} Update it from your developer dashboard and it comes back to us.` });
   return c.json({ ok: true, status: d === "approve" ? "live" : "rejected" });
 });
 
@@ -84,7 +84,7 @@ admin.post("/health-checks/:id/approve", async (c) => {
   if (hc.status !== "awaiting_approval") throw bad(`This health check is ${hc.status.replace("_", " ")}, not awaiting approval.`);
   const link = `${c.env.API_URL}/r/${hc.token}`;
   const s = JSON.parse(hc.summary);
-  const result = await sendMail(c.env, { to: hc.email, subject: `Your client book health check: ${s.flagged} of ${s.sent} clients flagged`, text: `Hi ${hc.name},\n\nWe ran ${hc.company}'s ${s.sent} clients against Companies House, The Gazette and the FCA register.\n\nMatched: ${s.matched}\nFor you to confirm: ${s.confirm}\nFlagged: ${s.flagged}\n\nRead the report: ${link}\n\nWant to go through it together? Book 20 minutes: ${c.env.APP_URL}#/book-a-call\n\nTo stop hearing from us, reply "unsubscribe".` });
+  const result = await sendMail(c.env, { kind: "transactional", to: hc.email, subject: `Your client book health check: ${s.flagged} of ${s.sent} clients flagged`, text: `Hi ${hc.name},\n\nWe ran ${hc.company}'s ${s.sent} clients against Companies House, The Gazette and the FCA register.\n\nMatched: ${s.matched}\nFor you to confirm: ${s.confirm}\nFlagged: ${s.flagged}\n\nRead the report: ${link}\n\nWant to go through it together? Book 20 minutes: ${c.env.APP_URL}#/book-a-call\n\nTo stop hearing from us, reply "unsubscribe".` });
   await run(c.env, "UPDATE health_check SET status = 'sent', approved_at = ?, sent_at = ? WHERE id = ?", nowIso(), nowIso(), hc.id);
   await audit(c.env, null, "operator", "health_check_approved", hc.id, { mail: result });
   return c.json({ ok: true, link, mail: result });
