@@ -29,7 +29,7 @@ run_worker_first = true
 [[d1_databases]]
 binding = "DB"
 database_name = "agent-house"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "f06632f3-9e80-44af-a84a-1b56396a9693"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
@@ -38,7 +38,7 @@ bucket_name = "agent-house-files"
 
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"
+id = "73a812255b424d2a9a318da1a059cb06"
 
 [[queues.producers]]
 binding = "JOBS"

@@ -8,6 +8,8 @@
 #   X402_WALLET=0x...                        the public wallet address that receives x402 payments
 #   STORE_ID=<32 hex>                         which Secrets Store, if the account has more than one
 #   SECRETS_MAP="ANTHROPIC_API_KEY=name,..."  Worker key name = Secrets Store entry name; "none" for no store
+# ADMIN_TOKEN and INGEST_SECRET in the environment are used instead of generated ones, so a cloud session (whose
+# disk doesn't last) uses values you already keep in your password manager.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -19,7 +21,8 @@ json() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const 
 [ -d node_modules ] || { say "Installing dependencies"; npm ci --no-audit --no-fund; }
 
 say "1/6 Cloudflare sign-in"
-if ! $WR whoami 2>&1 | grep -qi "associated with the email"; then $WR login; fi
+if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then echo "Using CLOUDFLARE_API_TOKEN from the environment."
+elif ! $WR whoami 2>&1 | grep -qi "associated with the email"; then $WR login; fi
 $WR whoami 2>&1 | grep -i "email" || true
 
 say "2/6 Database (D1)"
@@ -112,7 +115,7 @@ if [ ! -f .prod-secrets.local ]; then
     const b = (x) => Buffer.from(x).toString("base64url"); const r = (n) => b(c.getRandomValues(new Uint8Array(n)));
     const kp = await c.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
     const jwk = await c.subtle.exportKey("jwk", kp.privateKey);
-    writeFileSync(".prod-secrets.local", JSON.stringify({ SIGNING_JWK: b(JSON.stringify(jwk)), SIGNING_KID: "ejtech-" + new Date().toISOString().slice(0, 10), CHANNEL_KEY: r(32), INGEST_SECRET: r(24), ADMIN_TOKEN: r(24) }, null, 2) + "\n");'
+    writeFileSync(".prod-secrets.local", JSON.stringify({ SIGNING_JWK: b(JSON.stringify(jwk)), SIGNING_KID: "ejtech-" + new Date().toISOString().slice(0, 10), CHANNEL_KEY: r(32), INGEST_SECRET: process.env.INGEST_SECRET || r(24), ADMIN_TOKEN: process.env.ADMIN_TOKEN || r(24) }, null, 2) + "\n");'
   echo "Generated .prod-secrets.local (signing key, channel key, ingest secret, admin token)."
   echo "Copy ADMIN_TOKEN from it into your password manager: it opens www.ejtech.co.uk/#/admin."
 else

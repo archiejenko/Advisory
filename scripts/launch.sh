@@ -53,6 +53,17 @@ fi
 unset STRIPE_SECRET STRIPE_JSON
 
 say "4/4 Upload secrets, then check the live site"
+# The signing and channel keys are made once. If the Worker already has them, keep those: a new channel key would
+# make stored channel settings unreadable, and a new signing key changes what verifiers trust. Same for the admin
+# token and ingest secret unless new values were passed in the environment.
+SET=$($WR secret list --format json 2>/dev/null </dev/null || echo "[]")
+node -e '
+  const fs=require("fs"),[f,set]=process.argv.slice(1),o=JSON.parse(fs.readFileSync(f));
+  let have=[]; try { have=JSON.parse(set.slice(set.indexOf("["))).map(s=>s.name); } catch {}
+  const keep=["SIGNING_JWK","SIGNING_KID","CHANNEL_KEY"].concat(["ADMIN_TOKEN","INGEST_SECRET"].filter(k=>!process.env[k]));
+  if (have.includes("SIGNING_JWK")) for (const k of keep) if (have.includes(k)) { delete o[k]; console.log(k+": already set on the Worker, kept"); }
+  for (const k of ["ADMIN_TOKEN","INGEST_SECRET"]) if (process.env[k]) o[k]=process.env[k];
+  fs.writeFileSync(f,JSON.stringify(o));' "$TMP" "$SET"
 $WR secret bulk "$TMP"
 rm -f "$TMP"
 node scripts/smoke.mjs https://www.ejtech.co.uk
