@@ -14,6 +14,7 @@ import { internal, admin, hooks } from "./routes/ops";
 import { onQueue, onScheduled, cronHealth } from "./lib/jobs";
 import { onEmail } from "./lib/inbound";
 import { withStoreSecrets } from "./lib/storesecrets";
+import { logError, alertOperator } from "./lib/log";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -64,12 +65,14 @@ app.route("/", discovery);
 app.route("/.well-known", wellKnown);
 app.route("/r", reports);
 
-app.onError((err, c) => {
+app.onError(async (err, c) => {
   if (err instanceof HttpError) return c.json({ error: { code: err.code, message: err.message, ...(err.extra ? { details: err.extra } : {}) } }, err.status as any);
   if (err instanceof RateLimited) return c.json({ error: { code: "busy", message: "The registers are busy right now. Try again in a few minutes." } }, 503, { "Retry-After": String(err.retryAfterSec) });
   if (err instanceof UpstreamError) return c.json({ error: { code: "register_unavailable", message: `${err.source} isn't responding. Try again shortly.` } }, 502);
   if (err instanceof ZodError) return c.json({ error: { code: "invalid_request", message: err.issues[0]?.message } }, 400);
-  console.error(err);
+  logError("server_error", { method: c.req.method, path: c.req.path, ray: c.req.header("cf-ray") || null }, err);
+  const alert = alertOperator(c.env, "server_error", "Agent House: a request failed with a server error", `${c.req.method} ${c.req.path}: ${String((err as any)?.message || err).slice(0, 300)}`);
+  try { c.executionCtx.waitUntil(alert); } catch { await alert; }
   return c.json({ error: { code: "server_error", message: "Something went wrong on our side. It has been logged." } }, 500);
 });
 

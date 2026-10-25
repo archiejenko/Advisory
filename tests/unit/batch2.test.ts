@@ -58,3 +58,19 @@ describe("R6 run deadline", () => {
     expect((raw.prepare("SELECT error FROM agent_run WHERE id = 'run_d'").get() as any).error).toMatch(/time limit/);
   });
 });
+
+/* ---------- R4: errors are structured, and the operator hears about them ---------- */
+describe("R4 error reporting", () => {
+  it("a server error logs one JSON line with the path, and emails the operator once an hour", async () => {
+    const { raw, env } = testEnv({ OPERATOR_EMAIL: "op@ah.test" });
+    const logged: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...a: any[]) => { logged.push(a.map(String).join(" ")); });
+    raw.exec("DROP TABLE booking"); // the public slots route reads it: now it fails unexpectedly
+    const r1 = await call(env, "/api/public/slots");
+    const r2 = await call(env, "/api/public/slots");
+    expect([r1.status, r2.status]).toEqual([500, 500]);
+    const line = logged.map((l) => { try { return JSON.parse(l); } catch { return null; } }).find((j) => j?.event === "server_error");
+    expect(line).toMatchObject({ level: "error", path: "/api/public/slots", method: "GET" });
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM dev_outbox WHERE to_addr = 'op@ah.test'").get()).toEqual({ n: 1 });
+  });
+});

@@ -12,6 +12,7 @@ import { sendMail } from "./mail";
 import { pruneRateWindows, hit } from "./limits";
 import { runAgent, dueAgents, sweepRuns, startDue } from "./agents";
 import { safeOutboundUrl } from "./web";
+import { logError } from "./log";
 
 export type Job =
   | { type: "import"; id: string; org_id: string; step: "split" | "match"; from?: number }
@@ -133,7 +134,8 @@ export async function onQueue(batch: MessageBatch<Job>, env: Env) {
           msg.ack();
         } catch { msg.retry({ delaySeconds: e.retryAfterSec }); }
       } else {
-        console.error("job failed", msg.body.type, e?.message);
+        const b: any = msg.body;
+        logError("job_failed", { type: b.type, attempts: msg.attempts, org: b.org_id ?? null, run: b.run_id ?? null, id: b.id ?? b.alert_id ?? b.number ?? null }, e);
         msg.retry({ delaySeconds: Math.min(600, 15 * 2 ** Math.min(msg.attempts, 5)) });
       }
     }

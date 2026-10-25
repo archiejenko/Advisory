@@ -14,10 +14,11 @@ routes = [
 [placement]
 mode = "smart"
 
-# Workers Logs, sampled. Every failure path logs with the job type, run or workspace it belongs to.
+# Workers Logs, every invocation: volume is small, and sampling dropped most error lines. Failures log one JSON line
+# (event, org, run, job) and the operator gets an hourly-capped email for server errors and dead jobs.
 [observability]
 enabled = true
-head_sampling_rate = 0.2
+head_sampling_rate = 1
 
 # The website is served from the same origin as the API, so workspace sessions use secure cookies.
 [assets]

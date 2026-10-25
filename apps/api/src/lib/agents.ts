@@ -16,6 +16,7 @@ import { notifyChannel } from "./delivery";
 import { activeRules } from "./today";
 import { budgetProblem, requireBudget } from "./budget";
 import { hit } from "./limits";
+import { logError } from "./log";
 
 export const MAX_STEPS = 8;
 /**
@@ -364,7 +365,7 @@ export async function runAgent(env: Env, runId: string) {
     if (r.reply_channel) await postRunReply(env, runId);
     await swarmEv("run_failed", `${agent?.name || "Agent"} stopped: ${String(e.message || e).slice(0, 160)}`);
     if (agent?.swarm_id) { try { await settleTasksForRun(env, r.org_id, runId, "failed", String(e.message || e)); } catch (err) { console.error("task settle failed", err); } }
-    console.error("agent run failed", runId, e);
+    logError("agent_run_failed", { run: runId, org: r.org_id, agent: r.agent_id }, e);
     return "failed";
   }
 }
