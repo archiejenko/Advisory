@@ -289,3 +289,32 @@ What's missing:
 9. **Trial data retention (D2):** how long after a trial ends without a plan should a workspace be deleted? Thirty days, to match cancellation?
 10. **Register history retention:** may non-personal change history (status, filings, charges) be kept beyond 90 days to build the dataset in section 6?
 11. **`SENDS_LIVE` intent (C1):** was the flag meant to stop sign-in links too, or only agent, alert and webhook sends? My fix assumes the latter.
+
+---
+
+## 8. Progress (hardening batches)
+
+Every fix landed with a test that failed before it and passes after: `tests/unit/batch1.test.ts`, `batch2.test.ts`, `batch3.test.ts` and `isolation.test.ts`. After each batch the full unit suite, the 44-flow e2e suite and a local smoke test passed. Nothing has been deployed: production still runs `deploy/ejtech`.
+
+| Batch | Branch | Findings fixed |
+|---|---|---|
+| 1 | `hardening-batch-1` | R1, R2, C1, S1, S2, S3, S4, S5, S6, S7, S9, S11, R5 |
+| 2 | `hardening-batch-2` (stacked on 1) | R3, R4, R6, R7, D2, D3, S8, S10, S12, S13, P1, P2, P3, A1 |
+| 3 | `hardening-batch-3` (stacked on 2) | Q-1 (isolation is a test), D4, D5, D6 (`docs/runbook.md`), I1, A2 |
+
+Decisions taken where the open questions would otherwise have blocked work (each is easy to change):
+- Q2: model budgets of trial £5, Starter £15, Growth and Pilot £40, Scale £100 a month. Runs stop at the cap; there is no top-up.
+- Q3: auto-send never replies to a first-time sender; first contact waits for approval.
+- Q5: keys stay free with 100 calls a month. The key is only ever sent by email, which already proves the inbox, so there's no separate activation link. `watch` is paid only.
+- Q9: a trial that ends without a plan is deleted 30 days after it ends, with a warning a week before.
+- Q11: `SENDS_LIVE` holds only mail sent on a business's behalf; sign-in links, invites, receipts and operator alerts always send.
+
+Still open:
+- **C2** (manual): Workers Paid, then open Workers & Pages once, then redeploy.
+- **C3**: decide where the stream listener runs (Q1).
+- **D1**: privacy notice, terms, DPA and sub-processor list. This is content to write, not code (Q7, Q8).
+- **P4**: a `sending` state for agent emails needs the `agent_action.status` CHECK widened, which means a table rebuild on D1. Left as is; the window is a Worker dying between claiming an email and sending it.
+- **S10**: switching between workspaces for one person (Q6).
+- **S11**: whether Email Workers see `Authentication-Results` is undocumented. The check treats a missing header as unknown and logs it; confirm with one real email (`docs/runbook.md`).
+- **I2** pagination, **Q-2** module split, **Q-3** central schema validation, and an audit table of agent tool calls. These are worth doing, but not urgent.
+- `tests/e2e/ui.mjs` (not run in CI) expects workspace copy that the OS overhaul removed ("Demo workspace for …"). This predates this work. Its first flow, which loads every public page with a check for console errors, passes. A separate browser check found no CSP violations across 14 routes and confirmed an injected script is blocked.

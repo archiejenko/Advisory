@@ -174,7 +174,9 @@ Voice uses the Workers AI binding (`[ai] binding = "AI"` in `wrangler.toml`, set
 
 Pricing for callers is set in `wrangler.toml` too: `USDC_PER_PENNY` converts per-tool prices for x402 (default 0.0125), `X402_PRICES` (JSON) overrides the four original endpoints, and `AGENT_RUN_STEP_PENCE` prices `/v1/agents/run` per model step the caller allows (`max_steps`, default 4, at most 8). Agent runs aren't covered by the 100 free calls; credits are taken before the run and refunded if it fails, and x402 is settled before the run starts. `SEARCH_API_KEY` is a Brave Search API key for the web research tools.
 
-`SENDS_LIVE` is `"false"` in production config, so Teams, Slack and webhooks are recorded but not sent until you switch it on. Turn it on after a dry run with a pilot.
+`SENDS_LIVE` is `"false"` in production config, so what agents and alerts send on a business's behalf (outreach, reminders, replies, Teams, Slack, alert emails) is recorded but not sent until you switch it on. Turn it on after a dry run with a pilot. Sign-in links, invites, receipts and operator alerts are transactional and always send.
+
+Limits and safety settings (all optional, in `[vars]`): `MODEL_BUDGETS` (JSON pence a month by plan; defaults trial 500, starter 1500, growth and pilot 4000, scale 10000), `RUNS_PER_HOUR` (runs one business may start, default 120), `RUN_DEADLINE_MS` (no new model step after this, default 6 minutes), `SIGNING_JWKS_PREVIOUS` (JSON array of earlier public signing keys, published so old answers still verify). Operations are in `docs/runbook.md`; the architecture review and its fixes are in `docs/architecture-review.md`.
 
 ```bash
 npm run deploy
