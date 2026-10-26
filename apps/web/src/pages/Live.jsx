@@ -1,19 +1,14 @@
 // The signed-in workspace. Same layout and visual language as the demo, backed by /api/ws.
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { isPass } from "../pass.js";
 import { Link, navigate, useRoute } from "../router.jsx";
 import { Page, PageHead, Section, Severity, Bars, Brief, briefFromApi, DistrictGrid } from "../ui.jsx";
 import { useWs, useCan, WsCtx } from "../layout.jsx";
 import { DEMO_ME } from "../demo.js";
 import { LIVE, api, setDemo, useApi, useAction, download, dateOf, dateTimeOf, pounds } from "../api.js";
 import { SIC_GROUPS, DISTRICTS } from "../data.js";
+import { OsShell } from "./OsShell.jsx";
 
-// The workspace sidebar, grouped. Counts come from /api/ws/overview.
-const SIDE = [
-  [null, [["Overview", "/workspace"], ["Approvals", "/workspace/approvals", "waiting"], ["Agents", "/workspace/agents"], ["Activity", "/workspace/activity"]]],
-  ["Work", [["Leads", "/workspace/leads"], ["Inbox", "/workspace/inbox", "inbox_new"], ["Invoices", "/workspace/invoices"], ["Tasks", "/workspace/tasks", "open_tasks"]]],
-  ["Customers", [["Alerts", "/workspace/alerts", "open_alerts"], ["Customers", "/workspace/clients"], ["Company checks", "/workspace/check"], ["Lead lists", "/workspace/prospects"]]],
-  ["Account", [["Usage and plan", "/workspace/usage"], ["Settings", "/workspace/settings"]]],
-];
 export const changed = () => { window.dispatchEvent(new Event("ah:alerts")); };
 const AGENT_NAME = { watch: "Customer and supplier watch", check: "New customer check", prospect: "Lead finder" };
 const KIND_LABEL = {
@@ -30,49 +25,16 @@ export function Failed({ error, retry }) {
   return <Notice signal>{error.message} {retry && <button className="link link-s" onClick={retry}>Try again</button>}</Notice>;
 }
 
-export function Shell({ title, crumbs, children, actions, wide }) {
-  const { me, signOut } = useWs();
-  const counts = useApi("/api/ws/overview");
-  useEffect(() => {
-    const on = () => counts.reload();
-    window.addEventListener("ah:alerts", on);
-    const t = setInterval(on, 60000);
-    return () => { window.removeEventListener("ah:alerts", on); clearInterval(t); };
-  }, [counts.reload]);
-  const n = counts.data || {};
+/** Every workspace screen sits in the OS shell: top bar, command layer, the page, and the dock. */
+/** Set when a workspace page is shown inside the demo workspace's own shell: render the page body only. */
+export const EmbedCtx = React.createContext(false);
+
+export function Shell({ title, crumbs, children, actions, wide, bare }) {
+  const embedded = React.useContext(EmbedCtx);
+  if (embedded) return <div className="w-embed" data-page-title={title}>{actions && <div className="w-row" style={{ justifyContent: "flex-end", marginBottom: 12 }}>{actions}</div>}{children}</div>;
   return (
     <Page title={"Workspace: " + title}>
-      {me.demo && (
-        <div className="ws-banner"><div className="wrap">Demo workspace for Brightwork Cleaning, an example business. Approve emails, hire agents and run them: nothing is sent, and changes last until you reload. <Link to="/start" style={{ color: "inherit", fontWeight: 600 }}>Start your own free trial</Link>.</div></div>
-      )}
-      <div className="wrap ws">
-        <aside className="ws-side" aria-label="Workspace">
-          <p className="ws-org">{me.org.name}</p>
-          <nav>
-            {SIDE.map(([group, items]) => (
-              <div key={group || "main"} className="ws-group">
-                {group && <p className="ws-group-h">{group}</p>}
-                {items.map(([t, to, key]) => (
-                  <Link key={to} to={to} exact={to === "/workspace"} className="ws-nav">
-                    {t}{key && n[key] > 0 && <span className={"ws-count" + (key === "waiting" ? " ws-count-hot" : "")}>{n[key]}</span>}
-                  </Link>
-                ))}
-              </div>
-            ))}
-          </nav>
-          <div className="ws-side-foot">
-            <p className="dt">{me.user.email}, {me.role}</p>
-            {me.demo ? <Link to="/start" className="link link-s">Start a free trial</Link> : <button className="signout" onClick={signOut}>Sign out</button>}
-          </div>
-        </aside>
-        <div className={"ws-main" + (wide ? " ws-main-wide" : "")}>
-          <nav className="crumbs ws-crumbs" aria-label="Breadcrumb">
-            <ol><li><Link to="/workspace">Workspace</Link></li>{crumbs.map(([t, to]) => <li key={t}>{to ? <Link to={to}>{t}</Link> : <span aria-current="page">{t}</span>}</li>)}</ol>
-          </nav>
-          <div className="ws-titlebar"><h1 className="ws-h">{title}</h1>{actions && <div className="ws-actions">{actions}</div>}</div>
-          {children}
-        </div>
-      </div>
+      <OsShell title={title} crumbs={crumbs} actions={actions} wide={wide} bare={bare}>{children}</OsShell>
     </Page>
   );
 }
@@ -80,7 +42,7 @@ export function Shell({ title, crumbs, children, actions, wide }) {
 /** Chooses the live page when signed in, the demo when not, and waits while the session is checked. */
 export function Gate({ live: Live, ...props }) {
   const ctx = useWs();
-  if (ctx.me === undefined) { setDemo(false); return <Page title="Workspace"><div className="wrap ws"><Loading what="Opening your workspace" /></div></Page>; }
+  if (ctx.me === undefined) { setDemo(false); return <Page title="Workspace"><div className="os-shell os-loading" data-theme="dark"><Loading what="Opening your workspace" /></div></Page>; }
   if (ctx.me) { setDemo(false); return <Live {...props} />; }
   // Signed out: the same pages, answered by the demo data.
   setDemo(true);
@@ -126,7 +88,7 @@ export function SignIn() {
       <Section tight>
         <div className="grid">
           <div className="col-6">
-            {!LIVE && <Notice>Sign-in works on the hosted site. This copy of the page is a demo.</Notice>}
+            {!LIVE && (isPass() ? <Notice>Operator pass is on: <Link to="/workspace" className="link link-s">open the workspace</Link>. Sign-in links themselves only work on the hosted site.</Notice> : <Notice>Sign-in works on the hosted site. This copy of the page is a demo.</Notice>)}
             {query.token && !act.error ? <Loading what="Signing you in" /> : sent ? (
               <div aria-live="polite" className="form">
                 <h2 className="h-small">Check your email</h2>
@@ -571,7 +533,7 @@ export function LiveImport() {
               <label className={"file" + (file ? " has-file" : "")} htmlFor="imp-file">
                 <span>{file ? file.name : "Choose a CSV or Excel file"}</span>
                 <span className="file-btn">{file ? "Change" : "Browse"}</span>
-                <input id="imp-file" type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setFile(e.target.files[0] || null)} />
+                <input id="imp-file" type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files[0] || null)} />
               </label>
             </div>
             <button className="btn btn-sm" type="submit" disabled={act.busy}>{act.busy ? "Uploading…" : "Upload and match"}</button>

@@ -1,3 +1,5 @@
+import { PLAN_CREDITS, TRIAL_CREDITS } from "../../config/model-pricing";
+import { ROLES } from "./badges";
 // The agent catalogue. One source for the API (what an agent may do) and the website (what we say it does).
 
 export type Profile = { what?: string; customers?: string; area?: string; tone?: string; sign_off?: string; website?: string };
@@ -125,7 +127,7 @@ Write the answer in plain English: a two-sentence answer first, then up to 6 sho
     needs: "Nothing",
     status: "live", engine: "llm", rhythm: "weekly",
     tools: ["recent-activity", "notify-owner"],
-    instructions: `Write the owner's weekly briefing. Call recent-activity, then notify-owner once with a note of at most 8 short lines: first what needs a decision (approvals waiting, open tasks, critical alerts), then what the agents did, with numbers. No fluff.`,
+    instructions: `Write the owner's weekly briefing. Call recent-activity, then notify-owner once with a note of at most 8 short lines: first the outcomes (replies, new customers, money paid in and still owed), then what needs a decision (approvals waiting, open tasks, critical alerts), and only then what the agents did. Numbers, not adjectives. No fluff.`,
     kickoff: "Write this week's briefing.",
     brief: (p) => `A short Monday note for ${p.name}.`,
   },
@@ -158,21 +160,36 @@ Write the answer in plain English: a two-sentence answer first, then up to 6 sho
     short: "Chases missing receipts and tidies your transactions.",
     description: "Finds transactions without receipts, asks the right person for them, and tidies categories for your accountant.",
     does: ["Finds missing receipts", "Asks for them", "Tidies categories"],
-    needs: "Xero or QuickBooks", status: "next", engine: "llm", rhythm: "weekly", tools: [],
+    needs: "A CSV export from your accounting software", status: "next", engine: "llm", rhythm: "weekly", tools: [],
     brief: (p) => `Keep ${p.name}'s books tidy.`,
   },
 ];
 
-export const template = (key: string) => TEMPLATES.find((t) => t.key === key);
+/** The orchestrator leads a swarm. It is part of every swarm and isn't hired from the catalogue. */
+export const ORCHESTRATOR: Template = {
+  key: "orchestrator", name: "Orchestrator", category: "Run", glyph: "split",
+  short: "Breaks the swarm's goals into tasks, assigns them and checks they finish.",
+  description: "Sits at the top of a swarm. It reads the goals and the team, assigns tasks to the agent whose role fits, follows up what stalls, and brings you only the decisions.",
+  does: ["Reads the swarm's goals and the team", "Assigns tasks to the right agent", "Checks they finish and follows up what's blocked", "Brings you the decisions"],
+  needs: "Goals for the swarm",
+  status: "live", engine: "llm", rhythm: "weekdays",
+  tools: ["business-profile", "list-team", "assign-task", "check-tasks", "create-task", "recent-activity"],
+  instructions: ROLES.find((r) => r.key === "orchestrator")!.orders, // one source with the Orchestrator role badge
+  kickoff: "Plan today's work for the team.",
+  brief: (p) => `Keep ${p.name}'s agents working on what matters most.`,
+};
+
+export const template = (key: string) => TEMPLATES.find((t) => t.key === key) || (key === "orchestrator" ? ORCHESTRATOR : undefined);
 export const RHYTHM_LABEL: Record<Template["rhythm"], string> = {
   weekdays: "Every weekday", daily: "Every day", weekly: "Every Monday", monthly: "First working day of the month", on_demand: "When you ask", on_event: "When something arrives",
 };
 
-/** Plans: how many agents a business can hire and how many tool calls its agents get a month. */
-export const PLANS: Record<string, { name: string; price: number | null; agents: number; actions: number; blurb: string }> = {
-  trial: { name: "Free trial", price: 0, agents: 6, actions: 1500, blurb: "14 days, everything in Growth" },
-  pilot: { name: "Pilot", price: null, agents: 12, actions: 5000, blurb: "Founding rate, agreed with us" },
-  starter: { name: "Starter", price: 49, agents: 2, actions: 300, blurb: "Two agents for a sole trader or small team" },
-  growth: { name: "Growth", price: 149, agents: 6, actions: 1500, blurb: "Six agents across sales, admin and cash" },
-  scale: { name: "Scale", price: 399, agents: 12, actions: 5000, blurb: "Every agent, for busy teams" },
+/** Plans: priced per business. Every plan has every app, unlimited people and up to 100 agents; credits are what scale. */
+export const PLANS: Record<string, { name: string; price: number | null; agents: number; credits: number; blurb: string }> = {
+  // Credits a month come from config/model-pricing.ts, with the rates they're spent at.
+  trial: { name: "Free trial", price: 0, agents: 100, credits: TRIAL_CREDITS, blurb: "14 days of the whole OS" },
+  pilot: { name: "Pilot", price: null, agents: 100, credits: PLAN_CREDITS.pilot, blurb: "Founding rate, agreed with us" },
+  starter: { name: "Starter", price: 79, agents: 100, credits: PLAN_CREDITS.starter, blurb: "The whole OS for an owner and a few people" },
+  growth: { name: "Growth", price: 249, agents: 100, credits: PLAN_CREDITS.growth, blurb: "For a team of up to 25 running every area in one place" },
+  scale: { name: "Business", price: 599, agents: 100, credits: PLAN_CREDITS.scale, blurb: "For a business of up to 100 people and 100 agents" },
 };

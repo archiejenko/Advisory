@@ -1,6 +1,7 @@
 // Public forms: health checks, call booking, developer API keys and credits. No sign-in;
 // protected by a per-IP rate limit and, when TURNSTILE_SECRET is set, Cloudflare Turnstile.
 import { Hono, type Context } from "hono";
+import { fetchT } from "../lib/fetch";
 import { z } from "zod";
 import { newId, nowIso, randomToken, sha256Hex } from "../../../../packages/core/util";
 import { type Env, one, all, run } from "../lib/db";
@@ -8,19 +9,16 @@ import { body, bad, notFound, HttpError } from "../lib/http";
 import { sendMail } from "../lib/mail";
 import { creditsCheckout } from "../lib/stripe";
 import { createOrg } from "../lib/orgs";
+import { limitIp, limitEmail } from "../lib/limits";
+import { checkUnsubToken, unsubLink } from "../lib/crypto";
 
 export const pub = new Hono<{ Bindings: Env }>();
-
-async function limitIp(c: Context<{ Bindings: Env }>, action: string, max: number) {
-  const ip = c.req.header("CF-Connecting-IP") || "local";
-  const bucket = `ip:${action}:${ip}:${new Date().toISOString().slice(0, 13)}`;
-  const r = await one<any>(c.env, "INSERT INTO rate_window (bucket, count) VALUES (?,1) ON CONFLICT(bucket) DO UPDATE SET count = count + 1 RETURNING count", bucket);
-  if (r.count > max) throw new HttpError(429, "slow_down", "Too many requests from your network. Try again in an hour.");
-}
+/** A sign-up waiting for its confirmation link, in KV by the link's hash. */
+export const SIGNUP_PREFIX = "signup:";
 
 async function turnstile(c: Context<{ Bindings: Env }>, token: string | null | undefined) {
   if (!c.env.TURNSTILE_SECRET) return;
-  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+  const res = await fetchT("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
     method: "POST", body: new URLSearchParams({ secret: c.env.TURNSTILE_SECRET, response: token || "", remoteip: c.req.header("CF-Connecting-IP") || "" }),
   });
   const j: any = await res.json();
@@ -39,7 +37,7 @@ pub.post("/health-checks", async (c) => {
   if (!f.success) throw bad("Add your name, a valid work email and your company name.");
   const file = form.get("file") as unknown as File | null;
   if (!file || typeof file === "string") throw bad("Attach your client list as a CSV or Excel file.");
-  if (!/\.(csv|xlsx|xls)$/i.test(file.name)) throw bad("Upload a CSV or Excel file.");
+  if (!/\.(csv|xlsx)$/i.test(file.name)) throw bad("Upload a CSV or Excel (.xlsx) file. For an older .xls file, save it as .xlsx or CSV first.");
   if (file.size > 10 * 1024 * 1024) throw bad("The file is larger than 10 MB.");
   const id = newId("hc"), token = randomToken(18);
   const key = `health-checks/${id}${file.name.match(/\.\w+$/)![0].toLowerCase()}`;
@@ -47,7 +45,7 @@ pub.post("/health-checks", async (c) => {
   await run(c.env, "INSERT INTO health_check (id, token, name, email, company, file_key, status, created_at) VALUES (?,?,?,?,?,?,?,?)",
     id, token, f.data.name, f.data.email.toLowerCase(), f.data.company, key, "queued", nowIso());
   await c.env.JOBS.send({ type: "health_check", id, step: "split" });
-  await sendMail(c.env, { to: f.data.email, subject: "We've received your client list", text: `Thanks, ${f.data.name}. We're running ${f.data.company}'s client list against Companies House, The Gazette and the FCA register. Your health check will arrive within 24 hours.\n\nYour list is used only for this check and deleted after 30 days.` });
+  await sendMail(c.env, { kind: "transactional", to: f.data.email, subject: "We've received your client list", text: `Thanks, ${f.data.name}. We're running ${f.data.company}'s client list against Companies House, The Gazette and the FCA register. Your health check will arrive within 24 hours.\n\nYour list is used only for this check and deleted after 30 days.` });
   return c.json({ id, status: "queued", message: "Your health check will arrive within 24 hours." }, 202);
 });
 
@@ -58,7 +56,9 @@ reports.get("/:token", async (c) => {
   if (!hc || !hc.approved_at || !hc.report_key) return c.text("This report isn't available. It may have expired: reports are deleted after 30 days.", 404);
   const obj = await c.env.FILES.get(hc.report_key);
   if (!obj) return c.text("This report has been deleted.", 404);
-  return new Response(obj.body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store", "X-Robots-Tag": "noindex" } });
+  return new Response(obj.body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store", "X-Robots-Tag": "noindex",
+    // The report is built from a customer's uploaded names: escaped, and on top of that no script may run in it.
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" } });
 });
 
 /* ---------- Booking ---------- */
@@ -85,8 +85,8 @@ pub.post("/bookings", async (c) => {
   if (!ins.meta.changes) throw new HttpError(409, "slot_taken", "Someone has just booked that time. Choose another.");
   const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Agent House//Booking//EN", "BEGIN:VEVENT", `UID:${id}@agenthouse`, `DTSTAMP:${nowIso().replace(/[-:]/g, "").slice(0, 15)}Z`,
     `DTSTART;TZID=Europe/London:${b.date.replace(/-/g, "")}T${b.time.replace(":", "")}00`, "DURATION:PT20M", "SUMMARY:Agent House: 20 minutes on your client book", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
-  await sendMail(c.env, { to: b.email, subject: `Booked: ${b.date} at ${b.time}`, text: `Thanks, ${b.name}. You're booked for 20 minutes on ${b.date} at ${b.time} UK time.\n\nCalendar entry:\n${ics}` });
-  if (c.env.OPERATOR_EMAIL) await sendMail(c.env, { to: c.env.OPERATOR_EMAIL, subject: `New call: ${b.company}, ${b.date} ${b.time}`, text: `${b.name} <${b.email}>, ${b.company}` });
+  await sendMail(c.env, { kind: "transactional", to: b.email, subject: `Booked: ${b.date} at ${b.time}`, text: `Thanks, ${b.name}. You're booked for 20 minutes on ${b.date} at ${b.time} UK time.\n\nCalendar entry:\n${ics}` });
+  if (c.env.OPERATOR_EMAIL) await sendMail(c.env, { kind: "transactional", to: c.env.OPERATOR_EMAIL, subject: `New call: ${b.company}, ${b.date} ${b.time}`, text: `${b.name} <${b.email}>, ${b.company}` });
   return c.json({ id, slot, message: `Booked for ${b.date} at ${b.time} UK time.` }, 201);
 });
 
@@ -98,14 +98,25 @@ pub.post("/signup", async (c) => {
   const email = b.email.toLowerCase();
   const existing = await one<any>(c.env, "SELECT u.id FROM user u JOIN membership m ON m.user_id = u.id WHERE u.email = ? LIMIT 1", email);
   if (existing) {
-    // Already has a workspace: send a sign-in link instead of creating a second one.
+    // Already has a workspace: send a sign-in link instead of creating a second one (at most 3 an hour per address).
+    if (!(await limitEmail(c.env, "link", email, 3))) return c.json({ ok: true, message: "Check your email for a link to your workspace." }, 201);
     const token = randomToken();
     await run(c.env, "INSERT INTO magic_link (token_hash, email, expires_at) VALUES (?,?,?)", await sha256Hex(token), email, new Date(Date.now() + 15 * 60000).toISOString());
-    await sendMail(c.env, { to: email, subject: "Your Agent House sign-in link", text: `You already have a workspace. Sign in: ${c.env.APP_URL}#/sign-in?token=${token}\n\nThis link works once and expires in 15 minutes.` });
+    await sendMail(c.env, { kind: "transactional", to: email, subject: "Your Agent House sign-in link", text: `You already have a workspace. Sign in: ${c.env.APP_URL}#/sign-in?token=${token}\n\nThis link works once and expires in 15 minutes.` });
     return c.json({ ok: true, message: "Check your email for a link to your workspace." }, 201);
   }
-  await createOrg(c.env, { name: b.business, owner_email: email, owner_name: b.name, profile: Object.fromEntries(Object.entries({ what: b.what, customers: b.customers, area: b.area }).filter(([, v]) => v && v.trim()).map(([k, v]) => [k, v!.trim()])), plan: "trial", by: "signup" });
-  return c.json({ ok: true, message: "Check your email for a link to your new workspace." }, 201);
+  // Nothing is created until the address is proved: the details wait (a day) for the emailed link, which signs the
+  // owner in and creates the workspace (see /api/auth/session). A stranger's address gets one confirmation, no workspace.
+  if (!(await limitEmail(c.env, "signup", email, 3))) return c.json({ ok: true, message: "Check your email for a link to confirm and open your new workspace." }, 201);
+  const token = randomToken(), hash = await sha256Hex(token);
+  const profile = Object.fromEntries(Object.entries({ what: b.what, customers: b.customers, area: b.area }).filter(([, v]) => v && v.trim()).map(([k, v]) => [k, v!.trim()]));
+  await c.env.CACHE.put(SIGNUP_PREFIX + hash, JSON.stringify({ name: b.business, owner_email: email, owner_name: b.name, profile }), { expirationTtl: 86400 });
+  await run(c.env, "INSERT INTO magic_link (token_hash, email, expires_at) VALUES (?,?,?)", hash, email, new Date(Date.now() + 864e5).toISOString());
+  await sendMail(c.env, { kind: "transactional", to: email, subject: "Confirm your email to open your Agent House workspace", text: `Confirm your email and open the workspace for ${b.business}:
+${c.env.APP_URL}#/sign-in?token=${token}
+
+This link works once and expires in 24 hours. If you didn't sign up, ignore this email and nothing is created.` });
+  return c.json({ ok: true, message: "Check your email for a link to confirm and open your new workspace." }, 201);
 });
 
 /* ---------- Developer keys and credits ---------- */
@@ -114,7 +125,7 @@ pub.post("/api-keys", async (c) => {
   const b = await body(c, z.object({ email: z.string().email() }));
   const raw = "ah_live_" + randomToken(24), id = newId("key");
   await run(c.env, "INSERT INTO api_key (id, key_hash, owner_email, kind, created_at) VALUES (?,?,?,?,?)", id, await sha256Hex(raw), b.email.toLowerCase(), "credits", nowIso());
-  await sendMail(c.env, { to: b.email, subject: "Your Agent House API key", text: `Your API key: ${raw}\n\nIt is shown once; we only store a hash. It includes 100 free calls a month. Buy credits for more, or pay per call with x402.\nKey id: ${id}` });
+  await sendMail(c.env, { kind: "transactional", to: b.email, subject: "Your Agent House API key", text: `Your API key: ${raw}\n\nIt is shown once; we only store a hash. It includes 100 free calls a month. Buy credits for more, or pay per call with x402.\nKey id: ${id}` });
   return c.json({ id, message: "Your key has been emailed to you. It is shown once." }, 201);
 });
 
@@ -126,8 +137,21 @@ pub.post("/credits/checkout", async (c) => {
   return c.json({ url: s.url });
 });
 
+/**
+ * With the token from an email's link, the address is suppressed at once. Without one (someone typing an address
+ * on the site), we email that address a link instead: nobody can unsubscribe an address they don't receive mail at.
+ */
 pub.post("/unsubscribe", async (c) => {
-  const b = await body(c, z.object({ email: z.string().email() }));
-  await run(c.env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", b.email.toLowerCase(), "unsubscribe", nowIso());
-  return c.json({ ok: true });
+  const b = await body(c, z.object({ email: z.string().email(), token: z.string().max(100).optional() }));
+  const email = b.email.toLowerCase();
+  if (b.token) {
+    if (!(await checkUnsubToken(c.env, email, b.token))) throw bad("This unsubscribe link isn't valid. Reply STOP to the email instead, or ask for a new link below.", "invalid_token");
+    await run(c.env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", email, "unsubscribe", nowIso());
+    return c.json({ ok: true, unsubscribed: true });
+  }
+  await limitIp(c, "unsub", 10);
+  if (await limitEmail(c.env, "unsub", email, 3)) {
+    await sendMail(c.env, { kind: "transactional", to: email, subject: "Confirm: stop emails from Agent House agents", text: `Someone asked to stop outreach emails from Agent House agents to this address. If it was you, confirm here:\n${await unsubLink(c.env, email)}\n\nIf it wasn't, ignore this email and nothing changes.` });
+  }
+  return c.json({ ok: true, unsubscribed: false, message: "We've emailed that address a link to confirm." });
 });

@@ -76,7 +76,7 @@ export function NextPrev({ prev, next }) {
   );
 }
 
-export function CtaBand({ title = "Put your first agent to work today.", body = "Fourteen days free with six agents. Nothing is sent without your approval, and nothing is charged when the trial ends." }) {
+export function CtaBand({ title = "Run your business from one OS.", body = "Fourteen days free with every app and up to 100 agents. Nothing is sent without your approval, and nothing is charged when the trial ends." }) {
   return (
     <section className="close">
       <div className="wrap grid">
@@ -240,22 +240,22 @@ export function MethodSteps() {
     <ol className="method">
       <li>
         <span className="m-n">01</span>
-        <h3>Tell us about your business</h3>
-        <p>What you do, who your customers are, where you work and how you write. Two minutes; every agent reads it first.</p>
+        <h3>Describe your business</h3>
+        <p>What you do, who you serve, where, and how you write. Type it or say it; two minutes, and every agent reads it first.</p>
         <div className="m-vis">
           <div className="m-sheet">{["Profile", "Office cleaning", "Offices, 10–80 staff", "Manchester, Salford", "Warm, no jargon"].map((r, i) => <div key={r} className={i === 0 ? "m-th" : ""}>{r}</div>)}</div>
         </div>
       </li>
       <li>
         <span className="m-n">02</span>
-        <h3>Hire the agents you need</h3>
-        <p>Outreach, inbox, credit control, research and more. Each starts with a brief written from your profile that you can edit.</p>
-        <div className="m-vis"><ul className="m-regs"><li>Outreach</li><li>Inbox</li><li>Credit control</li></ul></div>
+        <h3>We design the team</h3>
+        <p>An orchestrator to lead, and roles under it for your kind of business. You see the cost against your plan before anything starts.</p>
+        <div className="m-vis"><ul className="m-regs"><li>Orchestrator</li><li>Prospector · Writer</li><li>Inbox · Credit control</li></ul></div>
       </li>
       <li>
         <span className="m-n">03</span>
         <h3>They work, using real tools</h3>
-        <p>Register checks, web research and page reading from the catalogue. Every step is recorded so you can see why they did what they did.</p>
+        <p>The orchestrator turns your goals into tasks. Each role uses its skills: register checks, research, drafting, chasing. Every step is recorded.</p>
         <div className="m-vis">
           <div className="m-bar"><span style={{ width: "86%" }} /><i style={{ width: "14%" }} /></div>
           <div className="m-legend"><span><b>6</b> tool calls</span><span><b className="signal">1</b> draft for you</span></div>
@@ -264,7 +264,7 @@ export function MethodSteps() {
       <li>
         <span className="m-n">04</span>
         <h3>You approve what goes out</h3>
-        <p>Drafts wait in Approvals and in Slack, Teams or email. Edit and send, or reject. Replies come back to you.</p>
+        <p>Drafts wait on your desk, on your phone, and in Slack, Teams or email. Edit and send, or reject. Replies come back to you.</p>
         <div className="m-vis">
           <div className="m-alert"><b>Email Peel Street Accountants</b><span>Outreach · waiting for you</span><span className="m-src">Approve · Edit · Reject</span></div>
         </div>

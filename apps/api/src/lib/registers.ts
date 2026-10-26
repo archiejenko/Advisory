@@ -1,6 +1,7 @@
 // Adapters for the three public registers. Each returns facts with their source and retrieval time.
 // Companies House calls go through a shared rate limiter (600 requests per 5 minutes by default).
 import type { CompanyRecord } from "../../../../packages/core/checks";
+import { fetchT } from "./fetch";
 import { nowIso } from "../../../../packages/core/util";
 import { type Env, one, run } from "./db";
 
@@ -11,21 +12,36 @@ export class UpstreamError extends Error {
   constructor(public source: string, public status: number, message: string) { super(message); }
 }
 
+/**
+ * The Companies House budget is shared by everything, so it is split into lanes. Bulk work (the weekly re-check,
+ * imports, first reads) may use 60% of a five-minute window, alerts from the stream 85%, and live checks (a person
+ * or an agent waiting on the answer) the rest. A busy Monday can no longer lock out a live check or a liquidation alert.
+ */
+export type Lane = "live" | "alert" | "bulk" | "api";
+/**
+ * Outside callers (the Truth API, MCP, the tool gateway) have the smallest lane: anyone can get a key, so their
+ * traffic may never crowd out a customer's alerts or a person waiting on a check.
+ */
+export const LANE_SHARE: Record<Lane, number> = { api: 0.35, bulk: 0.6, alert: 0.85, live: 0.97 };
+/** The same env, with register calls counted against another lane. */
+export const withLane = <E extends Env>(env: E, lane: Lane): E => ({ ...env, REG_LANE: lane });
+
 async function takeToken(env: Env, cost = 1) {
   const limit = Number(env.CH_RATE_LIMIT || 600);
+  const lane: Lane = (env.REG_LANE as Lane) || "live";
   const now = new Date();
   const slot = Math.floor(now.getTime() / 300000);
-  const bucket = "ch:" + slot;
+  const retryAfter = Math.max(5, Math.ceil(((slot + 1) * 300000 - now.getTime()) / 1000));
+  // Take the token only while this lane has room, so a refused call doesn't use up the window for anyone else.
   const row = await one<{ count: number }>(env,
-    "INSERT INTO rate_window (bucket, count) VALUES (?, ?) ON CONFLICT(bucket) DO UPDATE SET count = count + excluded.count RETURNING count", bucket, cost);
-  if ((row?.count || 0) > limit * 0.95) { // keep 5% headroom for live new-client checks
-    throw new RateLimited(Math.max(5, Math.ceil(((slot + 1) * 300000 - now.getTime()) / 1000)));
-  }
+    `INSERT INTO rate_window (bucket, count) VALUES (?, ?) ON CONFLICT(bucket) DO UPDATE SET count = count + excluded.count
+     WHERE rate_window.count + excluded.count <= ? RETURNING count`, "ch:" + slot, cost, Math.floor(limit * LANE_SHARE[lane]));
+  if (!row) throw new RateLimited(retryAfter);
 }
 
 async function ch(env: Env, path: string): Promise<any | null> {
   await takeToken(env);
-  const res = await fetch(env.CH_API_BASE.replace(/\/$/, "") + path, {
+  const res = await fetchT(env.CH_API_BASE.replace(/\/$/, "") + path, {
     headers: { Authorization: "Basic " + btoa(env.CH_API_KEY + ":"), Accept: "application/json" },
   });
   if (res.status === 404) return null;
@@ -85,7 +101,7 @@ export async function fetchCompany(env: Env, number: string): Promise<CompanyRec
 export async function gazetteNotices(env: Env, number: string): Promise<NonNullable<CompanyRecord["gazette"]>> {
   if (!env.GAZETTE_BASE) return [];
   try {
-    const res = await fetch(`${env.GAZETTE_BASE.replace(/\/$/, "")}/notice/data.json?company-number=${number}`);
+    const res = await fetchT(`${env.GAZETTE_BASE.replace(/\/$/, "")}/notice/data.json?company-number=${number}`);
     if (!res.ok) return [];
     const j: any = await res.json();
     return (j.notices || []).map((n: any) => ({
@@ -99,7 +115,7 @@ export async function gazetteNotices(env: Env, number: string): Promise<NonNulla
 export async function fcaStatus(env: Env, number: string): Promise<{ status: string | null; frn: string | null; unavailable?: boolean }> {
   if (!env.FCA_BASE) return { status: null, frn: null, unavailable: true };
   try {
-    const res = await fetch(`${env.FCA_BASE.replace(/\/$/, "")}/Firm/search?companyNumber=${number}`, {
+    const res = await fetchT(`${env.FCA_BASE.replace(/\/$/, "")}/Firm/search?companyNumber=${number}`, {
       headers: { "X-Auth-Email": env.FCA_EMAIL || "", "X-Auth-Key": env.FCA_KEY || "" },
     });
     if (!res.ok) return { status: null, frn: null, unavailable: true };

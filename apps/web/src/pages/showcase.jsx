@@ -4,7 +4,7 @@ import { Link } from "../router.jsx";
 import { reduced } from "../ui.jsx";
 import { Reveal, Editor, useInView } from "../kit.jsx";
 
-export const HOST = typeof location !== "undefined" && /^https?:$/.test(location.protocol) ? location.origin : "https://agenthouse.example";
+export const HOST = typeof location !== "undefined" && /^https?:$/.test(location.protocol) && !__DEMO_BUILD__ ? location.origin : "https://agenthouse.example";
 
 const pad = (s, n) => s + " ".repeat(Math.max(1, n - s.length));
 export const TERM = [
@@ -38,7 +38,7 @@ const API = [
   }),
 });
 const { output, steps } = await res.json();
-// 25p a run, whatever it calls`,
+// 12p a step: max_steps 6 is 72p`,
     float: () => (<><p className="float-t">Agent run · 6 steps</p><p className="float-big">3 found</p>{[["find-companies", "LS1, LS2 · 86"], ["company-research", "Kirkgate Dental"], ["company-research", "Aire Smiles"]].map(([t, v], i) => <div className="mini-row" key={i}><span className="mono" style={{ fontSize: 13 }}>{t}</span><span className="dt">{v}</span></div>)}</>) },
   { k: "Call a tool", title: "Call a tool", d: "Every tool in the catalogue is one POST. Company data, web research, page reading, and tools developers publish.", file: "tool.ts",
     code: `const res = await fetch(

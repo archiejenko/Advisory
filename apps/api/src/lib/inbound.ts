@@ -4,6 +4,47 @@ import { type Env, one, run, audit } from "./db";
 import { checkInput } from "./truth";
 import { sendMail } from "./mail";
 import { wakeOnEvent } from "./agents";
+import { syncOrgSwarms } from "./swarm";
+import { hit } from "./limits";
+
+/** Most messages one enquiries address takes in an hour. Past this, mail is refused so a flood can't run up costs. */
+export const INBOX_PER_HOUR = 300;
+
+/** Auto-replies, newsletters and mailing lists: kept for the record, but they don't wake the inbox agent. */
+export function isAutomated(h: { get(name: string): string | null }) {
+  const auto = (h.get("auto-submitted") || "").toLowerCase();
+  if (auto && auto !== "no") return true;
+  if (/^(bulk|list|junk|auto_reply)$/i.test((h.get("precedence") || "").trim())) return true;
+  return !!(h.get("list-id") || h.get("list-unsubscribe") || h.get("x-autoreply") || h.get("x-autorespond"));
+}
+import { logActivity, leadForEmail } from "./crm";
+import PostalMime from "postal-mime";
+
+/**
+ * Did the sender's domain vouch for this message? A pass counts only when it is for the sender's own domain, so a
+ * message from an attacker's domain passing its own checks doesn't vouch for someone else's address.
+ * "pass": SPF, DKIM or DMARC passed for the sender's domain. "fail": results are present and none did.
+ * "unknown": no Authentication-Results header at all. Email Routing itself rejects mail that fails both SPF and DKIM
+ * (and mail failing the sender's DMARC policy), so unknown is treated as acceptable, and logged.
+ */
+export function senderAuth(h: { get(name: string): string | null }, from: string): "pass" | "fail" | "unknown" {
+  const results = [h.get("authentication-results"), h.get("arc-authentication-results")].filter(Boolean).join(";").toLowerCase();
+  if (!results) return "unknown";
+  return senderVerified(h, from) ? "pass" : "fail";
+}
+/** True when SPF, DKIM or DMARC passed for the sender's own domain. */
+export function senderVerified(h: { get(name: string): string | null }, from: string) {
+  const domain = (from.split("@")[1] || "").toLowerCase().replace(/[>\s]/g, "");
+  if (!domain) return false;
+  const results = [h.get("authentication-results"), h.get("arc-authentication-results")].filter(Boolean).join(";").toLowerCase();
+  const ownDomain = (d: string | undefined) => !!d && (d === domain || domain.endsWith("." + d));
+  for (const part of results.split(";").map((x) => x.trim())) {
+    if (/^dmarc=pass\b/.test(part) && ownDomain((part.match(/header\.from=([^\s;]+)/) || [])[1])) return true;
+    if (/^spf=pass\b/.test(part) && ownDomain(((part.match(/smtp\.mailfrom=([^\s;]+)/) || [])[1] || "").split("@").pop())) return true;
+    if (/^dkim=pass\b/.test(part) && ownDomain((part.match(/header\.d=([^\s;]+)/) || [])[1])) return true;
+  }
+  return false;
+}
 
 /** Pull the request out of a message: the subject, else the first non-empty body line. */
 export function requestFrom(subject: string, text: string): string {
@@ -13,9 +54,20 @@ export function requestFrom(subject: string, text: string): string {
   return (line || "").slice(0, 300);
 }
 
-function plainBody(raw: string): string {
-  const i = raw.search(/\r?\n\r?\n/);
-  return i >= 0 ? raw.slice(i).trim() : raw;
+const MAX_RAW = 5 * 1024 * 1024;
+
+/** Decode an HTML-only message into readable text. */
+export function htmlToText(html: string) {
+  return html.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, " ").replace(/<br\s*\/?>|<\/(p|div|li|h\d|tr)>/gi, "\n").replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/[ \t]+/g, " ").replace(/ ?\n\s*/g, "\n").trim();
+}
+
+/** Parse a raw message (MIME: multipart, base64, quoted-printable, HTML) into its subject and plain text. */
+export async function parseMessage(raw: ArrayBuffer | string): Promise<{ subject: string; text: string }> {
+  const m = await PostalMime.parse(raw);
+  const text = (m.text && m.text.trim()) || (m.html ? htmlToText(m.html) : "");
+  return { subject: m.subject || "", text: text.replace(/\r\n/g, "\n").trim() };
 }
 
 export function briefText(env: Env, b: any): string {
@@ -36,29 +88,47 @@ export async function onEmail(message: ForwardableEmailMessage, env: Env) {
   // Mail to <alias>@INBOUND_DOMAIN is a business's enquiries inbox: store it and wake its inbox agent.
   const local = (message.to || "").toLowerCase().split("@")[0];
   const org = local && local !== "check" ? await one<any>(env, "SELECT id FROM org WHERE inbox_alias = ?", local) : null;
+  if (message.rawSize > MAX_RAW) { message.setReject?.("Message too large"); return; }
   if (org) {
-    const raw = await new Response(message.raw).text();
-    const subject = message.headers.get("subject") || "";
+    if (!(await hit(env, "inbound", org.id, Number(env.INBOX_PER_HOUR || INBOX_PER_HOUR)))) { message.setReject?.("Too many messages to this address. Try again later."); return; }
+    const automated = isAutomated(message.headers);
+    const parsed = await parseMessage(await new Response(message.raw).arrayBuffer());
+    const subject = parsed.subject || message.headers.get("subject") || "";
+    const body = parsed.text;
+    const stop = /^\s*(stop|unsubscribe)\b/i.test(body);
     const id = newId("msg");
-    await run(env, "INSERT INTO inbox_message (id, org_id, from_addr, subject, body, received_at) VALUES (?,?,?,?,?,?)", id, org.id, from, subject.slice(0, 300), plainBody(raw).slice(0, 20000), nowIso());
-    // A reply from someone we emailed marks that lead as replied.
-    await run(env, "UPDATE lead SET status = 'replied' WHERE org_id = ? AND email = ? AND status IN ('new','contacted')", org.id, from);
-    if (/^\s*(stop|unsubscribe)\b/i.test(plainBody(raw))) {
-      await run(env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", from, "reply_stop", nowIso());
-      await run(env, "UPDATE lead SET status = 'unsubscribed' WHERE org_id = ? AND email = ?", org.id, from);
+    await run(env, "INSERT INTO inbox_message (id, org_id, from_addr, subject, body, status, category, received_at) VALUES (?,?,?,?,?,?,?,?)", id, org.id, from, subject.slice(0, 300), body.slice(0, 20000),
+      automated || stop ? "ignored" : "new", automated ? "automated" : stop ? "unsubscribe" : null, nowIso());
+    if (automated) return;
+    // The envelope sender can be forged. Mail whose authentication results show the sender's domain didn't vouch for
+    // it can't change a lead or opt out an address; it's kept for the inbox agent to read, as information.
+    const auth = senderAuth(message.headers, from);
+    if (auth === "unknown") console.warn("inbound mail without Authentication-Results; relying on Email Routing's own SPF/DKIM check", org.id);
+    if (auth !== "fail") {
+      // A reply from someone we emailed marks that lead as replied, and goes on its timeline.
+      await run(env, "UPDATE lead SET status = 'replied' WHERE org_id = ? AND email = ? AND status IN ('new','contacted')", org.id, from);
+      const leadId = await leadForEmail(env, org.id, from);
+      if (leadId) await logActivity(env, { orgId: org.id, leadId, actor: from, kind: "reply", summary: `Reply: ${subject.slice(0, 200) || "(no subject)"}`, refKind: "message", refId: id });
+      if (stop) {
+        await run(env, "INSERT OR IGNORE INTO suppression (email, reason, at) VALUES (?,?,?)", from, "reply_stop", nowIso());
+        await run(env, "UPDATE lead SET status = 'unsubscribed' WHERE org_id = ? AND email = ?", org.id, from);
+      }
     }
+    if (stop) return; // an opt-out isn't an enquiry: don't wake the inbox agent to answer it
+    await syncOrgSwarms(env, org.id, { force: false }); // at most once every 10 seconds, however much mail arrives
     await wakeOnEvent(env, org.id, "inbox", `New message from ${from}: ${subject}`);
     return;
   }
   const user = await one<any>(env, "SELECT u.id, u.email, m.org_id FROM user u JOIN membership m ON m.user_id = u.id WHERE u.email = ? LIMIT 1", from);
   if (!user) return; // not a customer: drop silently, never reply to strangers
-  const raw = await new Response(message.raw).text();
-  const input = requestFrom(message.headers.get("subject") || "", plainBody(raw));
+  if (senderAuth(message.headers, from) === "fail") return; // a forged customer address would spend their register checks
+  const parsed = await parseMessage(await new Response(message.raw).arrayBuffer());
+  const input = requestFrom(parsed.subject || message.headers.get("subject") || "", parsed.text);
   if (input.length < 2) return;
   const b: any = await checkInput(env, input);
   await run(env, "INSERT INTO brief (id, org_id, input, number, body, response_id, created_by, created_at) VALUES (?,?,?,?,?,?,?,?)",
     newId("brf"), user.org_id, input, b.match?.number ?? null, JSON.stringify(b), b.response_id, user.id, nowIso());
   await run(env, "INSERT INTO usage_event (id, org_id, kind, number, units, cost_pence, payment, at) VALUES (?,?,?,?,1,0,'internal',?)", newId("use"), user.org_id, "brief", b.match?.number ?? null, nowIso());
   await audit(env, user.org_id, user.id, "brief_by_email", b.response_id);
-  await sendMail(env, { to: user.email, subject: `Brief: ${b.match?.name || input}`, text: briefText(env, b) });
+  await sendMail(env, { kind: "transactional", to: user.email, subject: `Brief: ${b.match?.name || input}`, text: briefText(env, b) });
 }

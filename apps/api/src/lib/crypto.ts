@@ -33,6 +33,34 @@ export function publicJwk(env: Env) {
   return { ...pub, kid: env.SIGNING_KID, use: "sig", alg: "EdDSA" };
 }
 
+/**
+ * Keys signed with before a rotation (SIGNING_JWKS_PREVIOUS: a JSON array of public JWKs, each with its kid), so
+ * answers signed earlier still verify. Only public fields are ever published, whatever the variable holds.
+ */
+export function previousJwks(env: Env) {
+  let list: any[] = [];
+  try { list = JSON.parse(env.SIGNING_JWKS_PREVIOUS || "[]"); } catch {}
+  return (Array.isArray(list) ? list : []).filter((k) => k?.kty === "OKP" && k.x && k.kid && !k.d).map((k) => ({ kty: "OKP", crv: "Ed25519", x: k.x, kid: k.kid, use: "sig", alg: "EdDSA" }));
+}
+
+/** An unsubscribe link's token: HMAC of the address under CHANNEL_KEY, so only someone sent the link can use it. */
+export async function unsubToken(env: Env, email: string) {
+  const key = await crypto.subtle.importKey("raw", fromB64url(env.CHANNEL_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode("unsubscribe:" + email.trim().toLowerCase())));
+  return b64url(mac.slice(0, 16));
+}
+export async function checkUnsubToken(env: Env, email: string, token: string) {
+  const want = await unsubToken(env, email);
+  if (want.length !== token.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ token.charCodeAt(i);
+  return diff === 0;
+}
+/** The link that goes in outreach footers and confirmation emails. */
+export async function unsubLink(env: Env, email: string) {
+  return `${env.APP_URL}#/unsubscribe?e=${encodeURIComponent(email)}&t=${await unsubToken(env, email)}`;
+}
+
 /** Stripe's webhook signature: HMAC-SHA256 over `${t}.${payload}`. */
 export async function verifyStripeSignature(secret: string, header: string | undefined, payload: string, toleranceSec = 300) {
   if (!header) return false;

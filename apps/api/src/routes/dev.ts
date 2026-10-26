@@ -7,6 +7,7 @@ import { body, bad, notFound, HttpError } from "../lib/http";
 import { seal } from "../lib/crypto";
 import { sendMail } from "../lib/mail";
 import { builtin } from "../lib/tools";
+import { safeOutboundUrl } from "../lib/web";
 
 type V = { key: any };
 export const dev = new Hono<{ Bindings: Env; Variables: V }>();
@@ -53,8 +54,7 @@ const ToolIn = z.object({
   price_pence: z.number().int().min(1).max(500),
 });
 function checkEndpoint(env: Env, url: string) {
-  const u = new URL(url);
-  if (u.protocol !== "https:" && env.ALLOW_ANY_WEBHOOK_HOST !== "true") throw bad("The endpoint must use https.");
+  safeOutboundUrl(env, url, env.ALLOW_ANY_WEBHOOK_HOST === "true");
 }
 
 dev.post("/tools", async (c) => {
@@ -64,7 +64,7 @@ dev.post("/tools", async (c) => {
   const secret = "ahs_" + randomToken(24);
   await run(c.env, "INSERT INTO tool (slug, name, description, input_schema, owner_key_id, endpoint, secret_enc, price_pence, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
     b.slug, b.name, b.description, JSON.stringify(b.input_schema), c.get("key").id, b.endpoint, await seal(c.env, secret), b.price_pence, "review", nowIso());
-  if (c.env.OPERATOR_EMAIL) await sendMail(c.env, { to: c.env.OPERATOR_EMAIL, subject: `Tool to review: ${b.slug}`, text: `${b.name} (${b.price_pence}p) from ${c.get("key").owner_email}\n${b.description}\nEndpoint: ${b.endpoint}\nReview it: ${c.env.APP_URL}#/admin` });
+  if (c.env.OPERATOR_EMAIL) await sendMail(c.env, { kind: "transactional", to: c.env.OPERATOR_EMAIL, subject: `Tool to review: ${b.slug}`, text: `${b.name} (${b.price_pence}p) from ${c.get("key").owner_email}\n${b.description}\nEndpoint: ${b.endpoint}\nReview it: ${c.env.APP_URL}#/admin` });
   return c.json({ slug: b.slug, status: "review", signing_secret: secret, message: "We'll review it within one working day. Keep the signing secret: it's shown once, and you'll use it to check every request comes from us." }, 201);
 });
 

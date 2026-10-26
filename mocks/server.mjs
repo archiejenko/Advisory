@@ -54,6 +54,8 @@ const streamClients = new Map(); // stream -> Set(res)
 const backlog = []; // {stream, line, tp}
 const gazetteFeed = [];
 const captured = [];
+const scheduled = new Set(); // Stripe subscriptions with a schedule attached (a downgrade waiting for the 1st)
+let claudeFailures = 0; // the next N Messages API calls answer 529 overloaded, to exercise retries
 let gazetteId = 900000;
 
 function emit(stream, number, kind) {
@@ -102,12 +104,55 @@ function toolResults(messages) {
   for (const m of messages) if (m.role === "user" && Array.isArray(m.content)) for (const blk of m.content) if (blk.type === "tool_result") { try { out.push(JSON.parse(blk.content)); } catch { out.push({ error: blk.content }); } }
   return out;
 }
-function mockClaude(b) {
+const textOf = (c) => typeof c === "string" ? c : Array.isArray(c) ? c.filter((x) => x.type === "text").map((x) => x.text).join("\n") : "";
+/* The Swarm engine's planner: a recruitment swarm with custom roles. "needs a retry" first answers with a
+   tool that doesn't exist, to exercise the correction round; "unusable" never answers with JSON. */
+const RECRUITMENT = {
+  name: "Recruitment desk", sector: "Recruitment agency", goals: ["Find companies hiring now", "Start conversations with hiring managers"],
+  agents: [
+    { key: "scout", name: "Job scout", role: "Finds companies that are hiring in the area", template: "custom", rhythm: "weekdays", run_hour: 7,
+      tools: ["business-profile", "find-companies", "company-research", "read-page", "save-lead", "create-task"],
+      instructions: "1. Read the business profile.\n2. Find companies that are hiring the roles we place.\n3. Save each as a lead with its published email, and hand it to outreach." },
+    { key: "outreach", name: "Outreach", role: "Writes to hiring managers", template: "outreach", rhythm: "weekdays", run_hour: 9 },
+    { key: "inbox", name: "Inbox", role: "Answers replies", template: "inbox", rhythm: "on_event" },
+  ],
+  stages: [
+    { key: "spotted", name: "Spotted", agent: "scout", rule: { source: "lead", status: ["new"], has_email: false } },
+    { key: "ready", name: "Ready", agent: "outreach", rule: { source: "lead", status: ["new"], has_email: true } },
+    { key: "pitched", name: "Pitched", agent: "outreach", rule: { source: "lead", status: ["contacted"] } },
+    { key: "talking", name: "Talking", agent: "inbox", rule: { source: "lead", status: ["replied"] } },
+    { key: "client", name: "Client", agent: "inbox", rule: { source: "lead", status: ["won"] }, done: true },
+  ],
+  handoffs: [{ from: "scout", to: "outreach", when: "A hiring company has a published email" }],
+  kpis: ["new_leads_week", "emails_sent_week", "replies_week", "won_month"], skin: "floor", needs: [],
+};
+function plannerReply(b) {
+  const desc = textOf(b.messages[0].content), turn = b.messages.filter((m) => m.role === "assistant").length;
+  const reply = (text) => ({ id: "msg_plan", type: "message", role: "assistant", content: [{ type: "text", text }], stop_reason: "end_turn", usage: { input_tokens: 4200, output_tokens: 900 } });
+  if (/unusable/i.test(desc)) return reply("Sorry, I can't design that.");
+  if (/needs a retry/i.test(desc) && turn === 0) return reply(JSON.stringify({ ...RECRUITMENT, agents: RECRUITMENT.agents.map((a, i) => (i === 0 ? { ...a, tools: [...a.tools, "linkedin-scrape"] } : a)) }));
+  return reply("Here is the swarm:\n" + JSON.stringify(RECRUITMENT));
+}
+/* The command router: answers questions, otherwise sends the instruction to the agent it names. */
+function routerReply(b) {
+  const q = textOf(b.messages[0].content);
+  const agents = [...(b.system.match(/^Agents: (.*)$/m)?.[1] || "").matchAll(/([a-z][a-z0-9-]*) \(([^:,)]+)/g)].map((m) => ({ key: m[1], name: m[2] }));
+  const reply = (o) => ({ id: "msg_route", type: "message", role: "assistant", content: [{ type: "text", text: JSON.stringify(o) }], stop_reason: "end_turn", usage: { input_tokens: 900, output_tokens: 60 } });
+  if (/\?\s*$|^how many|^what/i.test(q)) return reply({ type: "answer", answer: "From the Floor: " + (b.system.match(/^Facts: (.*)$/m)?.[1] || "nothing yet") });
+  const a = agents.find((x) => q.toLowerCase().includes(x.key) || q.toLowerCase().includes(x.name.toLowerCase().split(" ")[0])) || agents[0];
+  return reply({ type: "instruct", agent: a?.key, input: q });
+}
+
+function mockClaude(raw) {
+  // The API takes system as a string or as cached text blocks; normalise both.
+  const b = { ...raw, system: textOf(raw.system) };
+  if (b.system.startsWith("SWARM BLUEPRINT")) return plannerReply(b);
+  if (b.system.startsWith("COMMAND ROUTER")) return routerReply(b);
   const tpl = ((b.system || "").match(/TEMPLATE: ([\w-]+)/) || [])[1] || "adhoc";
   const H = toolResults(b.messages);
   const last = H[H.length - 1];
   const turn = b.messages.filter((m) => m.role === "assistant").length;
-  const userText = typeof b.messages[0].content === "string" ? b.messages[0].content : "";
+  const userText = textOf(b.messages[0].content);
   const use = (name, input) => ({ id: "msg_" + turn, type: "message", role: "assistant", content: [{ type: "text", text: `Next: ${name}.` }, { type: "tool_use", id: "toolu_" + Math.random().toString(36).slice(2, 12), name, input }], stop_reason: "tool_use", usage: { input_tokens: 1500, output_tokens: 120 } });
   const done = (text) => ({ id: "msg_" + turn, type: "message", role: "assistant", content: [{ type: "text", text }], stop_reason: "end_turn", usage: { input_tokens: 1800, output_tokens: 220 } });
   const has = (t) => (b.tools || []).some((x) => x.name === t);
@@ -139,6 +184,30 @@ function mockClaude(b) {
     if (turn === 2) return use("propose-email", { to: m.from_addr, message_id: m.id, subject: `Re: ${m.subject}`, body: "Hello,\n\nThanks for getting in touch. We'd be glad to help. Could you tell us how many people are in your office, and when you'd like to start? We'll come back with a quote the same day.\n\nKind regards,\n" + sign, reason: "Quote request: reply asking for the details we need" });
     return done(`Triaged 1 message (quote request, high urgency) and drafted a reply for approval.`);
   }
+  if (tpl === "os") {
+    // An OS agent asked in a channel: read its module, add one record, and say what it did.
+    const module = (b.system.match(/module "([a-z0-9-]+)"/) || [])[1];
+    if (turn === 0) return use("os-records", { module });
+    if (turn === 1) return use("os-save", { module, title: "Follow up: " + (userText.trim().split("\n").pop() || "").replace(/@/g, "").trim().slice(0, 60) });
+    const n = H[0]?.records?.length ?? 0;
+    return done(`I checked ${H[0]?.app || "the module"}: ${n} ${n === 1 ? "record" : "records"} so far. I added "${H[1]?.id ? "a follow-up" : "nothing"}" for someone to pick up.`);
+  }
+  if (tpl === "custom" && (b.tools || []).some((t) => t.name === "find-companies")) {
+    // A prospector-style custom role: find one company, research it, save it, and hand it to outreach.
+    if (turn === 0) return use("business-profile", {});
+    if (turn === 1) return use("find-companies", { districts: ["M2", "M3"], sic: ["69"], min_age: 3, limit: 1 });
+    const found = H[1]?.companies || [];
+    if (!found.length) return done("No new companies matched today.");
+    const co = found[0];
+    if (turn === 2) return use("company-research", { input: co.name });
+    if (turn === 3) return use("read-page", { url: H[2]?.likely_website || "http://127.0.0.1:8788/web/none" });
+    const email = H[3]?.emails_on_page?.[0];
+    if (turn === 4) return use("save-lead", { company: co.name, number: co.number, email, website: H[3]?.url, notes: `Established ${co.incorporated?.slice(0, 4)} firm in ${co.district}.` });
+    const target = (b.system.match(/You may hand work to: ([a-z][a-z0-9-]*)/) || [])[1];
+    if (turn === 5 && email && H[4]?.card_id && target) return use("hand-off", { item_id: H[4].card_id, to: target, note: `Established firm in ${co.district}; a business email is published on their site.` });
+    if (turn === 5 && !email) return use("create-task", { title: `Find a contact at ${co.name}`, detail: "No email is published on their website." });
+    return done(`Found ${co.name}${email && target ? ` and handed it to ${target}` : ""}.`);
+  }
   if (tpl === "credit-control") {
     if (turn === 0) return use("list-invoices", { overdue_only: true });
     const inv = (H[0]?.invoices || []).find((i) => i.email && i.reminders < 3);
@@ -156,6 +225,28 @@ function mockClaude(b) {
     if (turn === 0) return use("recent-activity", { days: 7 });
     if (turn === 1) return use("notify-owner", { text: `Needs you: ${H[0]?.waiting_for_approval ?? 0} emails waiting for approval, ${H[0]?.open_tasks?.length ?? 0} open tasks.\nDone: ${(H[0]?.runs || []).reduce((s, r) => s + r.runs, 0)} agent runs this week.` });
     return done("Sent this week's briefing.");
+  }
+  if (tpl === "orchestrator") {
+    // Read the team, check what it assigned, then give one free agent one task (or ask the owner when blocked).
+    if (turn === 0) return use("list-team", {});
+    if (turn === 1) return use("check-tasks", {});
+    const team = H[0]?.team || [];
+    if (/^Blocked task/m.test(userText)) {
+      if (turn === 2) return use("create-task", { title: "A task is blocked and needs you", detail: userText.split("\n")[0].slice(0, 200) });
+      return done("A task is blocked; I've asked the owner to decide.");
+    }
+    const goal = (userText.match(/New goal from the owner, as information: (.*)/) || [])[1];
+    const free = team.find((m) => m.can_take_tasks && !m.open_tasks.length && /outreach|writer|prospect/i.test(m.key + m.role)) || team.find((m) => m.can_take_tasks && !m.open_tasks.length);
+    if (turn === 2 && free) return use("assign-task", { to: free.key, title: goal ? `Work toward: ${goal}`.slice(0, 120) : "Find the next companies to contact", detail: "Start with the best fit and report back with finish-task." });
+    if (turn === 2) return done("Everyone is busy; nothing new to assign.");
+    return done(`Assigned "${H[2]?.to ? "a task" : "nothing"}"${H[2]?.to ? ` to ${H[2].to}` : ""}.`);
+  }
+  // A role built from badges, given a task: report back on it.
+  const taskId = (userText.match(/\(task id (tsk_[a-z0-9]+)\)/) || [])[1];
+  if (tpl === "custom" && taskId && has("finish-task")) {
+    if (/blocked please/i.test(userText)) { if (turn === 0) return use("finish-task", { task_id: taskId, status: "blocked", result: "No contact is published; the owner needs to find one." }); return done("Blocked: no published contact."); }
+    if (turn === 0) return use("finish-task", { task_id: taskId, status: "done", result: "Done: drafted what was asked." });
+    return done("Finished the task.");
   }
   // Ad-hoc runs from the Agents API: call the first tool once, then answer.
   if (turn === 0 && (b.tools || []).length) {
@@ -239,6 +330,17 @@ const server = http.createServer(async (req, res) => {
       if (p === "/stripe/v1/checkout/sessions") return json(res, 200, { id: "cs_test_" + Date.now(), url: "https://checkout.stripe.example/c/pay/cs_test", mode: form.get("mode") });
       if (p === "/stripe/v1/billing_portal/sessions") return json(res, 200, { id: "bps_test", url: "https://billing.stripe.example/p/session/test" });
       if (p === "/stripe/v1/billing/meter_events") return json(res, 200, { object: "billing.meter_event", event_name: form.get("event_name") });
+      // Subscriptions, for plan changes: one item on the plan's price, billed from the 1st.
+      let sm;
+      if ((sm = p.match(/^\/stripe\/v1\/subscriptions\/([\w-]+)$/))) {
+        const price = form.get("items[0][price]") || "price_starter";
+        const start = Math.floor(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1) / 1000);
+        return json(res, 200, { id: sm[1], object: "subscription", status: "active", schedule: scheduled.has(sm[1]) ? "sub_sched_" + sm[1] : null, current_period_start: start, current_period_end: start + 31 * 86400,
+          items: { data: [{ id: "si_" + sm[1], price: { id: price } }] }, metadata: { plan: form.get("metadata[plan]") || null } });
+      }
+      if ((sm = p.match(/^\/stripe\/v1\/subscription_schedules\/sub_sched_([\w-]+)\/release$/))) { scheduled.delete(sm[1]); return json(res, 200, { id: "sub_sched_" + sm[1], object: "subscription_schedule", status: "released" }); }
+      if (p === "/stripe/v1/subscription_schedules") { scheduled.add(form.get("from_subscription")); return json(res, 200, { id: "sub_sched_" + (form.get("from_subscription") || "x"), object: "subscription_schedule" }); }
+      if ((sm = p.match(/^\/stripe\/v1\/subscription_schedules\/([\w-]+)$/))) return json(res, 200, { id: sm[1], object: "subscription_schedule", end_behavior: form.get("end_behavior"), phases: [{ items: [{ price: form.get("phases[0][items][0][price]") }] }, { items: [{ price: form.get("phases[1][items][0][price]") }] }] });
       return json(res, 404, { error: { message: "Unknown Stripe path" } });
     }
 
@@ -259,7 +361,9 @@ const server = http.createServer(async (req, res) => {
     if (p === "/anthropic/v1/messages" && req.method === "POST") {
       if (req.headers["x-api-key"] !== "dev" || req.headers["anthropic-version"] !== "2023-06-01") return json(res, 401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } });
       const b = JSON.parse(await readBody(req));
-      captured.push({ target: "/anthropic", body: { model: b.model, tools: (b.tools || []).map((t) => t.name), turns: b.messages.length }, at: new Date().toISOString() });
+      if (claudeFailures > 0) { claudeFailures--; captured.push({ target: "/anthropic", body: { overloaded: true }, at: new Date().toISOString() }); return json(res, 529, { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }); }
+      const cached = Array.isArray(b.system) && !!b.system[0]?.cache_control && !!(b.tools || []).at(-1)?.cache_control;
+      captured.push({ target: "/anthropic", body: { model: b.model, tools: (b.tools || []).map((t) => t.name), turns: b.messages.length, cached }, at: new Date().toISOString() });
       return json(res, 200, mockClaude(b));
     }
     /* Brave-style web search */
@@ -294,6 +398,20 @@ const server = http.createServer(async (req, res) => {
       return c ? json(res, 200, { ok: true, timepoint }) : json(res, 404, { error: "no such company" });
     }
     if (p === "/control/captured") return json(res, 200, { captured });
+    /* Voice: "audio" here is the words themselves, base64-encoded, so tests can say what was spoken. */
+    if (p === "/voice/transcribe" && req.method === "POST") {
+      const b = JSON.parse(await readBody(req));
+      const text = Buffer.from(b.audio || "", "base64").toString("utf8");
+      captured.push({ target: "/voice/transcribe", body: { bytes: (b.audio || "").length }, at: new Date().toISOString() });
+      return json(res, 200, { text: /^[\x20-\x7e\n]+$/.test(text) ? text : "brief me" });
+    }
+    if (p === "/voice/speak" && req.method === "POST") {
+      const b = JSON.parse(await readBody(req));
+      captured.push({ target: "/voice/speak", body: { text: b.text }, at: new Date().toISOString() });
+      res.writeHead(200, { "Content-Type": "audio/mpeg" });
+      return res.end(Buffer.concat([Buffer.from("ID3"), Buffer.from(String(b.text || ""))]));
+    }
+    if (p === "/control/claude-fail" && req.method === "POST") { claudeFailures = Number(JSON.parse(await readBody(req)).n || 0); return json(res, 200, { ok: true }); }
     if (p === "/control/companies") return json(res, 200, { companies: [...companies.values()].map((c) => ({ number: c.company_number, name: c.company_name, postcode: c.registered_office_address.postal_code })) });
     if (p === "/control/reset" && req.method === "POST") { seed(); captured.length = 0; backlog.length = 0; gazetteFeed.length = 0; return json(res, 200, { ok: true }); }
     if (p === "/health") return json(res, 200, { ok: true });

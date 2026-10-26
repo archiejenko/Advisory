@@ -3,16 +3,34 @@ main = "apps/api/src/index.ts"
 compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Live at www.ejtech.co.uk. The apex is attached too and redirects to www (see CANONICAL_HOST).
+# Both need the ejtech.co.uk zone active on this Cloudflare account before `wrangler deploy` will attach them.
+routes = [
+  { pattern = "www.ejtech.co.uk", custom_domain = true },
+  { pattern = "ejtech.co.uk", custom_domain = true },
+]
+
+# Run the Worker near the database, not near the visitor: a Floor poll or an agent run makes many D1 queries in a row.
+[placement]
+mode = "smart"
+
+# Workers Logs, every invocation: volume is small, and sampling dropped most error lines. Failures log one JSON line
+# (event, org, run, job) and the operator gets an hourly-capped email for server errors and dead jobs.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 # The website is served from the same origin as the API, so workspace sessions use secure cookies.
 [assets]
 directory = "./apps/web/dist"
 binding = "ASSETS"
-run_worker_first = ["/api/*", "/v1/*", "/r/*", "/.well-known/*", "/mcp", "/mcp/*", "/llms.txt"]
+# Every request reaches the Worker first so the apex can redirect to www; the catch-all route serves the assets.
+run_worker_first = true
 
 [[d1_databases]]
 binding = "DB"
 database_name = "agent-house"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "f06632f3-9e80-44af-a84a-1b56396a9693"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
@@ -21,7 +39,7 @@ bucket_name = "agent-house-files"
 
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"
+id = "73a812255b424d2a9a318da1a059cb06"
 
 [[queues.producers]]
 binding = "JOBS"
@@ -34,17 +52,53 @@ max_batch_timeout = 2
 max_retries = 10
 dead_letter_queue = "agent-house-dead"
 
-# Outbound email (MAIL_MODE = "cloudflare"). Uncomment once Cloudflare email sending is enabled on the account,
-# or set MAIL_MODE = "http" with MAIL_HTTP_URL and MAIL_HTTP_KEY for another provider.
+# Agent runs get their own queue, one message per batch: a run can take minutes, and ten of them in one
+# batch would run past the consumer's time limit. A run never throws (failures are recorded on the run), and
+# the */15 sweep re-queues runs whose message was lost, so few retries are needed.
+[[queues.producers]]
+binding = "AGENT_JOBS"
+queue = "agent-house-agents"
+
+[[queues.consumers]]
+queue = "agent-house-agents"
+max_batch_size = 1
+max_batch_timeout = 1
+max_retries = 3
+max_concurrency = 20
+dead_letter_queue = "agent-house-dead"
+
+# Everything that ran out of retries is recorded in dead_job and the operator gets one email an hour about it.
+[[queues.consumers]]
+queue = "agent-house-dead"
+max_batch_size = 50
+max_batch_timeout = 30
+max_retries = 3
+
+# A ceiling per workspace on the workspace API, so one script or a stuck tab can't slow everyone else.
+# The Floor polls 4 to 15 times a minute per tab; 300 a minute leaves plenty of room for people.
+[[ratelimits]]
+name = "WS_LIMITER"
+namespace_id = "1001"
+simple = { limit = 300, period = 60 }
+
+# Outbound email goes through Resend (MAIL_MODE = "http" in [vars], key in the MAIL_HTTP_KEY secret).
+# To switch to Cloudflare's own sending later, uncomment this and set MAIL_MODE = "cloudflare".
 # [[send_email]]
 # name = "SEND_EMAIL"
 
+# Workers AI for voice: speech to text (Whisper) and spoken replies (Deepgram Aura). Always remote, even in local dev,
+# so local development and tests set VOICE_HTTP_URL to the mocks instead.
+[ai]
+binding = "AI"
+
 [triggers]
-crons = ["*/15 * * * *", "*/30 * * * *", "0 6 * * 1", "0 7 * * *", "0 8 1-3 * *", "0 3 * * *"]
+# 06:00 daily re-checks a seventh of the watched companies, so each one is re-read once a week.
+crons = ["*/15 * * * *", "*/30 * * * *", "0 6 * * *", "0 7 * * *", "0 8 1-3 * *", "0 3 * * *"]
 
 [vars]
-APP_URL = "https://agenthouse.example"
-API_URL = "https://agenthouse.example"
+APP_URL = "https://www.ejtech.co.uk/"
+API_URL = "https://www.ejtech.co.uk"
+CANONICAL_HOST = "www.ejtech.co.uk"   # any other host on the zone (the apex) gets a 301 to this one
 CH_API_BASE = "https://api.company-information.service.gov.uk"
 CH_RATE_LIMIT = "600"
 GAZETTE_BASE = ""
@@ -52,14 +106,43 @@ FCA_BASE = "https://register.fca.org.uk/services/V0.1"
 FACILITATOR_URL = "https://x402.org/facilitator"
 X402_NETWORK = "eip155:8453"
 X402_ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-X402_PAY_TO = "REPLACE_WITH_RECEIVING_WALLET"
+X402_PAY_TO = ""
 SIGNING_KID = "ah-2026-10"
-MAIL_MODE = "cloudflare"
-MAIL_FROM = "Agent House <alerts@agenthouse.example>"
+MAIL_MODE = "http"                 # Resend: its /emails API takes exactly the JSON mail.ts sends
+MAIL_HTTP_URL = "https://api.resend.com/emails"
+MAIL_FROM = "Agent House <hello@ejtech.co.uk>"
 SENDS_LIVE = "false"
 COOKIE_SECURE = "true"
 ALLOW_ANY_WEBHOOK_HOST = "false"
 STRIPE_BASE = "https://api.stripe.com"
-AGENT_MODEL = "claude-sonnet-5-5"
-INBOUND_DOMAIN = "in.agenthouse.example"   # route <alias>@ this domain to the Worker for business inboxes
+INBOUND_DOMAIN = "in.ejtech.co.uk"   # route <alias>@ this domain to the Worker for business inboxes
 TURNSTILE_SITE_KEY = ""   # public site key; set TURNSTILE_SECRET as a secret to enforce it
+# Pricing, per deployment. Model prices are pence per million tokens; cache writes/reads are multiples of the input price.
+USDC_PER_PENNY = "0.0125"          # x402 conversion for per-tool prices (80p to the dollar)
+AGENT_RUN_STEP_PENCE = "12"        # /v1/agents/run: price per model step allowed (max_steps, default 4)
+# Models and their rates for the AI Team's modes are in config/model-pricing.ts (1 credit = 1p of model cost).
+VOICE_SPEAKER = "angus"            # Deepgram Aura voice for spoken replies
+VOICE_LANGUAGE = "en"
+
+# BEGIN secrets-store (written by scripts/bootstrap.sh; re-run it to change)
+[[secrets_store_secrets]]
+binding = "ANTHROPIC_API_KEY"
+store_id = "592bd2167de0450595700e2992cfb315"
+secret_name = "ANTHROPIC_API"
+[[secrets_store_secrets]]
+binding = "SEARCH_API_KEY"
+store_id = "592bd2167de0450595700e2992cfb315"
+secret_name = "Brave_Search-API"
+[[secrets_store_secrets]]
+binding = "MAIL_HTTP_KEY"
+store_id = "592bd2167de0450595700e2992cfb315"
+secret_name = "RESEND_API"
+[[secrets_store_secrets]]
+binding = "CH_API_KEY"
+store_id = "592bd2167de0450595700e2992cfb315"
+secret_name = "CH_API_KEY"
+[[secrets_store_secrets]]
+binding = "FCA_KEY"
+store_id = "592bd2167de0450595700e2992cfb315"
+secret_name = "FCA-API"
+# END secrets-store

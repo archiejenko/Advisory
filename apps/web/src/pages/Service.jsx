@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { Link, useRoute } from "../router.jsx";
 import { LIVE, api, useApi, useTurnstile } from "../api.js";
+import { LensTable } from "./UseCases.jsx";
 import { Page, PageHead, Section, SectionHead, SpecTable, QA, NextPrev, CtaBand, Range, CodePanel, Brief, gbp, gbp2 } from "../ui.jsx";
 import { Reveal, Marquee, Terminal } from "../kit.jsx";
 import { ApiShowcase, TERM } from "./showcase.jsx";
 import { ENDPOINTS } from "../data.js";
-import { TOOLS, AGENT_RUN_PENCE, pence } from "../catalogue.js";
+import { TOOLS, AGENT_RUN_STEP_PENCE, pence } from "../catalogue.js";
 import { PLANS } from "../../../../packages/core/templates.ts";
+import { Minds, PRICING_SUB, PRICING_FOOT, PRICING_FAQ } from "../credits.jsx";
+import { FACETS } from "../../../../packages/core/os.ts";
 
 /* ---------- Shared form ---------- */
 // Validates the shared fields, then calls `send` (the real request on the hosted site).
@@ -52,11 +55,11 @@ export function HealthCheck() {
     fd.append("file", file);
     if (ts.token) fd.append("cf-turnstile-response", ts.token);
     try { await api("POST", "/api/public/health-checks", fd); } catch (e) { ts.reset(); throw e; }
-  }, () => (!file ? "your customer list" : !/\.(csv|xlsx|xls)$/i.test(file.name) ? "a CSV or Excel file" : !ts.ready ? "the check that you're not a robot" : ""));
+  }, () => (!file ? "your customer list" : !/\.(csv|xlsx)$/i.test(file.name) ? "a CSV or Excel (.xlsx) file" : !ts.ready ? "the check that you're not a robot" : ""));
   const findings = [["Dissolved or being struck off", 1], ["Insolvency notices", 1], ["Accounts or confirmation statement overdue", 3], ["Director or registered office changed in 90 days", 2]];
   return (
     <Page title="Free customer check">
-      <PageHead crumbs={[["Customer check"]]} label="Free customer check" title="Who owes you money, and are they all right?" lede="Send your customer or supplier list. We check every company against Companies House and The Gazette and email you a sourced report within 24 hours: administrations, overdue accounts, strike-off notices, director changes." />
+      <PageHead crumbs={[["Customer check"]]} label="Check before you trust" title="Who owes you money, and who are you about to pay?" lede="Send your customer or supplier list. We check every company against Companies House and The Gazette and email you a sourced report within 24 hours: administrations, overdue accounts, strike-off notices, director changes." />
       <Section tight>
         <div className="grid">
           <form className="col-6 form" onSubmit={submit} noValidate>
@@ -76,7 +79,7 @@ export function HealthCheck() {
                   <label className={"file" + (file ? " has-file" : "")} htmlFor="f-file">
                     <span>{file ? file.name : "Choose a CSV or Excel file"}</span>
                     <span className="file-btn">{file ? "Change" : "Browse"}</span>
-                    <input id="f-file" type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setFile(e.target.files[0] || null)} />
+                    <input id="f-file" type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files[0] || null)} />
                   </label>
                 </div>
                 {ts.needed && <div className="field" ref={ts.el} />}
@@ -116,6 +119,16 @@ export function HealthCheck() {
           <p className="sheet-sig">Example figures. Your report lists each company by name with the register entry for each finding.</p>
         </div>
       </Section>
+      <Section>
+        <SectionHead label="After the report" title="Keep checking, however you work" lede="One check is a snapshot. The customer watch reads the registers every day and tells you the day something changes. Before you pay a new supplier, check it in seconds." />
+        <SpecTable head={["Who", "How", "What it costs"]} rows={[
+          ["You", "Check a company in your workspace, or email its name to your check@ address", "Included in every plan"],
+          ["Your team of agents", "The customer watch reads the registers daily and alerts you the day something changes", "Included in every plan"],
+          ["Your developers", "POST /v1/tools/uk-check with an API key; the answer is signed", "5p a call, 100 free a month"],
+          ["Any agent", "The same call paid with x402, no account needed", "5p a call"],
+        ]} />
+        <p className="source">Coming next: confirming a supplier's bank details match its name before you pay, and identity checks for regulated firms.</p>
+      </Section>
       <NextPrev prev={["Pricing", "/pricing"]} next={["Customer and supplier watch", "/agents/customer-watch"]} />
     </Page>
   );
@@ -125,15 +138,15 @@ export function HealthCheck() {
 export function Pricing() {
   return (
     <Page title="Pricing">
-      <PageHead crumbs={[["Pricing"]]} label="Pricing" title="Simple for businesses. Per call for agents." lede="Businesses pay a monthly plan for agents that work for them. Developers and agents pay per tool call, with a free monthly allowance. Publishers earn 80% of every call to their tools." />
+      <PageHead crumbs={[["Pricing"]]} label="Pricing" title="One price for the whole business." lede={PRICING_SUB} />
       <Section tight>
         <h2 className="h-sub">For businesses</h2>
         <div className="plans plans-l">
           <article className="plan">
             <p className="plan-n">Free trial</p>
             <p className="plan-p"><b>£0</b><span>for 14 days</span></p>
-            <p className="dt">Everything in Growth. No card.</p>
-            <ul className="ticks"><li>{PLANS.trial.agents} agents working at once</li><li>{PLANS.trial.actions.toLocaleString("en-GB")} actions</li><li>Every agent in the catalogue</li></ul>
+            <p className="dt">The whole OS. No card.</p>
+            <ul className="ticks"><li>All {FACETS.length} apps</li><li>Up to {PLANS.trial.agents} AI Team members</li><li>{PLANS.trial.credits.toLocaleString("en-GB")} credits, every mode</li><li>Channels for your whole team</li></ul>
             <Link to="/start" className="btn btn-sm btn-line btn-block">Start free</Link>
           </article>
           {["starter", "growth", "scale"].map((k) => {
@@ -143,13 +156,16 @@ export function Pricing() {
                 <p className="plan-n">{p.name}{k === "growth" && <span className="st st-done">Most chosen</span>}</p>
                 <p className="plan-p"><b>£{p.price}</b><span>a month</span></p>
                 <p className="dt">{p.blurb}</p>
-                <ul className="ticks"><li>{p.agents} agents working at once</li><li>{p.actions.toLocaleString("en-GB")} actions a month</li><li>Every agent in the catalogue</li></ul>
+                <ul className="ticks"><li>All {FACETS.length} apps</li><li>Up to {p.agents} AI Team members</li><li>{p.credits.toLocaleString("en-GB")} credits a month</li><li>Unlimited people</li></ul>
                 <Link to="/start" className={"btn btn-sm btn-block" + (k === "growth" ? "" : " btn-line")}>Start with a free trial</Link>
               </article>
             );
           })}
         </div>
-        <p className="source">Prices before VAT. Monthly, cancel any time. An action is one tool call by an agent. When a month's actions are used, agents pause until the 1st: there are no overage charges.</p>
+        <p className="source">{PRICING_FOOT}</p>
+      </Section>
+      <Section>
+        <Minds head={<SectionHead label="Modes" title="Choose the right mind for the job" lede="Every task can run in any mode. When you set up an agent or give it a task, we suggest the mode that suits the job and show what it's likely to use. You can always choose another." />} />
       </Section>
       <Section stone>
         <SectionHead label="For developers and agents" title="Pay per call" lede="Every tool has a price per call. Pay with x402 and no account, or use an API key with 100 free calls a month and prepaid credits after that." more={["See the catalogue", "/for-agents?s=catalogue"]} />
@@ -157,21 +173,23 @@ export function Pricing() {
           <thead><tr><th>Tool</th><th className="hide-sm">What it returns</th><th className="num">Per call</th></tr></thead>
           <tbody>
             {TOOLS.map((t) => <tr key={t.slug}><td><b>{t.name}</b><br /><span className="mono muted">{t.slug}</span></td><td className="hide-sm muted">{t.description}</td><td className="num"><b>{pence(t.price.pence)}</b></td></tr>)}
-            <tr><td><b>Run an agent</b><br /><span className="mono muted">/v1/agents/run</span></td><td className="hide-sm muted">Instructions plus up to eight tools; we run the loop and sign the answer.</td><td className="num"><b>{pence(AGENT_RUN_PENCE)}</b></td></tr>
+            <tr><td><b>Run an agent</b><br /><span className="mono muted">/v1/agents/run</span></td><td className="hide-sm muted">Instructions plus up to eight tools; we run the loop and sign the answer.</td><td className="num"><b>{pence(AGENT_RUN_STEP_PENCE)}</b> a step</td></tr>
           </tbody>
         </table>
         <div className="grid-2 mt-l">
-          <SpecTable rows={[["Free calls", "100 a month on every API key"], ["Credits", "Prepaid by card, from £10"], ["x402", "USDC on Base, settled per call, no account"], ["Failed calls", "Never charged"]]} />
+          <SpecTable rows={[["Free calls", "100 a month on every API key"], ["Prepaid balance", "By card, from £10"], ["x402", "USDC on Base, settled per call, no account"], ["Failed calls", "Never charged"]]} />
           <SpecTable rows={[["Publish a tool", "Free"], ["You earn", "80% of every paid call"], ["Review", "Within one working day"], ["Payouts", "Monthly, from £20 earned"]]} />
         </div>
       </Section>
       <Section id="billing">
         <SectionHead label="Billing" title="Questions about paying" />
         <QA items={[
-          ["What happens when the trial ends?", "Your agents pause and nothing is charged. Choose a plan in your workspace and they pick up where they left off."],
-          ["What counts as an action?", "One tool call by one of your agents: a search, a page read, a lead saved, an email drafted. Watching customers against the registers and company checks don't count."],
-          ["Can I change plan?", "Any time, from Usage and plan in your workspace. Changes apply from the next bill."],
-          ["Do agents cost more if they're busy?", "No. Each plan has a monthly allowance and agents stop at it. You can set a lower limit per agent too."],
+          ...PRICING_FAQ,
+          ["What happens when the trial ends?", "Your AI Team pauses and nothing is charged. Choose a plan in your workspace and it picks up where it left off."],
+          ["Is it priced per person or per agent?", "Neither. One price covers the whole business: every app, everyone on your team, and up to 100 AI Team members. Plans differ only in how many credits the AI Team gets each month."],
+          ["Do I need other software as well?", "No connectors needed. Accounts, HR, payroll, the rota, the CRM and the helpdesk are apps in the OS. Some are fully built, some partly, and the rest start as records with an agent; each app says which it is."],
+          ["Can I change plan?", "Any time, from Usage and plan in your workspace. Moving up takes effect straight away: you pay the difference for the rest of the month and get the extra credits for it. Moving down takes effect on the 1st."],
+          ["Can I limit what one agent spends?", "Yes. Give any agent a monthly budget in credits. When it reaches it, only that agent pauses until the 1st, and we tell you."],
           ["How are developers paid?", "We pay 80% of each settled call to your tools, monthly by bank transfer once you've earned £20."],
           ["Do you charge VAT?", "Prices are shown before VAT."],
         ]} />
@@ -188,13 +206,15 @@ export function Standards() {
       <PageHead crumbs={[["Trust"]]} label="Trust" title="Agents you can leave alone" lede="An agent that acts in your name has to earn it. These are the rules every Agent House agent, and every tool in the catalogue, works to." />
       <Section tight>
         <SpecTable head={["Rule", "In practice"]} wide rows={[
-          ["Nothing goes out without you", "Every email waits in Approvals by default. You can let follow-ups go on their own once you've approved the first, and change that any time."],
+          ["Nothing goes out without you", "Every email waits on your desk by default. You can let follow-ups go on their own once you've approved the first, and change that any time."],
+          ["The orchestrator can't act for you", "It assigns tasks and follows them up. It never sends email, approves anything, or changes the team; it asks you."],
           ["Never invent facts", "Agents use tools for facts: the registers, web search, pages they read. They're told never to make up a figure, a claim or an email address, and every step is recorded for you to check."],
           ["Only published contact details", "Outreach uses business addresses published on a company's own website. It never guesses or constructs an address."],
           ["Easy to say no", "Every outreach email has an unsubscribe link and honours a STOP reply. An address that opts out is never emailed by any agent again, for any business."],
           ["Uncertain matches come back to you", "If a name could be more than one company, we ask. We never guess which company you meant."],
           ["Your data stays yours", "Each business's leads, invoices and messages are held separately, used only to run your agents, and never used to train AI models."],
           ["Every answer is signed", "Tool responses carry an ID and an Ed25519 signature over their exact bytes. Every action in your workspace is kept in an audit log."],
+          ["Honest about what's built", "Every job we list is marked live, partly built or coming, with the connection it's waiting on. We don't sell a role before it works."],
           ["Tools are reviewed", "Developer tools are checked before they go live, and every call to them is signed so publishers know it came from us."],
         ]} />
       </Section>
@@ -315,7 +335,7 @@ function KeyForm() {
 /* Dev mode tabs: what the user sees, or the code behind it */
 const DEV_TABS = [
   { k: "Run an agent", h: "An agent in one call", d: "Send instructions and the tools it may use. We run the loop on our side, call the tools, and return the answer with every step, signed.",
-    pts: ["Up to eight first-party tools a run", "25p a run, whatever it calls", "Every step returned, so you can audit it"],
+    pts: ["Up to eight first-party tools a run", "12p a step, for the steps you allow", "Every step returned, so you can audit it"],
     ui: () => (
       <div className="mini" style={{ width: "100%", maxWidth: 520, padding: 28 }}>
         <p className="dt">Agent run · agr_41c7e2</p>
@@ -428,6 +448,10 @@ export function Developers() {
       <section style={{ padding: "32px 0 0" }}><Marquee caption="One gateway for agent tools" items={["REST", "MCP", "x402", "Ed25519", "USDC on Base", "Stripe credits", "llms.txt", "Agents API", "80% to publishers", "Companies House", "Web research"]} /></section>
       <section className="band" style={{ paddingTop: 96 }}><div className="wrap"><DevTabs /></div></section>
       <ApiShowcase title="Six things you can build today." />
+      <Section id="jobs" stone>
+        <SectionHead label="What builders need" title="The jobs developers call most" lede="From our map of 80 small-business jobs, scored for how likely a builder is to call each one from their own product. Verification and enrichment lead; most are live or partly built." more={["All use cases", "/use-cases"]} />
+        <LensTable lens="dev" label="Developers" n={8} />
+      </Section>
       <Section id="reference">
         <SectionHead label="Reference" title="Endpoints" lede="The catalogue, any tool, the Agents API and publishing, plus the company endpoints. The same tools are on MCP. 100 calls a month are free on a key." />
         <div className="grid">
@@ -553,7 +577,7 @@ export function BookCall() {
   useEffect(() => { if (sent) setBooked(`${label}, ${time}`); }, [sent]);
   return (
     <Page title="Book a call">
-      <PageHead crumbs={[["Book a call"]]} label="Book a call" title="Twenty minutes on what agents could do for you" lede="Tell us about your business, or the tool you want to publish. We'll show you the agents that fit and answer questions about data, approvals and pricing. Times are UK time." />
+      <PageHead crumbs={[["Book a call"]]} label="Book a call" title="Twenty minutes on what a team of agents could do for you" lede="Tell us about your business, or the tool you want to publish. We'll show you the agents that fit and answer questions about data, approvals and pricing. Times are UK time." />
       <Section tight>
         {sent ? (
           <div className="confirm" aria-live="polite">

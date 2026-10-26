@@ -3,7 +3,9 @@ import { demoApi } from "./demo.js";
 
 // The site is served by the API Worker on the same origin, so every call is a relative path
 // and the session travels in an HttpOnly cookie. Opened as a local file, the site runs as a demo.
-export const LIVE = typeof location !== "undefined" && /^https?:$/.test(location.protocol);
+// A demo build (DEMO=1 node build.mjs) runs the demo everywhere, so the site can be hosted on its own for walkthroughs.
+/* global __DEMO_BUILD__ */
+export const LIVE = !__DEMO_BUILD__ && typeof location !== "undefined" && /^https?:$/.test(location.protocol);
 
 export class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -19,11 +21,12 @@ export const isDemo = () => demoMode;
 
 export async function api(method, path, body, { raw = false } = {}) {
   if (demoMode && path.startsWith("/api/ws/") && path !== "/api/ws/me") {
-    try { return await demoApi(method, path, body instanceof FormData ? undefined : body); }
-    catch (e) { throw new ApiError(e.status || 400, e.code || "demo", e.message); }
+    try { return await demoApi(method, path, body instanceof FormData || (typeof Blob !== "undefined" && body instanceof Blob) ? undefined : body); }
+    catch (e) { throw new ApiError(e.status || 400, e.code || "demo", e.message, e.details); }
   }
   const init = { method, credentials: "same-origin", headers: {} };
   if (body instanceof FormData) init.body = body;
+  else if (typeof Blob !== "undefined" && body instanceof Blob) { init.body = body; init.headers["Content-Type"] = body.type || "application/octet-stream"; }
   else if (body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
   let res;
   try { res = await fetch(path, init); }

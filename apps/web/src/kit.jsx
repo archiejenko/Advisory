@@ -1,14 +1,16 @@
 // Shared pieces for the v6 site: glyphs, reveal-on-scroll, marquee, terminal, code editor.
 import React, { useEffect, useRef, useState } from "react";
+import { WORDMARK as WM } from "../../../packages/core/brand.ts";
 import { reduced } from "./ui.jsx";
 
 /* ---------- Brand mark: a roof over an open door, drawn for Agent House ---------- */
-export function Mark({ className = "wm-mark" }) {
+/* The wordmark: "agenthouse" set in Unbounded, heavy then light, as outlines so it never depends on a font loading.
+   Type only, no symbol. src/brand/ has the SVG for print and the "ah" monogram used as the favicon. */
+export function Wordmark({ className = "wm" }) {
   return (
-    <svg className={className} viewBox="0 0 32 32" aria-hidden="true">
-      <rect x="1" y="1" width="30" height="30" rx="9" fill="currentColor" />
-      <path d="M8 15.5 16 9l8 6.5" fill="none" stroke="var(--mark-ink, #fff)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M12.5 24v-5.5h7V24" fill="none" stroke="var(--mark-ink, #fff)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+    <svg className={className} viewBox={WM.viewBox} aria-hidden="true" focusable="false">
+      <path d={WM.agent} fill="currentColor" />
+      <path d={WM.house} fill="currentColor" />
     </svg>
   );
 }
@@ -50,6 +52,18 @@ export const GLYPHS = {
   left: <path d="m15 6-6 6 6 6" {...P} />,
   right: <path d="m9 6 6 6-6 6" {...P} />,
   expand: <><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" {...P} /></>,
+  mic: <><rect x="9" y="3.5" width="6" height="11" rx="3" {...P} /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5" {...P} /></>,
+  speaker: <><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" {...P} /><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" {...P} /></>,
+  mute: <><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" {...P} /><path d="m16 9.5 5 5M21 9.5l-5 5" {...P} /></>,
+  spark: <><path d="M12 3.5v4M12 16.5v4M3.5 12h4M16.5 12h4M6 6l2.6 2.6M15.4 15.4 18 18M18 6l-2.6 2.6M8.6 15.4 6 18" {...P} /></>,
+  pause: <><path d="M9 5.5v13M15 5.5v13" {...P} /></>,
+  play: <path d="M7.5 5.5v13l11-6.5z" {...P} />,
+  close: <path d="m6 6 12 12M18 6 6 18" {...P} />,
+  org: <><rect x="9" y="3" width="6" height="5" rx="1.5" {...P} /><rect x="3" y="16" width="6" height="5" rx="1.5" {...P} /><rect x="15" y="16" width="6" height="5" rx="1.5" {...P} /><path d="M12 8v4M6 16v-4h12v4" {...P} /></>,
+  plus: <><path d="M12 5v14M5 12h14" {...P} /></>,
+  board: <><rect x="3.5" y="4.5" width="17" height="15" rx="2.5" {...P} /><path d="M9.5 4.5v15M15 4.5v15" {...P} /></>,
+  floor: <><circle cx="6.5" cy="7" r="2.5" {...P} /><circle cx="17.5" cy="7" r="2.5" {...P} /><circle cx="12" cy="17" r="2.5" {...P} /><path d="M8.5 8.5 10.5 15M15.5 8.5 13.5 15M9 7h6" {...P} /></>,
+  building: <><path d="M4.5 20.5V5l8-2v17.5M12.5 8.5h7v12M3 20.5h18" {...P} /><path d="M7.5 8h2M7.5 11.5h2M7.5 15h2M15.5 12h1.5M15.5 15.5h1.5" {...P} /></>,
 };
 export function Glyph({ name, size = 22, color }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={color ? { color } : undefined}>{GLYPHS[name]}</svg>;
