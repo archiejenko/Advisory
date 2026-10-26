@@ -153,15 +153,21 @@ The ledger (`credit_entry`, `lib/credits.ts`) records every run, AI Team (system
    - deploys with a build stamp
    - waits until `https://www.ejtech.co.uk/api/version` reports this commit's SHA
    - checks that `/`, `/workspace` and `/os` answer 200 with this build
+   - checks that the live Worker's cron schedules match `wrangler.toml`
 
-   If the live SHA doesn't match within 2 minutes, the job fails. You can also run it by hand from `main` (Actions → Deploy → Run workflow).
+   If the live SHA doesn't match within 2 minutes, or the crons differ, the job fails. The smoke checks run even if the deploy step reports an error, so the summary always says what is live. You can also run it by hand from `main` (Actions → Deploy → Run workflow).
 3. **What's live:**
    ```bash
    npm run whats-live    # the live SHA (from /api/version), origin/main's HEAD, and the commits between them
    ```
    The SHA is also in every page, as `<meta name="build-sha">`.
+4. **Crons:**
+   ```bash
+   npm run check-crons   # the live Worker's cron schedules against wrangler.toml (needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)
+   ```
+   wrangler can put new code live and still fail to attach crons: the Free plan allows five per account, and this Worker has six.
 
-**Secrets** (GitHub → Settings → Secrets and variables → Actions): `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+**Secrets** (GitHub → Settings → Environments → `production`): `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The token needs Workers Scripts, D1, KV, R2, Queues and Secrets Store Edit, Account Settings Read, and Workers Routes Edit on ejtech.co.uk.
 
 **Rolling back.** The Worker and the database roll back separately:
 
