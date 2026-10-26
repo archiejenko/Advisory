@@ -80,7 +80,7 @@ npm test               # unit (139): the OS catalogue, records, channels, mentio
 npm run typecheck
 npm run test:e2e       # API: 44 flows against wrangler dev and the mocks (records in all 118 modules; an @mention answered in #general)
 node tests/e2e/ui.mjs  # browser: 22 flows clicking through the real website in Chromium
-node tests/e2e/os-check.mjs  # stage 3: the demo build in Chromium: the landing page, /os, the launcher, all 118 module screens, Messages, tasks, phone width
+node tests/e2e/os-check.mjs  # the demo build in Chromium: landing page, /os, pricing in credits, Usage and agent modes in the workspace
 ```
 
 Stop any running `npm run dev` or `npm run mocks` before the end-to-end suites; they start their own on ports 8787 and 8788 with fresh state. The browser suite saves screenshots to `ui-shots/`.

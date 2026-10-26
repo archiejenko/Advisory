@@ -11,7 +11,7 @@ npm run test:workspace      # builds the demo, then runs tests/e2e/workspace-qa.
 
 `workspace-qa.mjs` needs no server: it opens `apps/web/dist-demo/index.html` directly. It writes screenshots and `results.json` to `ui-shots/workspace/`. If the installed Playwright has no browser of its own, point it at one with `CHROMIUM_PATH=/path/to/chrome`.
 
-**Result: 41 of 41 checks passed.** The unit suite also passes: 460 tests, 242 of them new in `tests/unit/seed.test.ts`.
+**Result: 41 of 41 checks passed** (42 since the credits merge; see below). The unit suite also passes: 460 tests, 242 of them new in `tests/unit/seed.test.ts`.
 
 ---
 
@@ -126,6 +126,47 @@ I updated its two signed-out demo checks for the new workspace: edit and approve
 - It also fails one step earlier, on its own out-of-date demo check.
 
 So this failure comes from the live workspace and the API, which this overhaul doesn't change. It needs fixing separately.
+
+## Known failures
+
+| Check | Suite | Status | Tracking |
+|---|---|---|---|
+| "outreach: hire, run now, watch the steps, edit and approve the email; the lead is contacted" | `tests/e2e/ui.mjs` (signed in) | **Known failure.** It still runs, is reported as `KNOWN FAILURE`, and the rest of the suite carries on. | [#1](https://github.com/archiejenko/Advisory/issues/1) |
+
+**Root-cause lead for #1:**
+- The sign-up check builds its OS from the "Trades and field service" pack, which doesn't include `lead-generation` or `outreach-and-follow-up`.
+- So `templateAllowed(os, "outreach")` is false, and the run worker refuses every Outreach run, even though hiring succeeded.
+- **Knock-on effect:** the Floor check's "Ashworth Hale" company comes from that run, so its assertion is skipped, with a printed note, while #1 is open.
+
+It fails the same way on `hardening-batch-3`, which predates this work. It will be fixed in its own PR after production is verified.
+
+## Integration branch (`integrate/2026-10-26`)
+
+This branch is `claude/peaceful-bell-mkmpa8` (the workspace overhaul) with `claude/zen-fermat-p87ztx` (credits) merged in.
+
+| Suite | Result |
+|---|---|
+| `npm run typecheck` | Clean |
+| `npm test` | 495 passed |
+| `npm run test:e2e` (API, local Worker and mocks) | 46 of 46 flows passed |
+| `npm run test:workspace` | 42 of 42 checks passed |
+| `node tests/e2e/os-check.mjs` (demo build) | 6 of 6 passed |
+| `node tests/e2e/ui.mjs` (browser, signed in and out) | 21 flows passed, 1 known failure (#1) |
+
+**What the merge needed:**
+- **Credits in the new shell.** Usage and credits opens inside the workspace at `/workspace/setup/usage`, from Setup and from the avatar menu. `/workspace/usage` now redirects there.
+  - It shows the same six agents as every other screen.
+  - Setup's summary and the Team hub show credits left, in place of the old "actions a month" estimate.
+  - Each agent's page has a mode picker and a monthly budget, with undo.
+- **Bugs found and fixed:**
+  - A redirect from an old address dropped its query string, so `?topup=done` and the top-up confirmation were lost.
+  - Signing out from a signed-in workspace page could be overridden by the demo's redirect from that old address, landing you on the demo's Setup. A redirect now only fires if the page is still on the old address.
+- **Stale browser checks fixed.** These had been broken since `os-overhaul` but were hidden because #1 stopped the suite first:
+  - the run-status selector (`ws-titlebar` became `os-titlebar`)
+  - the research box, which now lives on `/workspace/overview`
+  - the app count, which moved from 118 apps in 17 areas to 138 in 18
+  - the Payables check, now on Invoicing because Payables isn't in the Trades pack (see #1)
+- **`os-check.mjs` moved onto the new shell.** It covers the landing page, `/os`, pricing in credits, Usage with a top-up, agent modes, and phone width. The workspace screens themselves are covered by `workspace-qa.mjs`.
 
 ## Known limits
 

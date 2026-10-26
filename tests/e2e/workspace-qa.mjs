@@ -19,7 +19,7 @@ const ROUTES = [
   "/workspace", "/workspace/customers", "/workspace/customers/leads", "/workspace/customers/quotes", "/workspace/customers/inbox?c=cv_salford", "/workspace/customers/complaints",
   "/workspace/money", "/workspace/money/owed", "/workspace/money/bills", "/workspace/money/cash",
   "/workspace/work", "/workspace/work/jobs?view=calendar", "/workspace/work/rota", "/workspace/work/tasks", "/workspace/work/contracts", "/workspace/work/safety", "/workspace/work/stock",
-  "/workspace/team", "/workspace/team/chat", "/workspace/team/floor", "/workspace/setup", "/workspace/design", "/workspace/start", "/os",
+  "/workspace/team", "/workspace/team/chat", "/workspace/team/floor", "/workspace/setup", "/workspace/setup/usage", "/workspace/team/agents/agt_cs", "/workspace/design", "/workspace/start", "/os",
   "/workspace/money/invoices/INV-1047", "/workspace/customers/companies/co_tarnbrook", "/workspace/customers/pipeline/deal_ancoats", "/workspace/customers/quotes/q_ancoats",
   "/workspace/work/jobs/job_tarnbrook", "/workspace/customers/inbox/cv_castlefield", "/workspace/team/agents/agt_credit", "/workspace/team/people/p_sam",
   "/workspace/money/bills/bill_1", "/workspace/work/tasks/task_coshh", "/workspace/customers/contacts/con_1", "/workspace/work/safety/rec_coshh",
@@ -85,6 +85,11 @@ console.log("1. Consistency");
   await go(p, "/workspace/setup");
   ok(await txt(p, "[data-testid=setup-agents]") === expect.agents, "agents: Setup summary", await txt(p, "[data-testid=setup-agents]"));
   ok(await txt(p, "[data-testid=setup-apps]") === expect.apps, "apps: Setup summary", await txt(p, "[data-testid=setup-apps]"));
+  // Credits: Setup's figure is the Usage page's figure.
+  const left = await txt(p, "[data-testid=setup-credits]");
+  await go(p, "/workspace/setup/usage");
+  const usage = await p.locator(".stat-row > div").first().locator("b").innerText().catch(() => "(missing)");
+  ok(left !== "(missing)" && usage.replace(/\D/g, "") === left.replace(/\D/g, ""), "credits: Setup summary matches Usage", `${left} vs ${usage}`);
   let tabs = 0;
   for (const h of ["customers", "money", "work", "team"]) { await go(p, "/workspace/" + h); tabs += await p.locator(".w-tabs .w-tab").count(); }
   ok(String(tabs) === expect.apps, "apps: tabs across the four hubs match Setup", String(tabs));
