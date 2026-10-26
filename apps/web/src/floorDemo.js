@@ -5,6 +5,7 @@ import { PRESETS, preset, stageFor, nearestPreset, estimateActions, KPIS, withOr
 import { isPass } from "./pass.js";
 import { applyOrgChanges, defaultBadges, toolsFor, role as roleOf } from "../../../packages/core/badges.ts";
 import { PLANS } from "../../../packages/core/templates.ts";
+import { staffFor } from "./workspace/demo/legacy.js";
 
 const SIM = { swarms: [], seq: 1000 };
 const now = () => new Date().toISOString();
@@ -26,21 +27,54 @@ const TOOLS = {
 };
 
 function agentFor(s, a) {
-  // Reuse the demo workspace's agent of the same template, or add a simulated custom one.
-  let ag = a.template !== "custom" && s.agents.find((x) => x.template === a.template && !x.swarm_id);
+  // Every role on a Floor is done by one of the business's six agents; extra roles are that agent's sub-agents.
+  let ag = s.agents.find((x) => x.id === staffFor(a));
   if (!ag) {
     ag = { id: "agt_" + a.key + "_" + (SIM.seq++), template: a.template, name: a.name, status: "running", rhythm: a.rhythm, autonomy: "approve_all", created_at: now(), engine: "llm", glyph: "spark", category: "Run", settings: {}, monthly_cap: 300, brief: a.role };
     s.agents.push(ag);
   }
-  ag.swarm_id = "set"; ag.swarm_key = a.key; ag.role = a.role; ag.name = a.name;
+  ag.swarm_id = "set";
+  if (!(ag.swarm_keys || []).includes(a.key)) ag.swarm_keys = [...(ag.swarm_keys || []), a.key];
+  ag.swarm_key = ag.swarm_keys[0]; ag.role = ag.swarm_keys.length > 1 ? `${ag.role}; ${a.role.toLowerCase()}` : a.role;
   return ag;
 }
 
+// Brightwork's own team on the Floor: the six agents, and the stages their work moves through.
+const BRIGHTWORK = { blueprint: {
+  name: "Brightwork team", sector: "Commercial cleaning", goals: ["Win more office contracts", "Get paid on time", "Answer every enquiry within the hour"],
+  agents: [
+    { key: "orchestrator", name: "Bea", role: "Briefing: writes the weekly briefing and hands out work", template: "orchestrator", rhythm: "weekdays" },
+    { key: "outreach", name: "Maya", role: "Sales: finds leads, writes first emails and follows up quotes", template: "outreach", rhythm: "weekdays" },
+    { key: "inbox", name: "Theo", role: "Customer service: reads every enquiry and drafts the reply", template: "inbox", rhythm: "on_event" },
+    { key: "credit", name: "Rosa", role: "Credit control: chases every invoice until it's paid", template: "credit-control", rhythm: "weekdays" },
+    { key: "finance", name: "Fern", role: "Finance: raises invoices, records bills, keeps the cash forecast", template: "bookkeeping", rhythm: "weekdays" },
+    { key: "ops", name: "Owen", role: "Operations: jobs, the rota and supplies", template: "bookings", rhythm: "weekdays" },
+  ],
+  stages: [
+    { key: "found", name: "Found", group: "Sales", agent: "outreach", rule: { source: "lead", status: ["new"] } },
+    { key: "contacted", name: "Contacted", group: "Sales", agent: "outreach", rule: { source: "lead", status: ["contacted"] } },
+    { key: "replied", name: "Replied", group: "Sales", agent: "inbox", rule: { source: "lead", status: ["replied"] } },
+    { key: "won", name: "Won", group: "Sales", agent: "ops", rule: { source: "lead", status: ["won"] }, done: true },
+    { key: "due", name: "Due", group: "Cash", agent: "finance", rule: { source: "invoice", state: ["due"] } },
+    { key: "overdue", name: "Overdue", group: "Cash", agent: "credit", rule: { source: "invoice", state: ["overdue", "disputed"] } },
+    { key: "reminded", name: "Reminded", group: "Cash", agent: "credit", rule: { source: "invoice", state: ["reminded"] } },
+    { key: "paid", name: "Paid", group: "Cash", agent: "finance", rule: { source: "invoice", state: ["paid"] }, done: true },
+    { key: "new", name: "New", group: "Inbox", agent: "inbox", rule: { source: "message", status: ["new"] } },
+    { key: "triaged", name: "Being answered", group: "Inbox", agent: "inbox", rule: { source: "message", status: ["triaged"] } },
+    { key: "answered", name: "Answered", group: "Inbox", agent: "inbox", rule: { source: "message", status: ["replied"] }, done: true },
+  ],
+  handoffs: [{ from: "outreach", to: "inbox", when: "A lead replies" }, { from: "inbox", to: "ops", when: "A customer signs" }, { from: "finance", to: "credit", when: "An invoice goes overdue" }],
+  kpis: ["new_leads_week", "replies_week", "overdue_pence", "inbox_waiting"], skin: "floor", needs: [],
+} };
+
 function createSwarm(s, key, name) {
-  const p = preset(key);
+  const p = key === "brightwork" ? BRIGHTWORK : preset(key);
   const bp = withOrchestrator(JSON.parse(JSON.stringify(p.blueprint)));
   const sw = { id: "swm_demo" + (SIM.seq++), name: name || bp.name, preset: key, bp, status: "running", created_at: now(), events: [], stages: {}, sim: {}, last_brief_at: null, tasks: [] };
-  sw.agents = bp.agents.map((a) => ({ ...agentFor(s, a), swarm_id: sw.id }));
+  for (const x of s.agents) { x.swarm_keys = []; x.role = undefined; }
+  const staffed = new Map();
+  for (const a of bp.agents) { const ag = agentFor(s, a); staffed.set(ag.id, ag); }
+  sw.agents = [...staffed.values()].map((ag) => ({ ...ag, swarm_keys: [...ag.swarm_keys], swarm_id: sw.id }));
   for (const a of sw.agents) { const real = s.agents.find((x) => x.id === a.id); if (real) real.swarm_id = sw.id; }
   const root = sw.agents.find((a) => a.template === "orchestrator");
   for (const a of sw.agents) {
@@ -49,10 +83,10 @@ function createSwarm(s, key, name) {
   }
   const by = (k) => agentOf(sw, k);
   const task = (k, title, status, from, mins) => by(k) && sw.tasks.push({ id: "tsk_d" + (SIM.seq++), agent_id: by(k).id, assigned_by: from === "You" ? "owner" : root?.id, from, title, status, result: status === "done" ? "Done: drafted and sent for approval." : null, created_at: ago(mins * 60000), updated_at: ago(mins * 60000) });
-  task("prospector", "Find law firms in M2", "doing", "Orchestrator", 20);
-  task("outreach", "Follow up Peel Street Accountants", "todo", "Orchestrator", 35);
-  task("inbox", "Reply to the quote request from Salford Media", "done", "You", 90);
-  task("credit", "Chase INV-1047", "doing", "Orchestrator", 15);
+  task("prospector", "Find law firms in M2", "doing", root?.name || "Orchestrator", 20);
+  task("outreach", "Follow up Peel Street Accountants", "todo", root?.name || "Orchestrator", 35);
+  task("inbox", "Reply to the quote request from Salford Quays Media", "done", "You", 90);
+  task("credit", "Chase INV-1047", "doing", root?.name || "Orchestrator", 15);
   if (!bp.goals.length) bp.goals = ["Get paid on time"];
   SIM.swarms.unshift(sw);
   event(sw, { kind: "created", summary: `${sw.name} spun up with ${sw.agents.length} agents` });
@@ -61,7 +95,7 @@ function createSwarm(s, key, name) {
 }
 
 function event(sw, e) { sw.events.push({ id: ++SIM.seq, at: now(), detail: null, agent_id: null, item_id: null, ...e }); if (sw.events.length > 200) sw.events.shift(); }
-const agentOf = (sw, key) => sw.agents.find((a) => a.swarm_key === key);
+const agentOf = (sw, key) => sw.agents.find((a) => a.swarm_key === key || (a.swarm_keys || []).includes(key));
 
 /** Cards from the records, like the server's sync: a changed record moves its card and becomes an event. */
 function derive(s, sw, quiet) {
@@ -203,7 +237,7 @@ function brief(s, sw) {
 
 function orgOf(s, sw) {
   const used = s.agents.filter((a) => a.template !== "orchestrator").length;
-  const stagesOf = (a) => sw.bp.stages.filter((x) => x.agent === a.swarm_key).map((x) => x.name);
+  const stagesOf = (a) => sw.bp.stages.filter((x) => (a.swarm_keys || [a.swarm_key]).includes(x.agent)).map((x) => x.name);
   return {
     swarm: { id: sw.id, name: sw.name, goals: sw.bp.goals, skin: sw.bp.skin },
     root: sw.agents.find((a) => a.template === "orchestrator")?.id || null,
@@ -225,7 +259,7 @@ const previewOf = (s, bp) => {
 /** Answer a Floor request in the demo, or return undefined for paths that aren't the Floor's. */
 export function floorDemo(method, p, q, body, s, fail) {
   let m;
-  if (!SIM.swarms.length && !SIM.booted) { SIM.booted = true; createSwarm(s, "sales-floor", "Brightwork sales floor"); }
+  if (!SIM.swarms.length && !SIM.booted) { SIM.booted = true; createSwarm(s, "brightwork", "Brightwork team"); }
   const find = (id) => SIM.swarms.find((w) => w.id === id) || fail(404, "Swarm not found.");
   if (method === "GET" && p === "/swarm-presets") return { presets: PRESETS.map((x) => ({ key: x.key, title: x.title, for: x.for, summary: x.summary, locked: isPass() ? null : x.locked || null, skin: x.blueprint.skin, agents: x.blueprint.agents.map(({ key, name, role, template, rhythm }) => ({ key, name, role, template, rhythm })), stages: x.blueprint.stages.map((y) => y.name), handoffs: x.blueprint.handoffs, kpis: x.blueprint.kpis })), voice: false };
   if (method === "GET" && p === "/swarms") return { swarms: SIM.swarms.map((w) => ({ id: w.id, name: w.name, sector: w.bp.sector, preset: w.preset, status: w.status, created_at: w.created_at, agents: w.agents.length, open_items: derive(s, w).filter((i) => i.status === "open").length })) };

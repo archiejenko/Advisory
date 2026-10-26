@@ -318,6 +318,10 @@ a.w-metric:hover { background: var(--surface-overlay); box-shadow: inset 0 0 0 1
   .w-tabbar a[aria-current="page"] svg { color: var(--primary); }
   .w-tabbar .w-count { position: absolute; top: 6px; left: calc(50% + 6px); min-width: 18px; height: 18px; font-size: 11px; }
   .w-metrics { grid-template-columns: 1fr 1fr; }
+  .w-metrics.is-scroll { display: grid; grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: minmax(168px, 72%); overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; scrollbar-width: none; }
+  .w-metrics.is-scroll > * { scroll-snap-align: start; }
+  .w-pause { width: 40px; padding: 0; }
+  .w-org { display: inline-flex; }
   .w-metric-v { font-size: 22px; }
   .w-page-h .w-page-a { margin-left: 0; width: 100%; }
 }
@@ -523,3 +527,6 @@ a.w-metric:hover { background: var(--surface-overlay); box-shadow: inset 0 0 0 1
 /* The AI Team (Floor) embedded inside the shell */
 .w-embed .fh, .w-embed .fv, .w-embed .fl { max-width: none; }
 .w-embed .os-titlebar, .w-embed .os-crumbs { display: none; }
+.w-tile .w-chip, .w-card .w-chip { white-space: normal; height: auto; min-height: 24px; padding: 4px 10px; line-height: 1.3; max-width: 100%; }
+.w-tile, .w-card, .w-metric { min-width: 0; overflow-wrap: anywhere; }
+.wk { overflow-x: clip; }

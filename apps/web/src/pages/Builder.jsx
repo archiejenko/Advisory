@@ -20,7 +20,7 @@ const MODE_HELP = {
   off: "Not in your OS: no dock icon, no search, and the AI Team can't see it.",
 };
 const AUTO_HELP = { suggest: "Notes, checklists and answers. Nothing drafted, nothing sent.", approve: "It drafts every outward action and waits for your OK.", auto: "It acts within the guardrails and sends you a daily summary." };
-const DEPTH = { full: "Full", partial: "Partly built", basic: "Records and AI Team" };
+
 const role = (n) => (n || "").replace(/\s+agent$/i, "");
 const dependents = (key, mods) => mods.filter((m) => m.mode !== "off" && (DEPENDS[m.key] || []).includes(key)).map((m) => m.key);
 
@@ -64,7 +64,7 @@ function Panel({ m, onClose, set, remove, fields, addField, removeField, owner }
   useEffect(() => { ref.current?.focus(); }, [m.key]);
   return (
     <aside className="ob-panel" aria-label={f.app + " settings"} tabIndex={-1} ref={ref} onKeyDown={(e) => e.key === "Escape" && onClose()}>
-      <div className="ob-panel-h"><div><b>{f.app}</b><span>{f.name} · {DEPTH[f.depth]}</span></div><button className="ob-x" onClick={onClose} aria-label="Close"><Glyph name="close" size={18} /></button></div>
+      <div className="ob-panel-h"><div><b>{f.app}</b><span>{f.name}</span></div><button className="ob-x" onClick={onClose} aria-label="Close"><Glyph name="close" size={18} /></button></div>
       <p className="ob-optimal">{f.optimal}.</p>
 
       <fieldset className="ob-set"><legend>Mode</legend>

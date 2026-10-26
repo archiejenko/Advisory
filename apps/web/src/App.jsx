@@ -89,7 +89,7 @@ function Chrome({ children }) {
 }
 
 // Signed out, the workspace is the Brightwork demo, answered from the demo store (src/workspace).
-const isDemoWorkspace = (path) => path === "/workspace/design";
+const isDemoWorkspace = (path) => /^\/(workspace|floor)(\/|$)/.test(path);
 
 function Routes() {
   const { path } = useRoute();

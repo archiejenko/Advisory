@@ -1,67 +1,75 @@
-// The public map of the business OS: every app, area by area, with what good looks like, who works it,
-// and how far it is built. The same catalogue the workspace runs on.
-import React, { useState } from "react";
-import { Link, useRoute } from "../router.jsx";
-import { Page, PageHead } from "../ui.jsx";
-import { Glyph } from "../kit.jsx";
-import { AREAS, FACETS } from "../../../../packages/core/os.ts";
-import { DepthPill, DEPTH } from "./Os.jsx";
+// /os: a read-only explainer of the Business OS. The four hubs and their apps, what each does, which agent runs it and
+// who on the team uses it, and the money loop from lead to paid. The same catalogue the demo workspace runs on.
+import React, { useEffect } from "react";
+import { Link } from "../router.jsx";
+import { Icon } from "../workspace/core.jsx";
+import { APPS, HUBS } from "../workspace/demo/catalogue";
+import { getState } from "../workspace/demo/store";
 
-const PHASE = ["", "Win work and get paid", "Finance depth", "People and payroll", "Operations", "Everything else"];
+const LOOP = [
+  ["Lead", "Maya finds companies that fit", "Target"], ["Quote", "Maya prices it from your rates", "FileText"], ["Job", "Owen books it and the crew", "SprayCan"],
+  ["Invoice", "Fern raises it when the work's done", "ReceiptText"], ["Chase", "Rosa reminds, politely then firmly", "HandCoins"], ["Paid", "Fern matches the payment", "CircleCheck"],
+];
 
 export function OsPage() {
-  const { query } = useRoute();
-  const [area, setArea] = useState(query.a || "");
-  const [depth, setDepth] = useState("");
-  const [q, setQ] = useState("");
-  const w = q.trim().toLowerCase();
-  const list = FACETS.filter((f) => (!area || f.area === area) && (!depth || f.depth === depth) && (!w || [f.name, f.app, f.optimal, f.agent || ""].some((s) => s.toLowerCase().includes(w))));
-  const n = (d) => FACETS.filter((f) => f.depth === d).length;
+  const agents = getState().agents;
+  const who = (id) => agents.find((a) => a.id === id);
+  useEffect(() => { document.title = "The Business OS | Agent House"; }, []);
   return (
-    <Page title="The business OS">
-      <PageHead crumbs={[["The business OS"]]} label="Every app" title="Everything it takes to run a business, in one OS"
-        lede={`${FACETS.length} apps across ${AREAS.length} areas, mapped from what a business of 100 people needs to run well. ${n("full")} are fully native today, ${n("partial")} are partly built, and ${n("basic")} start as records with an agent while their full screens are built. Every one is in your workspace from day one.`}
-        actions={<><Link to="/workspace/apps" className="btn">Open the demo OS</Link><Link to="/start" className="link">Start free</Link></>} />
-      <section className="band band-tight">
-        <div className="wrap">
-          <div className="os-tools">
-            <div className="field os-search"><label htmlFor="osp-q" className="sr">Search apps</label><input id="osp-q" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search: payroll, VAT, rota, contracts…" /></div>
-            <div className="field"><label htmlFor="osp-a" className="sr">Area</label><select id="osp-a" value={area} onChange={(e) => setArea(e.target.value)}><option value="">Every area</option>{AREAS.map((a) => <option key={a.key} value={a.key}>{a.name}</option>)}</select></div>
-            <div className="os-seg" role="group" aria-label="How far built">
-              {[["", "All"], ["full", DEPTH.full.label], ["partial", DEPTH.partial.label], ["basic", DEPTH.basic.label]].map(([k, t]) => <button key={k || "all"} className={"os-seg-b" + (depth === k ? " is-on" : "")} aria-pressed={depth === k} onClick={() => setDepth(k)}>{t}</button>)}
-            </div>
-          </div>
-          <p className="dt" aria-live="polite">{list.length} of {FACETS.length} apps</p>
-          {AREAS.map((a) => {
-            const rows = list.filter((f) => f.area === a.key);
-            if (!rows.length) return null;
-            return (
-              <section key={a.key} className="osp-area" aria-labelledby={"osp-" + a.key}>
-                <h2 className="os-area-h" id={"osp-" + a.key}><span className="os-area-g"><Glyph name={a.glyph} size={18} /></span>{a.name}<span className="dt">{rows.length}</span></h2>
-                <ul className="osp-list">
-                  {rows.map((f) => (
-                    <li key={f.key} className="osp-row">
-                      <div className="osp-main">
-                        <p className="osp-t"><b>{f.app}</b><span className="dt">{f.name}</span><DepthPill depth={f.depth} /></p>
-                        <p className="body">{f.optimal}.</p>
-                        {f.today && <p className="dt">Today: {f.today}</p>}
-                      </div>
-                      <dl className="osp-facts">
-                        <div><dt>Agent</dt><dd>{f.agent || "People only"}</dd></div>
-                        <div><dt>People</dt><dd>{f.people}</dd></div>
-                        <div><dt>Together</dt><dd>{f.channel}</dd></div>
-                        {f.rules && <div><dt>UK rules</dt><dd>{f.rules}</dd></div>}
-                        <div><dt>Built in</dt><dd>Phase {f.phase}: {PHASE[f.phase]}</dd></div>
-                      </dl>
-                      <Link to={"/workspace/app/" + f.key} className="link link-s osp-open">Open in the demo</Link>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            );
-          })}
+    <div className="wk" style={{ minHeight: "auto" }}>
+      <div className="w-content" style={{ paddingTop: 56 }}>
+        <p className="w-chip w-chip-agent" style={{ marginBottom: 16 }}>The Business OS</p>
+        <h1 className="w-greet" style={{ maxWidth: "18ch" }}>Your agents do the work. You decide, ask and see.</h1>
+        <p className="w-outcome">Four hubs hold everything a small business runs on. An agent runs each part and brings you only the decisions. Here's what's inside, using a Manchester cleaning company as the example.</p>
+        <div className="w-row" style={{ marginTop: 24 }}>
+          <Link to="/workspace" className="w-btn w-btn-primary w-btn-lg">Open the demo</Link>
+          <Link to="/workspace/start" className="w-btn w-btn-lg">Start yours</Link>
         </div>
-      </section>
-    </Page>
+
+        <section className="w-section" aria-labelledby="os-loop">
+          <div className="w-section-h"><h2 id="os-loop">The money loop</h2><span className="w-sub">Every step is a record linked to the last, so nothing falls between the cracks</span></div>
+          <ol className="w-flow" aria-label="Lead, quote, job, invoice, chase, paid">
+            {LOOP.map(([t, sub, icon], i) => (
+              <React.Fragment key={t}>
+                <li className="w-flow-step"><span className="w-row" style={{ gap: 8 }}><Icon name={icon} size={18} /><b>{t}</b></span><small>{sub}</small></li>
+                {i < LOOP.length - 1 && <li className="w-flow-arrow" aria-hidden="true"><Icon name="ArrowRight" size={18} /></li>}
+              </React.Fragment>
+            ))}
+          </ol>
+        </section>
+
+        {HUBS.map((h) => {
+          const apps = APPS.filter((a) => a.hub === h.id && a.status !== "soon");
+          const soon = APPS.filter((a) => a.hub === h.id && a.status === "soon");
+          return (
+            <section key={h.id} className="w-section" aria-labelledby={"os-" + h.id}>
+              <div className="w-section-h"><Icon name={h.icon} size={22} /><h2 id={"os-" + h.id}>{h.name}</h2><span className="w-sub">{h.purpose}</span></div>
+              <div className="w-grid w-grid-3">
+                {apps.map((a) => {
+                  const ag = a.agentId && who(a.agentId);
+                  return (
+                    <article key={a.key} className="w-card">
+                      <div className="w-row" style={{ gap: 8 }}><Icon name={a.icon} size={18} /><h3 style={{ fontSize: 17 }}>{a.name}</h3></div>
+                      <p style={{ marginTop: 8, color: "var(--text-secondary)" }}>{a.blurb}</p>
+                      <dl className="w-dl" style={{ marginTop: 12, fontSize: 14 }}>
+                        <dt>Run by</dt><dd>{ag ? <span className="w-agent"><span className="w-agent-dot"><Icon name="Bot" size={14} /></span>{ag.name}<span className="w-agent-role"> · {ag.roleName}</span></span> : "People only"}</dd>
+                        <dt>Used by</dt><dd>{a.users}</dd>
+                      </dl>
+                    </article>
+                  );
+                })}
+              </div>
+              {soon.length > 0 && <p className="w-sub" style={{ marginTop: 12 }}>Also available soon: {soon.map((a) => a.name).join(", ")}. Until then, keep them in the tools you already use.</p>}
+            </section>
+          );
+        })}
+
+        <section className="w-section w-card" style={{ textAlign: "center", padding: 40 }}>
+          <h2 style={{ fontSize: 24 }}>See it running for a real-looking business</h2>
+          <p className="w-sub" style={{ margin: "8px 0 20px" }}>Brightwork Cleaning: eight people, six agents, ten decisions waiting. Nothing is sent.</p>
+          <Link to="/workspace" className="w-btn w-btn-primary w-btn-lg">Open the demo</Link>
+        </section>
+      </div>
+    </div>
   );
 }

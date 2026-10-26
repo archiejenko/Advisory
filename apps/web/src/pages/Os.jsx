@@ -28,19 +28,16 @@ function ModeBanner({ f, setting }) {
   return <div className="mode-banner" role="note"><p><b>Not in your OS.</b> The AI Team can't see this app. <Link to="/workspace/build" className="link link-s">Add it in Your OS</Link></p></div>;
 }
 
-export const DEPTH = {
-  full: { label: "Full", note: "A full native screen, worked by the AI Team." },
-  partial: { label: "Partly built", note: "Some of this runs natively today; records and the AI Team fill the rest." },
-  basic: { label: "Records and AI Team", note: "Keep the records here and ask the AI Team. The full native screen is still being built." },
-};
+// How far each app is built is ours to track, not the customer's to read: no build status is shown.
+export const DEPTH = { full: { label: "", note: "" }, partial: { label: "", note: "" }, basic: { label: "", note: "" } };
+/** "entry" → "entries", "deal" → "deals". */
+const plural = (w) => (/[^aeiou]y$/.test(w) ? w.slice(0, -1) + "ies" : /(s|x|ch|sh)$/.test(w) ? w + "es" : w + "s");
 /** Where a module's questions go when asked from its own screen: the area's team channel. */
 const AREA_CHANNEL = { S: "sales", M: "sales", CS: "sales", F: "finance", P: "finance", PB: "finance", H: "people", W: "people", O: "operations", SC: "operations", FA: "operations" };
 const channelFor = (area) => AREA_CHANNEL[area] || "general";
 const initials = (n) => (n || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
-export function DepthPill({ depth }) {
-  return <span className={"os-depth os-depth-" + depth} title={DEPTH[depth].note}>{DEPTH[depth].label}</span>;
-}
+export function DepthPill() { return null; }
 
 /* ---------- Apps: every module, grouped by area ---------- */
 export function WsApps() {
@@ -63,7 +60,7 @@ export function WsApps() {
       <div className="os-tools">
         <div className="field os-search"><label htmlFor="os-q" className="sr">Find an app</label><input id="os-q" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find an app: payroll, rota, contracts…" /></div>
         <div className="os-seg" role="group" aria-label="Show">
-          {[...(built ? [["mine", `In your OS ${FACETS.filter(inOs).length}`]] : []), ["all", `All ${FACETS.length}`], ["full", `Full ${byDepth("full")}`], ["partial", `Partly built ${byDepth("partial")}`], ["basic", `Records and AI Team ${byDepth("basic")}`]].map(([k, t]) => (
+          {[...(built ? [["mine", `In your OS ${FACETS.filter(inOs).length}`]] : []), ["all", `All ${FACETS.length}`]].map(([k, t]) => (
             <button key={k} className={"os-seg-b" + (depth === k ? " is-on" : "")} aria-pressed={depth === k} onClick={() => setDepth(k)}>{t}</button>
           ))}
         </div>
@@ -134,8 +131,8 @@ export function WsModule({ module }) {
         <div className="os-mod-copy">
           <p className="os-mod-name"><Glyph name={area.glyph} size={18} /> {f.name} <DepthPill depth={f.depth} /></p>
           <p className="body">{f.optimal}.</p>
-          <p className="dt">{DEPTH[f.depth].note}{f.people ? ` Used by ${f.people.charAt(0).toLowerCase() + f.people.slice(1)}.` : ""}</p>
-          {f.link && <p><Link to={f.link} className="link link-s">Open the full {f.app.toLowerCase()} screen</Link></p>}
+          {f.people && <p className="dt">Used by {f.people.charAt(0).toLowerCase() + f.people.slice(1)}.</p>}
+          {f.link && <p><Link to={f.link} className="link link-s">Open {f.app}</Link></p>}
         </div>
         <AgentCard f={f} />
       </div>
@@ -148,7 +145,7 @@ export function WsModule({ module }) {
       {error && <Failed error={error} retry={reload} />}
       {!data ? <Loading /> : data.records.length === 0 ? (
         <div className="os-empty">
-          <p className="body"><b>No {k.label.toLowerCase()}s{status ? ` marked ${status}` : ""} yet.</b></p>
+          <p className="body"><b>No {plural(k.label.toLowerCase())}{status ? ` marked ${status}` : ""} yet.</b></p>
           <p className="body">{can("manager") ? `Add the first one, or ask ${f.agent || "a colleague"} to draft some from what you tell it.` : "Records added by your team show here."}</p>
         </div>
       ) : (

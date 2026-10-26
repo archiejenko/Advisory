@@ -136,7 +136,9 @@ export const scheduleText = (j: Job) => {
 };
 
 /* ---------- Team and agents ---------- */
-export const agentCount = (s: State) => s.agents.length;
+/** Agents at work: those running at least one app that's switched on. Setup and the Team hub both use this. */
+export const activeAgentIds = (os: State["os"]) => [...new Set(APPS.filter((a) => a.agentId && os.apps[a.key] && os.apps[a.key].mode !== "off").map((a) => a.agentId!))];
+export const agentCount = (s: State) => s.agents.filter((a) => activeAgentIds(s.os).includes(a.id)).length;
 export const peopleCount = (s: State) => s.people.length;
 export const appCount = (s: State) => (["customers", "money", "work", "team"] as const).reduce((n, h) => n + shellApps(s.os, h).length, 0);
 export const monthlyActions = (s: State) => actionsPerMonth(s.os);

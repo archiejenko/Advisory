@@ -2,7 +2,7 @@
 // 30 seconds (the store records what each action touched), and the state is saved to this browser so the demo
 // survives a reload. "Reset demo" in the avatar menu starts again from the seed.
 import type { Approval, ApprovalType, Collection, DealStage, OsConfig, Preview, Ref, State, ActivityEvent, Actor } from "./types";
-import { seed } from "./seed";
+import { seed, dayOne } from "./seed";
 import { pounds } from "./format";
 import { agent, company, title, TRUST_COPY } from "./selectors";
 import { answer } from "./ask";
@@ -179,7 +179,8 @@ export function approve(id: string, edits?: { preview?: Preview }) {
   const final = edits?.preview ? { ...a, preview: edits.preview } : a;
   return tx(`Approved: ${a.title}`, (t) => {
     t.update<Approval>("approvals", id, () => ({ status: "approved", decidedAt: t.now, decidedBy: "p_dana", edited: !!edits?.preview && JSON.stringify(edits.preview) !== JSON.stringify(a.preview), preview: final.preview }));
-    carryOut(t, final, "approved");
+    if (a.watch) t.event({ kind: "agent", id: a.agentId }, `noted your OK on "${a.title}" (watch mode: nothing was sent)`, a.linkedRecord, 0);
+    else carryOut(t, final, "approved");
   });
 }
 export function reject(id: string) {
@@ -194,7 +195,7 @@ export function approveMany(ids: string[]) {
   const list = getState().approvals.filter((x) => ids.includes(x.id) && x.status === "pending");
   if (!list.length) return null;
   return tx(`Approved ${list.length}`, (t) => {
-    for (const a of list) { t.update<Approval>("approvals", a.id, () => ({ status: "approved", decidedAt: t.now, decidedBy: "p_dana" })); carryOut(t, a, "approved"); }
+    for (const a of list) { t.update<Approval>("approvals", a.id, () => ({ status: "approved", decidedAt: t.now, decidedBy: "p_dana" })); if (!a.watch) carryOut(t, a, "approved"); }
   });
 }
 export function editPreview(id: string, preview: Preview) { tx("Edited a draft", (t) => t.update<Approval>("approvals", id, () => ({ preview }))); }
@@ -299,6 +300,12 @@ export function saveOs(os: OsConfig, summary: string) {
     t.event(DANA, `changed Setup: ${summary}`, null, 0);
   });
 }
+/** Onboarding: start a fresh workspace on day one, in watch mode for 48 hours. */
+export function startDayOne(input: { business: string; owner: string; description: string; tools: string[]; autonomy: Record<string, "watch" | "ask" | "limits"> }) {
+  state = dayOne(input);
+  undos = [];
+  save(); emit();
+}
 export function finishOnboarding(input: { description: string; autonomy: Record<string, "watch" | "ask" | "limits"> }) {
   return tx("Set up the workspace", (t) => {
     t.set("prefs", { ...getState().prefs, onboarded: true });
@@ -325,4 +332,25 @@ export function sendChat(channelId: string, body: string) {
       tx("Agent replied", (t) => t.insert("chat", { id: "ch_n" + (seq++), channelId, author: { kind: "agent", id: a.agentId }, body: a.text, at: new Date().toISOString(), card: a.card }, false));
     }, getState().paused ? 0 : 900);
   }
+}
+
+/** The undo token for an activity event made in the last minute, if it can still be undone. */
+export function undoTokenForEvent(eventId: string) {
+  const u = undos.find((x) => Date.now() - x.at < 60e3 && x.patches.some((p) => "coll" in p && p.coll === "activity" && p.id === eventId));
+  return u?.token || null;
+}
+
+/** Ask Customer service to draft a reply to a conversation; it lands in the decision queue. */
+export function draftReply(conversationId: string) {
+  const s = getState();
+  const cv = s.conversations.find((x) => x.id === conversationId)!;
+  const c = cv.companyId ? company(s, cv.companyId) : null;
+  const last = [...cv.messages].reverse().find((m) => m.direction === "in");
+  const to = (cv.contactId && s.contacts.find((x) => x.id === cv.contactId)?.email) || c?.email || last?.from || "";
+  return tx("Reply drafted", (t) => {
+    t.insert("approvals", { id: "apr_n" + (seq++), agentId: "agt_cs", type: "reply_enquiry", risk: "review", value: null, createdAt: t.now, linkedRecord: { type: "conversation", id: cv.id },
+      title: `Reply to ${c ? c.short : last?.from}`, reason: `Drafted on request · ${cv.channel === "phone" ? "from a call note" : "answers their last message"}`, status: "pending", decidedAt: null, decidedBy: null, edited: false, note: null,
+      preview: { kind: "email", to, subject: "Re: " + cv.subject.replace(/^Re: /, ""), body: `Hello${last ? " " + last.from.split(" ")[0] : ""},\n\nThanks for this. ${cv.channel === "phone" ? "Following up on your call: " : ""}we can sort that for you this week. I'll confirm the day and time by tomorrow.\n\nKind regards,\nDana Price\nBrightwork Cleaning` } } as Approval);
+    t.event({ kind: "agent", id: "agt_cs" }, `drafted a reply to ${c ? c.name : cv.subject}`, { type: "conversation", id: cv.id }, 8);
+  });
 }

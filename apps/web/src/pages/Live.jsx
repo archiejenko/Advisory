@@ -26,7 +26,12 @@ export function Failed({ error, retry }) {
 }
 
 /** Every workspace screen sits in the OS shell: top bar, command layer, the page, and the dock. */
+/** Set when a workspace page is shown inside the demo workspace's own shell: render the page body only. */
+export const EmbedCtx = React.createContext(false);
+
 export function Shell({ title, crumbs, children, actions, wide, bare }) {
+  const embedded = React.useContext(EmbedCtx);
+  if (embedded) return <div className="w-embed" data-page-title={title}>{actions && <div className="w-row" style={{ justifyContent: "flex-end", marginBottom: 12 }}>{actions}</div>}{children}</div>;
   return (
     <Page title={"Workspace: " + title}>
       <OsShell title={title} crumbs={crumbs} actions={actions} wide={wide} bare={bare}>{children}</OsShell>

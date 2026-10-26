@@ -60,6 +60,7 @@ export type Approval = {
   id: string; agentId: string; type: ApprovalType; title: string; reason: string; preview: Preview;
   linkedRecord: Ref; risk: "routine" | "review"; value: number | null; createdAt: string;
   status: "pending" | "approved" | "rejected" | "auto"; decidedAt: string | null; decidedBy: string | null; edited: boolean; note: string | null;
+  watch?: boolean;            // watch mode: shows what the agent would have done; approving teaches it, nothing is sent
 };
 export type Person = { id: string; name: string; role: string; team: "office" | "crew"; email: string; phone: string; startedOn: string; initials: string };
 export type AutonomyRule = { type: ApprovalType; label: string; mode: "ask" | "auto"; maxValue: number | null };
@@ -83,7 +84,7 @@ export type AppMode = "here" | "kept" | "outsourced" | "off";
 export type InstalledApp = { mode: AppMode; tool: string | null; provider: string | null; autonomy: "ask" | "limits" | "watch" };
 export type OsConfig = { version: number; apps: Record<string, InstalledApp>; history: { version: number; at: string; summary: string }[] };
 
-export type Prefs = { view: "owner" | "accountant"; trustDismissed: string[]; leaksDismissed: string[]; onboarded: boolean };
+export type Prefs = { view: "owner" | "accountant"; trustDismissed: string[]; leaksDismissed: string[]; onboarded: boolean; watchUntil?: string | null };
 
 export type State = {
   now: string;                // the demo clock: every "this week" and "days late" is measured from here

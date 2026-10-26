@@ -103,7 +103,7 @@ function Badges() {
   );
 }
 
-const STATUS = { live: ["Live", "st-done"], partly: ["Partly built", "st-running"], coming: ["Coming", "st-paused"] };
+const STATUS = { live: ["Live", "st-done"], partly: ["Live, growing", "st-running"], coming: ["Coming", "st-paused"] };
 
 export default function Method() {
   return (

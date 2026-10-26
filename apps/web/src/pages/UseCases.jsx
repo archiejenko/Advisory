@@ -62,7 +62,7 @@ export default function UseCases() {
       </Section>
       <Section stone>
         <SectionHead label="Any sector" title="Twelve building blocks, every job" lede="A dental practice and a plumber both need Schedule, Converse and Chase. An accountant and a recruiter both need Find, Verify and Write. We build each block once and every sector gets it." more={["See teams by sector", "/?s=sectors"]} />
-        <div className="prims">{PRIMITIVES.map((p) => <div key={p.key} className={"prim prim-" + p.status}><b>{p.label}</b><span>{p.note}</span><i className={"st " + (p.status === "live" ? "st-done" : p.status === "partly" ? "st-running" : "st-paused")}>{p.status === "live" ? "Live" : p.status === "partly" ? "Partly built" : "Coming"}</i></div>)}</div>
+        <div className="prims">{PRIMITIVES.map((p) => <div key={p.key} className={"prim prim-" + p.status}><b>{p.label}</b><span>{p.note}</span><i className={"st " + (p.status === "live" ? "st-done" : p.status === "partly" ? "st-running" : "st-paused")}>{p.status === "live" ? "Live" : p.status === "partly" ? "Live, growing" : "Coming"}</i></div>)}</div>
         <p className="more" style={{ marginTop: 32 }}>Teams ready for {SECTOR_PACKS.map((p) => p.name.toLowerCase()).join(", ")}, and any business you describe. <Link to="/start" className="link">Start free</Link></p>
       </Section>
       <CtaBand />

@@ -1,10 +1,10 @@
 // Shared plumbing for the workspace: reading the store, links between records, icons and the toast queue.
 import React, { useEffect, useState, useSyncExternalStore } from "react";
 import {
-  Home, Users, PoundSterling, ClipboardList, UsersRound, Settings, Search, Bell, Pause, Play, Mic, X, Check, ChevronLeft, ChevronRight, ChevronDown, ArrowUpRight, ArrowDownRight, ArrowRight, Undo2, Pencil, Bot, Sparkles, KanbanSquare, Target, FileText, Inbox, MessageSquareWarning, Megaphone, Star, ReceiptText, HandCoins, Wallet, Landmark, BookOpen, Percent, CalendarCheck, Receipt, SprayCan, CalendarDays, ListChecks, FileSignature, ShieldCheck, Package, Truck, Contact, MessagesSquare, Network, Banknote, UserPlus, Palmtree, Volume2, VolumeX, AlertTriangle, Clock, Mail, Phone, Globe, Hash, Send, Plus, ArrowUpDown, PanelLeftClose, PanelLeftOpen, LogOut, RotateCcw, Eye, Building2, Link2, Zap, Info, TrendingUp, ExternalLink, Plug, Calendar, MessageCircle, LayoutGrid, List, Briefcase, CircleCheck, Circle, Droplets, Keyboard, Layers, Lock,
+  Home, Users, PoundSterling, ClipboardList, UsersRound, Settings, Search, Bell, Pause, Play, Mic, X, Check, ChevronLeft, ChevronRight, ChevronDown, ArrowUpRight, ArrowDownRight, ArrowRight, Undo2, Redo2, Pencil, Bot, Sparkles, KanbanSquare, Target, FileText, Inbox, MessageSquareWarning, Megaphone, Star, ReceiptText, HandCoins, Wallet, Landmark, BookOpen, Percent, CalendarCheck, Receipt, SprayCan, CalendarDays, ListChecks, FileSignature, ShieldCheck, Package, Truck, Contact, MessagesSquare, Network, Banknote, UserPlus, Palmtree, Volume2, VolumeX, AlertTriangle, Clock, Mail, Phone, Globe, Hash, Send, Plus, ArrowUpDown, PanelLeftClose, PanelLeftOpen, LogOut, RotateCcw, Eye, Building2, Link2, Zap, Info, TrendingUp, ExternalLink, Plug, Calendar, MessageCircle, LayoutGrid, List, Briefcase, CircleCheck, Circle, Droplets, Keyboard, Layers, Lock,
 } from "lucide-react";
 
-const L = { Home, Users, PoundSterling, ClipboardList, UsersRound, Settings, Search, Bell, Pause, Play, Mic, X, Check, ChevronLeft, ChevronRight, ChevronDown, ArrowUpRight, ArrowDownRight, ArrowRight, Undo2, Pencil, Bot, Sparkles, KanbanSquare, Target, FileText, Inbox, MessageSquareWarning, Megaphone, Star, ReceiptText, HandCoins, Wallet, Landmark, BookOpen, Percent, CalendarCheck, Receipt, SprayCan, CalendarDays, ListChecks, FileSignature, ShieldCheck, Package, Truck, Contact, MessagesSquare, Network, Banknote, UserPlus, Palmtree, Volume2, VolumeX, AlertTriangle, Clock, Mail, Phone, Globe, Hash, Send, Plus, ArrowUpDown, PanelLeftClose, PanelLeftOpen, LogOut, RotateCcw, Eye, Building2, Link2, Zap, Info, TrendingUp, ExternalLink, Plug, Calendar, MessageCircle, LayoutGrid, List, Briefcase, CircleCheck, Circle, Droplets, Keyboard, Layers, Lock };
+const L = { Home, Users, PoundSterling, ClipboardList, UsersRound, Settings, Search, Bell, Pause, Play, Mic, X, Check, ChevronLeft, ChevronRight, ChevronDown, ArrowUpRight, ArrowDownRight, ArrowRight, Undo2, Redo2, Pencil, Bot, Sparkles, KanbanSquare, Target, FileText, Inbox, MessageSquareWarning, Megaphone, Star, ReceiptText, HandCoins, Wallet, Landmark, BookOpen, Percent, CalendarCheck, Receipt, SprayCan, CalendarDays, ListChecks, FileSignature, ShieldCheck, Package, Truck, Contact, MessagesSquare, Network, Banknote, UserPlus, Palmtree, Volume2, VolumeX, AlertTriangle, Clock, Mail, Phone, Globe, Hash, Send, Plus, ArrowUpDown, PanelLeftClose, PanelLeftOpen, LogOut, RotateCcw, Eye, Building2, Link2, Zap, Info, TrendingUp, ExternalLink, Plug, Calendar, MessageCircle, LayoutGrid, List, Briefcase, CircleCheck, Circle, Droplets, Keyboard, Layers, Lock };
 import { getState, subscribe } from "./demo/store";
 
 /** Read the demo store; re-renders when it changes. */
@@ -64,6 +64,7 @@ export function toast(text, { undo, ms = undo ? 30000 : 5000 } = {}) {
   setTimeout(() => dismissToast(id), ms);
   return id;
 }
+export function clearToasts() { toasts = []; temit(); }
 export function dismissToast(id) { toasts = toasts.filter((t) => t.id !== id); temit(); }
 export function useToasts() {
   const [v, set] = useState(toasts);

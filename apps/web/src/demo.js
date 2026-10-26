@@ -6,6 +6,7 @@ import { floorDemo } from "./floorDemo.js";
 import { osDemo } from "./osDemo.js";
 import { builderDemo, withModes } from "./builderDemo.js";
 import { isPass } from "./pass.js";
+import { syncFromStore, decideInStore } from "./workspace/demo/legacy.js";
 
 const H = 3600e3, D = 24 * H;
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
@@ -183,6 +184,8 @@ function startDemoRun(a, input) {
 export async function demoApi(method, path, body) {
   await new Promise((r) => setTimeout(r, 120));
   const s = st();
+  // The workspace store is the one source of truth; the Floor reads it through this older API.
+  syncFromStore(s);
   // The operator pass starts on the Pilot plan (100 agents, 6,000 actions); the usage page can switch plans.
   if (isPass() && !s.passPlan) { s.passPlan = true; s.org.plan = "pilot"; }
   const [p, qs] = path.replace(/^\/api\/ws/, "").split("?");
@@ -273,6 +276,7 @@ export async function demoApi(method, path, body) {
   // Changes
   if (method === "POST" && p === "/actions/batch") {
     const results = (body.ids || []).map((aid) => {
+      if (decideInStore(aid, body.decision === "approve" ? "approve" : "reject")) return { id: aid, ok: true, status: body.decision === "approve" ? "sent" : "rejected" };
       const a = s.actions.find((x) => x.id === aid);
       if (!a || a.status !== "proposed") return { id: aid, ok: false, error: "This has already been decided." };
       Object.assign(a, body.decision === "approve" ? { status: "sent", decided_by: DEMO_ME.user.email, decided_at: now(), result: "Sent (demo: nothing left this page)" } : { status: "rejected", decided_by: DEMO_ME.user.email, decided_at: now() });
@@ -289,6 +293,7 @@ export async function demoApi(method, path, body) {
   }
   if (method === "PATCH" && (r = m(/^\/rules\/([^/]+)$/))) { Object.assign(s.rules.find((x) => x.id === r[1]) || fail(404, "Rule not found."), body); return { ok: true }; }
   if (method === "POST" && (r = m(/^\/actions\/([^/]+)\/(approve|reject)$/))) {
+    if (decideInStore(r[1], r[2], body && (body.subject || body.body) ? { ...(body.subject ? { subject: body.subject } : {}), ...(body.body ? { body: body.body } : {}) } : undefined)) return { ok: true, status: r[2] === "approve" ? "sent" : "rejected" };
     const a = s.actions.find((x) => x.id === r[1]);
     if (!a || a.status !== "proposed") fail(409, "This has already been decided.");
     if (r[2] === "approve") {

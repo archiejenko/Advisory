@@ -2,7 +2,7 @@
 // Phone: a bottom tab bar, with Setup in the avatar menu and Ask in the top bar. Pause agents is always visible.
 import React, { useEffect, useRef, useState } from "react";
 import { Link, useRoute } from "../router.jsx";
-import { Icon, hrefFor, toast, useStore } from "./core.jsx";
+import { Icon, clearToasts, hrefFor, toast, useStore } from "./core.jsx";
 import { AskButton, AskPalette } from "./AskBar.jsx";
 import { Avatar, Button, Toaster } from "./ui.jsx";
 import { HUBS } from "./demo/catalogue";
@@ -58,7 +58,7 @@ export function AppShell({ children }) {
       <a className="sr-only" href="#w-main" onClick={(e) => { e.preventDefault(); document.getElementById("w-main")?.focus(); }}>Skip to content</a>
       <div className={"w-shell" + (rail ? " is-rail" : "")}>
         <nav className="w-side" aria-label="Workspace">
-          <Link to="/workspace" className="w-brand" aria-label="Brightwork Cleaning, Home"><span className="w-brand-mark" aria-hidden="true">B</span><b>Brightwork</b></Link>
+          <Link to="/workspace" className="w-brand" aria-label={`${s.org.name}, Home`}><span className="w-brand-mark" aria-hidden="true">{s.org.name[0]}</span><b>{s.org.name.split(" ")[0]}</b></Link>
           {NAV.map((n) => (
             <Link key={n.id} to={n.to} className="w-nav" aria-current={active === n.id ? "page" : undefined} title={n.name}>
               <Icon name={n.icon} size={20} /><span>{n.name}</span>
@@ -74,7 +74,7 @@ export function AppShell({ children }) {
 
         <div className="w-main">
           <header className="w-top">
-            <Link to="/workspace" className="w-org"><span className="w-hide-m">{s.org.name}</span><span className="w-only-m">Brightwork</span></Link>
+            <Link to="/workspace" className="w-org"><span className="w-hide-m">{s.org.name}</span><span className="w-only-m w-brand-mark" aria-label={`${s.org.name}, Home`}>{s.org.name[0]}</span></Link>
             <Link to="/workspace/start" className="w-demo" title="This is a demo: nothing is sent. Set up your own business.">Demo · start yours</Link>
             <div className="w-sp"><AskButton onOpen={() => setAsk(true)} /></div>
             <AskButton compact onOpen={() => setAsk(true)} />
@@ -111,7 +111,7 @@ export function AppShell({ children }) {
                 <div className="w-menu-sep" />
                 <Link to="/workspace/setup" className="w-menu-i" role="menuitem"><Icon name="Settings" size={18} />Setup</Link>
                 <Link to="/workspace/start" className="w-menu-i" role="menuitem"><Icon name="Sparkles" size={18} />Start your own workspace</Link>
-                <button type="button" className="w-menu-i" role="menuitem" onClick={() => { reset(); setMenu(null); toast("The demo is back to how it started."); }}><Icon name="RotateCcw" size={18} />Reset demo</button>
+                <button type="button" className="w-menu-i" role="menuitem" onClick={() => { reset(); clearToasts(); setMenu(null); toast("The demo is back to how it started."); }}><Icon name="RotateCcw" size={18} />Reset demo</button>
                 <Link to="/" className="w-menu-i" role="menuitem"><Icon name="ExternalLink" size={18} />Agent House website</Link>
               </Menu>
             </div>

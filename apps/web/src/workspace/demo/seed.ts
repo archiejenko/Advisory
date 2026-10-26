@@ -167,6 +167,17 @@ export function seed(nowMs: number = Date.now()): State {
   job("job_ancoats", "co_ancoats", "Weekly studio clean", "18 Redhill Street, M4 6DE", weekly([1], "18:00", 180), crew("lee", "jordan"), 41600, -((8 - now.getDay()) % 7 || 7), "q_ancoats", "clean", "scheduled");
   jobs.push({ id: "job_castlefield_visit", companyId: "co_castlefield", quoteId: null, kind: "visit", title: "Walk-round", site: "Castlefield Dental Care, M3 4LZ", schedule: { kind: "once", date: thursday("17:30").slice(0, 10), time: "17:30", durationMins: 30 }, crewIds: ["p_dana"], status: "proposed", startsOn: thursday("17:30").slice(0, 10), contractId: null, monthlyValue: null });
 
+  // Existing customers: each contract came from a won deal and an accepted quote.
+  let qn = 180;
+  for (const j of jobs.filter((x) => x.kind === "clean" && !x.quoteId)) {
+    const d = deals.find((x) => x.id === "deal_" + j.companyId.slice(3))!;
+    const since = companies.find((c) => c.id === j.companyId)!.customerSince!;
+    d.value = (j.monthlyValue || 0) * 12; d.title = j.title; d.updatedAt = iso(Date.parse(since)); d.nextStep = "Renewal review";
+    const qid = "q_" + j.companyId.slice(3);
+    quote(qid, "Q-0" + (qn++), d.id, j.companyId, [{ description: j.title, qty: 12, unit: j.monthlyValue || 0 }], "accepted", Math.round((nowMs - Date.parse(since)) / D) + 10, Math.round((nowMs - Date.parse(since)) / D) + 3);
+    j.quoteId = qid;
+  }
+
   /* ---------- Invoices and payments ---------- */
   type Draft = Omit<Invoice, "id"> & { key: string };
   const drafts: Draft[] = [];
@@ -316,8 +327,11 @@ export function seed(nowMs: number = Date.now()): State {
   const histInv = invoices.filter((x) => x.status === "paid").slice(-10);
   histInv.forEach((x, i) => {
     const at = nowMs - (i === 0 ? 14 : 6 + i * 4) * D;
-    approvals.push({ id: i === 0 ? "apr_h_tarnbrook" : "apr_hr_" + i, agentId: "agt_credit", type: "send_reminder", risk: x.total < 50000 ? "routine" : "review", value: x.total, createdAt: iso(at - H), linkedRecord: { type: "invoice", id: i === 0 ? "INV-1047" : x.id },
-      title: `Reminder for ${i === 0 ? "INV-1047" : x.id}`, reason: "Overdue", preview: email("accounts@example", "Reminder", "…"), status: "approved", decidedAt: iso(at), decidedBy: "p_dana", edited: false, note: null });
+    const target = i === 0 ? tarnbrookInv : x;
+    const who = contactOf(target.companyId);
+    approvals.push({ id: i === 0 ? "apr_h_tarnbrook" : "apr_hr_" + i, agentId: "agt_credit", type: "send_reminder", risk: target.total < 50000 ? "routine" : "review", value: target.total, createdAt: iso(at - H), linkedRecord: { type: "invoice", id: target.id },
+      title: `First reminder for ${target.id}`, reason: `${fmt(target.total)} overdue · 1st reminder`, status: "approved", decidedAt: iso(at), decidedBy: "p_dana", edited: false, note: null,
+      preview: email(who.email || "", `Invoice ${target.id}, ${fmt(target.total)}`, `Hello ${who.name.split(" ")[0]},\n\nA quick note that invoice ${target.id} for ${fmt(target.total)} was due on ${ukDate(target.dueAt)}. If it's already on its way, thank you, and please ignore this.\n\nKind regards,\nDana Price\nBrightwork Cleaning`) });
   });
   const histKinds: [Approval["agentId"], Approval["type"], boolean, boolean][] = [
     ["agt_sales", "send_outreach", true, false], ["agt_sales", "send_outreach", true, true], ["agt_sales", "send_outreach", false, false], ["agt_cs", "reply_enquiry", true, false],
@@ -429,4 +443,49 @@ export function isoWeek(d: Date) {
   t.setUTCDate(t.getUTCDate() + 4 - dayNum);
   const y = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
   return Math.ceil(((t.getTime() - y.getTime()) / 86400000 + 1) / 7);
+}
+
+/**
+ * Day one, straight after onboarding: the owner's own business, the six agents, and what connecting their tools
+ * brought in. For 48 hours every agent is in watch mode: the queue shows what it would have done, and nothing is sent.
+ */
+export function dayOne(input: { business: string; owner: string; description: string; tools: string[]; autonomy: Record<string, "watch" | "ask" | "limits"> }, nowMs: number = Date.now()): State {
+  const base = seed(nowMs);
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const ago = (ms: number) => iso(nowMs - ms);
+  const H = 3600e3, D = 24 * H;
+  const name = input.business.trim() || "Your business";
+  const ownerName = input.owner.trim() || "You";
+  const first = ownerName.split(" ")[0];
+  const owner = { id: "p_dana", name: ownerName, role: "Owner", team: "office" as const, email: first.toLowerCase() + "@example.co.uk", phone: "", startedOn: iso(nowMs).slice(0, 10), initials: ownerName.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() };
+  const has = (t: string) => input.tools.includes(t);
+  const companies = [
+    { id: "co_d1", name: "Harbour Street Dental Ltd", short: "Harbour Street Dental", type: "Dental practice", postcode: "M1 2AB", staff: 9, status: "lead" as const, paymentBehaviour: "new" as const, website: "https://harbourstreet.example", email: "hello@harbourstreet.example", source: "Companies House", createdAt: ago(2 * H), customerSince: null, notes: "Found by Maya this morning. Fits your customers." },
+    { id: "co_d2", name: "Oldham Road Architects LLP", short: "Oldham Road Architects", type: "Architecture studio", postcode: "M4 5EA", staff: 14, status: "lead" as const, paymentBehaviour: "new" as const, website: null, email: "studio@oldhamroad.example", source: "Companies House", createdAt: ago(2 * H), customerSince: null, notes: "Found by Maya this morning." },
+    ...(has("accounts") ? [{ id: "co_d3", name: "Your biggest customer (from your accounts)", short: "Your biggest customer", type: "Customer", postcode: "", staff: null, status: "customer" as const, paymentBehaviour: "sometimes late" as const, website: null, email: "accounts@customer.example", source: "Imported", createdAt: ago(H), customerSince: iso(nowMs - 400 * D).slice(0, 10), notes: "Imported from your accounts software." }] : []),
+  ];
+  const invoices = has("accounts") ? [{ id: "INV-0001", companyId: "co_d3", jobId: null, lines: [{ description: "Imported from your accounts", qty: 1, unit: 86000 }], total: 86000, issuedAt: ago(40 * D), dueAt: ago(10 * D), status: "overdue" as const, paidAt: null, chaseLog: [] }] : [];
+  const watch = { status: "pending" as const, decidedAt: null, decidedBy: null, edited: false, note: "Watch mode: nothing will be sent. Approve or reject to teach it.", watch: true };
+  const approvals = [
+    { id: "apr_d1", agentId: "agt_sales", type: "send_outreach" as const, risk: "review" as const, value: null, createdAt: ago(H), linkedRecord: { type: "company" as const, id: "co_d1" }, title: "First email to Harbour Street Dental", reason: "New lead that fits · 9 staff · public email", preview: { kind: "email" as const, to: "hello@harbourstreet.example", subject: `${name} for Harbour Street Dental`, body: `Hello,\n\nI run ${name}. ${input.description.trim().split(/[.!?]/)[0] || "We work with businesses like yours"}.\n\nWould a short call be useful?\n\n${ownerName}` }, ...watch },
+    ...(has("accounts") ? [{ id: "apr_d2", agentId: "agt_credit", type: "send_reminder" as const, risk: "review" as const, value: 86000, createdAt: ago(H), linkedRecord: { type: "invoice" as const, id: "INV-0001" }, title: "First reminder for INV-0001", reason: "£860.00 · 10 days late · imported from your accounts", preview: { kind: "email" as const, to: "accounts@customer.example", subject: "Invoice INV-0001, £860.00", body: `Hello,\n\nA quick note that invoice INV-0001 for £860.00 was due ten days ago. If it's on its way, thank you, and please ignore this.\n\nKind regards,\n${ownerName}` }, ...watch }] : []),
+    ...(has("email") ? [{ id: "apr_d3", agentId: "agt_cs", type: "reply_enquiry" as const, risk: "review" as const, value: null, createdAt: ago(30 * 60e3), linkedRecord: { type: "conversation" as const, id: "cv_d1" }, title: "Reply to a new enquiry", reason: "Arrived in your inbox this morning · asks for prices", preview: { kind: "email" as const, to: "enquiry@example.co.uk", subject: "Re: Prices", body: `Hello,\n\nThanks for getting in touch. To give you a price, could you tell me a little more about what you need and when?\n\nKind regards,\n${ownerName}` }, ...watch }] : []),
+  ];
+  const conversations = has("email") ? [{ id: "cv_d1", companyId: null, contactId: null, channel: "email" as const, subject: "Prices", origin: "enquiry" as const, status: "new" as const, assignedTo: { kind: "agent" as const, id: "agt_cs" }, messages: [{ id: "m_d1", at: ago(40 * 60e3), direction: "in" as const, from: "enquiry@example.co.uk", body: "Hi, could you send me your prices please?", actor: null }] }] : [];
+  const agents = base.agents.map((a) => ({ ...a, autonomy: a.autonomy.map((r) => ({ ...r, mode: input.autonomy[a.id] === "limits" ? ("auto" as const) : ("ask" as const), maxValue: input.autonomy[a.id] === "limits" ? 50000 : null })) }));
+  const ev = (agentId: string, verb: string, ref: State["activity"][number]["linkedRecord"], m: number) => ({ id: "ev_d" + verb.length + m, actor: { kind: "agent" as const, id: agentId }, verb, linkedRecord: ref, at: ago(m * 60e3), undoable: false, minutesSaved: 10 });
+  return {
+    ...base,
+    org: { ...base.org, name, owner: "p_dana", cashBalance: 0, balanceAt: iso(nowMs) },
+    companies, contacts: [], deals: [], quotes: [], jobs: [], invoices, payments: [], bills: [], conversations, tasks: [], approvals, people: [owner], agents,
+    activity: [
+      ev("agt_brief", "set up your workspace and started 48 hours of watch mode", null, 5),
+      ev("agt_sales", "found 2 companies that fit your customers", { type: "company", id: "co_d1" }, 50),
+      ...(has("accounts") ? [ev("agt_fin", "imported your customers and unpaid invoices", null, 55)] : []),
+      ...(has("email") ? [ev("agt_cs", "read this week's inbox and drafted a reply", { type: "conversation", id: "cv_d1" }, 25)] : []),
+    ],
+    chat: [{ id: "ch_d1", channelId: "ch_general", author: { kind: "agent", id: "agt_brief" }, body: `Welcome, ${first}. For the next 48 hours we'll show you what we would have done, and send nothing. Approve or reject each one and we'll learn how you like things done.`, at: ago(5 * 60e3), card: null }],
+    contracts: [], records: [], diary: [],
+    prefs: { view: "owner", trustDismissed: [], leaksDismissed: [], onboarded: true, watchUntil: iso(nowMs + 48 * H) },
+  };
 }

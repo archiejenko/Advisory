@@ -8,10 +8,10 @@ import { pounds, plural, ukDay, clock, ukTime } from "./format";
 export type Answer = { agentId: string; text: string; card: ActionCard | null };
 
 const TOPICS: [RegExp, string][] = [
-  [/\b(owe us|owed|overdue|chase|late pay|debtor|receivable|unpaid)\b/i, "agt_credit"],
+  [/\b(owes? (us|me)|who owes|owed|overdue|chase|late pay|debtors?|receivables?|unpaid)\b/i, "agt_credit"],
   [/\b(we owe|bills?|pay(ables)?|suppliers?|cash|bank|afford|forecast|balance|invoice)\b/i, "agt_fin"],
   [/\b(leads?|pipeline|quotes?|deals?|prospects?|sales|won)\b/i, "agt_sales"],
-  [/\b(inbox|enquir|messages?|emails?|reply|replies|complain)\b/i, "agt_cs"],
+  [/\b(inbox|enquir\w*|messages?|emails?|reply|replies|complain\w*)\b/i, "agt_cs"],
   [/\b(jobs?|today|rota|crew|shift|site|clean|tasks?|coshh|stock|tomorrow)\b/i, "agt_ops"],
 ];
 
@@ -62,7 +62,7 @@ export function briefing(s: State) {
   const o = q.outcomes(s);
   const won = q.wonThisWeek(s).map((d) => q.company(s, d.companyId)!.short).join(" and ");
   return [
-    `Here's Brightwork this week.`,
+    `Here's ${s.org.name.replace(/ (Ltd|LLP)$/, "")} this week.`,
     `${pounds(o.collected)} came in, and the team saved you about ${o.hoursSaved} hours.`,
     won ? `${won} signed.` : "",
     `${plural(q.newLeadCount(s), "new lead")}, ${plural(q.repliesThisWeek(s).length, "reply", "replies")}.`,

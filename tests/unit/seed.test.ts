@@ -129,3 +129,11 @@ describe("store actions keep the figures in step", async () => {
     expect(q.billsOverdue(store.getState()).length).toBe(0);
   });
 });
+
+describe("Ask routes questions to the agent that owns the subject", async () => {
+  const { routeAgent } = await import("../../apps/web/src/workspace/demo/ask");
+  it.each([
+    ["Who owes us money?", "agt_credit"], ["What's overdue?", "agt_credit"], ["What do we owe this week?", "agt_fin"], ["How much cash have we got?", "agt_fin"],
+    ["How's the pipeline looking?", "agt_sales"], ["Any new enquiries?", "agt_cs"], ["What's on today?", "agt_ops"], ["How did we do this week?", "agt_brief"],
+  ])("%s → %s", (text, agentId) => expect(routeAgent(text)).toBe(agentId));
+});

@@ -226,9 +226,9 @@ function Team() {
 
 /* ---------- 4. Every area, one place ---------- */
 const BARS = { full: 3, partial: 2, basic: 1 };
-const DEPTH_WORD = { full: "Full", partial: "Partly built", basic: "Records and AI Team" };
+
 function Meter({ d }) {
-  return <i className="lp-meter" title={DEPTH_WORD[d]} aria-label={DEPTH_WORD[d]}>{[1, 2, 3].map((n) => <u key={n} className={n <= BARS[d] ? "on" : ""} />)}</i>;
+  return null;
 }
 function Areas() {
   return (
@@ -236,7 +236,6 @@ function Areas() {
       <div className="wrap">
         <Reveal className="lp-head lp-head-row">
           <div><p className="label">Every area, one place</p><h2 id="lp-areas-h">{BUILDER_APPS.length} apps in ten areas.</h2></div>
-          <p className="lp-legend"><span><Meter d="full" />Full</span><span><Meter d="partial" />Partly built</span><span><Meter d="basic" />Records and AI Team</span></p>
         </Reveal>
         <div className="lp-cats">
           {CATEGORIES.map((c) => {

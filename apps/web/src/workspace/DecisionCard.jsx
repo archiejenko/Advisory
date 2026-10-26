@@ -57,6 +57,7 @@ export function DecisionCard({ a, focused, onFocus, innerRef }) {
         <div className="w-dc-top">
           <AgentBadge agentId={a.agentId} />
           <span className="w-sp" />
+          {a.watch && <StatusChip tone="agent">Watch mode</StatusChip>}
           <StatusChip tone={a.risk === "routine" ? "neutral" : "attn"}>{a.risk === "routine" ? "Routine" : "Needs a look"}</StatusChip>
           <span className="w-sub">{relative(a.createdAt, s.now > a.createdAt ? s.now : undefined)}</span>
         </div>

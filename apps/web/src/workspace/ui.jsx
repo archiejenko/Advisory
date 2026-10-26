@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "../router.jsx";
 import { Icon, hrefFor, useStore, useToasts, dismissToast } from "./core.jsx";
-import { undo } from "./demo/store";
+import { getState, undo } from "./demo/store";
 import { pounds, relative } from "./demo/format";
 import * as q from "./demo/selectors";
 
@@ -58,8 +58,8 @@ export function Crumbs({ items }) {
     </nav>
   );
 }
-export function PageHeader({ title, purpose, crumbs, metrics, actions, titleId }) {
-  useEffect(() => { document.title = `${title} | Brightwork Cleaning`; }, [title]);
+export function PageHeader({ title, purpose, crumbs, metrics, actions, titleId, scrollMetrics = true }) {
+  useEffect(() => { document.title = `${title} | ${getState().org.name}`; }, [title]);
   return (
     <header>
       {crumbs && <Crumbs items={crumbs} />}
@@ -67,7 +67,7 @@ export function PageHeader({ title, purpose, crumbs, metrics, actions, titleId }
         <div><h1 id={titleId}>{title}</h1>{purpose && <p className="w-purpose">{purpose}</p>}</div>
         {actions && <div className="w-page-a">{actions}</div>}
       </div>
-      {metrics && <div className="w-metrics">{metrics}</div>}
+      {metrics && <div className={"w-metrics" + (scrollMetrics ? " is-scroll" : "")}>{metrics}</div>}
     </header>
   );
 }
@@ -84,12 +84,12 @@ export function MetricTile({ label, value, tone, to, delta, sub }) {
   return to ? <Link to={to} className="w-metric">{body}</Link> : <div className="w-metric">{body}</div>;
 }
 /** Change against a previous figure: "↑ 12% vs same week last month". higherIsBetter decides the colour. */
-export function delta(now, before, { higherIsBetter = true, unit = "%", vs = "same week last month" } = {}) {
-  if (!before) return { text: `No figure for the ${vs}` };
+export function delta(now, before, { higherIsBetter = true, unit = "%", vs = "last month" } = {}) {
+  if (!before) return { text: `Nothing to compare from ${vs}` };
   const ch = (now - before) / before;
-  if (Math.abs(ch) < 0.005) return { text: `Same as the ${vs}` };
+  if (Math.abs(ch) < 0.005) return { text: `Same as ${vs}` };
   const up = ch > 0;
-  return { dir: up ? "up" : "down", good: up === higherIsBetter, text: `${Math.abs(Math.round(ch * 100))}${unit} ${up ? "up" : "down"} on the ${vs}` };
+  return { dir: up ? "up" : "down", good: up === higherIsBetter, text: `${Math.abs(Math.round(ch * 100))}${unit} ${up ? "up" : "down"} on ${vs}` };
 }
 
 export function Tabs({ tabs, current, label }) {
