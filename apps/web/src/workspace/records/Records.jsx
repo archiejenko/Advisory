@@ -14,6 +14,9 @@ import * as q from "../demo/selectors";
 import { APPS, appName, hubDef } from "../demo/catalogue";
 import { mins, pct, plural, pounds, relative, ukDate, ukDay, ukShort, ukTime } from "../demo/format";
 import { useView } from "../view.js";
+import { useCredits } from "../credits.js";
+import { setAgentCredits } from "../demo/store";
+import { MODES, MODELS, MODE_ORDER } from "../../../../../config/model-pricing.ts";
 
 function RecordHeader({ crumbs, title, chips, facts, actions }) {
   useEffect(() => { document.title = `${title} | ${getState().org.name}`; }, [title]);
@@ -290,6 +293,33 @@ function GenericPage({ id, hub }) {
   );
 }
 
+/* ---------- Credits: the mode an agent runs in, and its budget ---------- */
+function ModeCard({ a }) {
+  const credits = useCredits();
+  const [budget, setBudget] = useState(a.monthlyBudget ? String(a.monthlyBudget) : "");
+  const mode = a.mode || "standard";
+  const used = credits?.byAgent?.find((x) => x.id === a.id);
+  return (
+    <Card title="Mode and credits" actions={<Link to="/workspace/setup/usage" className="w-link">Usage</Link>}>
+      <p className="w-sub" style={{ marginBottom: 12 }}>Runs on <b style={{ color: "var(--text-primary)" }}>{MODES[mode].name}</b> · {MODELS[MODES[mode].model].label}{used ? ` · ${used.credits.toLocaleString("en-GB")} credits this month` : ""}</p>
+      <div className="w-stack">
+        {MODE_ORDER.map((k) => (
+          <label key={k} className="w-rule" style={{ cursor: "pointer" }}>
+            <span><b style={{ fontWeight: 500 }}>{MODES[k].name} · {MODELS[MODES[k].model].label}</b><span className="w-sub" style={{ display: "block" }}>{MODES[k].for} About {MODES[k].typical[0] === MODES[k].typical[1] ? `${MODES[k].typical[0]} ${MODES[k].typical[0] === 1 ? "credit" : "credits"}` : `${MODES[k].typical[0]}–${MODES[k].typical[1]} credits`} a run.</span></span>
+            <input type="radio" name={"mode-" + a.id} checked={mode === k} onChange={() => { const tok = setAgentCredits(a.id, { mode: k }); toast(`${a.name} now runs on ${MODES[k].name}.`, { undo: tok }); }} style={{ width: 18, height: 18 }} />
+          </label>
+        ))}
+      </div>
+      <form className="w-row" style={{ marginTop: 12 }} onSubmit={(e) => { e.preventDefault(); const n = Math.round(Number(budget.replace(/,/g, ""))); const tok = setAgentCredits(a.id, { monthlyBudget: n > 0 ? n : null }); toast(n > 0 ? `Budget set: ${n.toLocaleString("en-GB")} credits a month.` : "Budget removed.", { undo: tok }); }}>
+        <label htmlFor={"bud-" + a.id} className="w-sub">Monthly budget</label>
+        <input id={"bud-" + a.id} className="w-input" style={{ width: 120 }} inputMode="numeric" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="No limit" />
+        <span className="w-sub">credits</span>
+        <Button size="sm" type="submit">Set</Button>
+      </form>
+    </Card>
+  );
+}
+
 /* ---------- People and agents ---------- */
 function PersonPage({ id }) {
   const s = useStore();
@@ -327,6 +357,7 @@ function AgentPage({ id }) {
           <Card title="Works in">
             <ul className="w-related">{st.apps.map((x) => <li key={x.key}><Link to={`/workspace/${x.hub}/${x.key}`} className="w-reflink">{appName(x, s.prefs.view)}</Link><span className="w-sub">{hubDef(x.hub).name}</span></li>)}</ul>
           </Card>
+          <ModeCard a={a} />
           <Card title="What it may do without asking">
             {a.autonomy.map((r) => {
               const lim = limits[r.type] ?? (r.maxValue ? r.maxValue / 100 : "");

@@ -223,6 +223,15 @@ export function setAutonomy(agentId: string, type: ApprovalType, mode: "ask" | "
   });
 }
 
+/** Credits: which mode an agent runs in, and its monthly credit budget (null for none). */
+export function setAgentCredits(agentId: string, patch: { mode?: "quick" | "standard" | "deep" | "strategy"; monthlyBudget?: number | null }) {
+  const ag = agent(getState(), agentId)!;
+  return tx(`Changed ${ag.name}'s credits`, (t) => {
+    t.update("agents", agentId, () => patch);
+    t.event(DANA, patch.mode ? `switched ${ag.name} to ${patch.mode[0].toUpperCase() + patch.mode.slice(1)} mode` : patch.monthlyBudget ? `gave ${ag.name} a budget of ${patch.monthlyBudget.toLocaleString("en-GB")} credits a month` : `removed ${ag.name}'s monthly budget`, { type: "agent", id: agentId }, 0);
+  });
+}
+
 /* ---------- Leaks ---------- */
 export function fixLeak(id: string) {
   const s = getState();

@@ -303,7 +303,7 @@ export async function demoApi(method, path, body) {
       const agents = llmAgents(s).map((a) => ({ ...a, budget_paused_period: a.budget_paused ? led.period : null }));
       const credits = summariseCredits({ month, period: led.period, plan: s.org.plan, entries: [...led.entries, ...(s.topups || [])].filter((e) => e.period === month), agents,
         balance: { ...bal, available: bal.total }, reset_on: resetOn(), pending_plan: s.pendingPlan || null, confirm_over: s.confirmOver ?? 100, topup_available: true, planCredits: plan.credits });
-      return { plan: s.org.plan, plan_name: plan.name, plan_agents: plan.agents, emails_sent: s.actions.filter((a) => a.status === "sent").length + 17, month, clients: s.clients.length, runs: 0, briefs: 0, alerts: s.alerts.length, weeks: [], per_client: [], credits };
+      return { plan: s.org.plan, plan_name: plan.name, plan_agents: plan.agents, emails_sent: s.actions.filter((a) => a.status === "sent").length, month, clients: s.clients.length, runs: 0, briefs: 0, alerts: s.alerts.length, weeks: [], per_client: [], credits };
     }
     if (p === "/recommend") return demoChoices({ template: q.template || "custom", text: q.text || null });
     if (p === "/prospects/preview") return { index_month: day(0).slice(0, 7), index_size: 48210, rows: PROSPECTS.map(([name, number, district, sic, inc]) => ({ name, number, district, sic, incorporated: inc + "-01-01" })) };

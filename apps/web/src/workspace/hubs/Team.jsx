@@ -5,6 +5,7 @@ import { Link, navigate, useRoute } from "../../router.jsx";
 import { Icon, hrefFor, useStore } from "../core.jsx";
 import { AgentBadge, Avatar, Button, EmptyState, MetricTile, StatusChip } from "../ui.jsx";
 import { HubFrame, useTab } from "./Hub.jsx";
+import { useCredits } from "../credits.js";
 import { sendChat } from "../demo/store";
 import * as q from "../demo/selectors";
 import { mins, pct, relative } from "../demo/format";
@@ -108,10 +109,12 @@ export function Team({ tab }) {
   const app = useTab("team", tab);
   const V = app && VIEWS[app.key];
   const rate = q.approvalRate(s);
+  const credits = useCredits();
   const metrics = [
     <MetricTile key="p" label="People" value={q.peopleCount(s)} to="/workspace/team/roster" sub={`${q.crewToday(s).length} on jobs today`} />,
     <MetricTile key="a" label="Agents" value={q.agentCount(s)} to="/workspace/team/roster" sub={s.paused ? "All paused" : "All working"} tone={s.paused ? "attn" : undefined} />,
-    <MetricTile key="w" label="Agent actions this week" value={q.actionsThisWeek(s)} to="/workspace" sub={`About ${q.monthlyActions(s).toLocaleString("en-GB")} a month`} />,
+    <MetricTile key="w" label="Agent actions this week" value={q.actionsThisWeek(s)} to="/workspace" sub="Every one logged on its record" />,
+    <MetricTile key="c" label="Credits left this month" value={credits ? credits.left.toLocaleString("en-GB") : "…"} to="/workspace/setup/usage" sub={credits ? `of ${credits.plan.toLocaleString("en-GB")}, used ${credits.used.toLocaleString("en-GB")}` : "Usage and credits"} tone={credits?.paused ? "risk" : undefined} />,
     <MetricTile key="r" label="Drafts you approve" value={pct(rate)} sub="Of everything decided" />,
   ];
   return <HubFrame hub="team" tab={app?.key} metrics={metrics}>{V ? <V /> : null}</HubFrame>;

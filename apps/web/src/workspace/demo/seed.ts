@@ -56,6 +56,8 @@ export function seed(nowMs: number = Date.now()): State {
     { id: "agt_brief", name: "Bea", roleName: "Briefing", description: "Writes your weekly briefing and keeps the team chat up to date.", hubIds: ["team"], appKeys: ["roster", "chat", "floor"], minutesPerAction: 20, subAgents: [],
       autonomy: [rule("post_briefing", "Post the weekly briefing")] },
   ];
+  // Credits: Theo reads every enquiry closely, so he runs on Deep; the rest on Standard.
+  for (const a of agents) { a.mode = a.id === "agt_cs" ? "deep" : "standard"; a.monthlyBudget = null; }
 
   /* ---------- Companies and contacts ---------- */
   const companies: Company[] = [];

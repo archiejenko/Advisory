@@ -13,6 +13,8 @@ import { RecordPage } from "./records/Records.jsx";
 import { Setup } from "./pages/Setup.jsx";
 import { EmptyState, Button, Toaster } from "./ui.jsx";
 import { Start } from "./pages/Start.jsx";
+import { Usage } from "./pages/Usage.jsx";
+import { setDemo } from "../api.js";
 import { Link } from "../router.jsx";
 
 import { getState } from "./demo/store";
@@ -27,17 +29,24 @@ if (typeof window !== "undefined") window.__workspace = { getState, q: selectors
 /** Old demo addresses, sent to where that thing lives now. */
 const LEGACY = {
   "/workspace/today": "/workspace", "/workspace/overview": "/workspace", "/workspace/approvals": "/workspace",
-  "/workspace/build": "/workspace/setup", "/workspace/settings/os": "/workspace/setup", "/workspace/apps": "/workspace/setup", "/workspace/settings": "/workspace/setup", "/workspace/usage": "/workspace/setup",
+  "/workspace/build": "/workspace/setup", "/workspace/settings/os": "/workspace/setup", "/workspace/apps": "/workspace/setup", "/workspace/settings": "/workspace/setup", "/workspace/usage": "/workspace/setup/usage",
   "/workspace/messages": "/workspace/team/chat", "/workspace/agents": "/workspace/team", "/workspace/agents/new": "/workspace/team/floor", "/workspace/activity": "/workspace", "/workspace/rules": "/workspace/team",
   "/workspace/leads": "/workspace/customers/leads", "/workspace/inbox": "/workspace/customers/inbox", "/workspace/invoices": "/workspace/money/invoices", "/workspace/tasks": "/workspace/work/tasks",
   "/workspace/alerts": "/workspace/customers", "/workspace/clients": "/workspace/customers/leads", "/workspace/check": "/workspace/customers", "/workspace/import": "/workspace/setup", "/workspace/prospects": "/workspace/customers/leads",
 };
 
-function Redirect({ to }) { useEffect(() => { navigate(to); }, [to]); return null; }
+/** Send an old address on, unless something else (signing out, say) has already moved the page elsewhere. */
+function Redirect({ from, to }) {
+  useEffect(() => { if ((window.location.hash.slice(1) || "/").split("?")[0] === from) navigate(to); }, [from, to]);
+  return null;
+}
 
 export function Workspace() {
-  const { path } = useRoute();
-  if (LEGACY[path]) return <Redirect to={LEGACY[path]} />;
+  const { path, query } = useRoute();
+  // Signed out, the older screens shown inside the workspace (the Floor, Usage) answer from the demo API.
+  setDemo(true);
+  // Keep the query (?topup=done, ?f=…) so whatever sent you here still gets its message.
+  if (LEGACY[path]) { const qs = new URLSearchParams(query).toString(); return <Redirect from={path} to={LEGACY[path] + (qs ? "?" + qs : "")} />; }
   const parts = path.split("/").filter(Boolean); // ["workspace", hub, tab, id]
   if (parts[1] === "start") {
     // Onboarding gets a quiet frame: no navigation until the workspace exists.
@@ -53,7 +62,7 @@ export function Workspace() {
   if (parts[0] === "floor") page = <Team tab="floor" />;
   else if (parts.length === 1) page = <Home />;
   else if (parts[1] === "design") page = <Design />;
-  else if (parts[1] === "setup") page = <Setup />;
+  else if (parts[1] === "setup") page = parts[2] === "usage" ? <Usage /> : <Setup />;
   else if (HUB_PAGES[parts[1]]) {
     const H = HUB_PAGES[parts[1]];
     if (parts[1] === "team" && parts[2] === "floor") page = <Team tab="floor" />;

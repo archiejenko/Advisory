@@ -67,6 +67,7 @@ export type AutonomyRule = { type: ApprovalType; label: string; mode: "ask" | "a
 export type Agent = {
   id: string; name: string; roleName: string; description: string; hubIds: HubId[]; appKeys: string[];
   autonomy: AutonomyRule[]; minutesPerAction: number; subAgents: string[];
+  mode?: "quick" | "standard" | "deep" | "strategy"; monthlyBudget?: number | null;   // credits: the mind it runs on, and an optional monthly cap
 };
 export type ActivityEvent = {
   id: string; actor: Actor; verb: string; linkedRecord: Ref | null; at: string; undoable: boolean; minutesSaved: number;

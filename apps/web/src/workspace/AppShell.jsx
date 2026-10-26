@@ -110,6 +110,7 @@ export function AppShell({ children }) {
                 ))}
                 <div className="w-menu-sep" />
                 <Link to="/workspace/setup" className="w-menu-i" role="menuitem"><Icon name="Settings" size={18} />Setup</Link>
+                <Link to="/workspace/setup/usage" className="w-menu-i" role="menuitem"><Icon name="Zap" size={18} />Usage and credits</Link>
                 <Link to="/workspace/start" className="w-menu-i" role="menuitem"><Icon name="Sparkles" size={18} />Start your own workspace</Link>
                 <button type="button" className="w-menu-i" role="menuitem" onClick={() => { reset(); clearToasts(); setMenu(null); toast("The demo is back to how it started."); }}><Icon name="RotateCcw" size={18} />Reset demo</button>
                 <Link to="/" className="w-menu-i" role="menuitem"><Icon name="ExternalLink" size={18} />Agent House website</Link>

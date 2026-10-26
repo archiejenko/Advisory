@@ -29,6 +29,8 @@ export function syncFromStore(s) {
   s.agents = st.agents.map((a) => Object.assign(keep.get(a.id) || { settings: {}, monthly_cap: 300, engine: "llm", category: "Run", glyph: "spark", created_at: st.now, run_hour: 8 }, {
     id: a.id, template: TPL[a.id], name: a.name, brief: a.description, status: st.paused ? "paused" : "running", rhythm: a.id === "agt_brief" ? "weekly" : "weekdays",
     autonomy: a.autonomy.every((r) => r.mode === "auto") ? "auto" : "approve_first",
+    // Credits: the mode each agent runs in. Theo reads every enquiry closely, so he's on Deep.
+    engine: "llm", mode: a.mode || "standard", monthly_budget: a.monthlyBudget ?? null,
   }));
   const co = (id) => st.companies.find((c) => c.id === id);
   const replied = new Set(st.conversations.filter((c) => c.origin === "reply" && c.messages.some((m) => m.direction === "in")).map((c) => c.companyId));

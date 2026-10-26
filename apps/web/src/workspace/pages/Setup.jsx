@@ -4,10 +4,12 @@
 import React, { useMemo, useState } from "react";
 import { Icon, toast, useStore } from "../core.jsx";
 import { AgentBadge, Button, Dialog, Drawer, PageHeader, SegmentedControl, StatusChip } from "../ui.jsx";
-import { APPS, HUBS, INDUSTRIES, TOOLS, actionsPerMonth, appName, shellApps } from "../demo/catalogue";
+import { APPS, HUBS, INDUSTRIES, TOOLS, appName, shellApps } from "../demo/catalogue";
 import { activeAgentIds } from "../demo/selectors";
 import { saveOs } from "../demo/store";
 import { plural } from "../demo/format";
+import { useCredits } from "../credits.js";
+import { Link } from "../../router.jsx";
 
 const AUTONOMY = [["watch", "Watch"], ["ask", "Ask first"], ["limits", "Act within limits"]];
 const MODE_LABEL = { here: "Runs here", kept: "Kept in current tools", outsourced: "Outsourced", off: "Off" };
@@ -50,6 +52,7 @@ export function Setup() {
   const [industry, setIndustry] = useState(false);
   const [over, setOver] = useState(false);
   const [search, setSearch] = useState("");
+  const credits = useCredits();
   const view = s.prefs.view;
   const dirty = JSON.stringify(draft.apps) !== JSON.stringify(s.os.apps);
 
@@ -65,7 +68,6 @@ export function Setup() {
     outsourced: APPS.filter((a) => draft.apps[a.key]?.mode === "outsourced").length,
     kept: APPS.filter((a) => draft.apps[a.key]?.mode === "kept").length,
     agents: s.agents.filter((a) => activeAgentIds(draft).includes(a.id)).length,
-    actions: actionsPerMonth(draft),
   }), [draft, s.agents]);
   const w = search.trim().toLowerCase();
   const openApp = open && APPS.find((a) => a.key === open);
@@ -74,7 +76,7 @@ export function Setup() {
   return (
     <div>
       <PageHeader title="Setup" purpose="The apps your business runs on, who runs them, and the tools you keep. Changes show in the workspace when you save."
-        actions={<><Button icon="Undo2" onClick={undoD} disabled={!past.length}>Undo</Button><Button icon="Redo2" onClick={redoD} disabled={!future.length}>Redo</Button><Button icon="Layers" onClick={() => setIndustry(true)}>Start from an industry</Button></>} />
+        actions={<><Button icon="Undo2" onClick={undoD} disabled={!past.length}>Undo</Button><Button icon="Redo2" onClick={redoD} disabled={!future.length}>Redo</Button><Button icon="Layers" onClick={() => setIndustry(true)}>Start from an industry</Button><Button icon="Zap" to="/workspace/setup/usage">Usage and credits</Button></>} />
       <p className="w-sub" style={{ margin: "8px 0 16px" }}>Version {s.os.version} · {dirty ? "unsaved changes" : "everything saved"}</p>
 
       <div className="w-build">
@@ -131,7 +133,7 @@ export function Setup() {
           <span><b className="tnum">{counts.kept}</b> kept in current tools</span>
           <span><b className="tnum">{counts.outsourced}</b> outsourced</span>
           <span><b className="tnum" data-testid="setup-agents">{counts.agents}</b> agents</span>
-          <span><b className="tnum">~{counts.actions.toLocaleString("en-GB")}</b> agent actions a month</span>
+          {credits && <Link to="/workspace/setup/usage" className="w-link" style={{ whiteSpace: "nowrap", fontSize: 14 }}><b className="tnum" data-testid="setup-credits">{credits.left.toLocaleString("en-GB")}</b> of {credits.plan.toLocaleString("en-GB")} credits left this month</Link>}
           <span className="w-sp" />
           {dirty && <Button variant="ghost" onClick={() => { setPast((p) => [...p, draft]); setDraft(clone(s.os)); }}>Discard</Button>}
           <Button variant="primary" icon="Check" onClick={save} disabled={!dirty}>Save</Button>
