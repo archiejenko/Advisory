@@ -81,44 +81,36 @@ async function main() {
     await text("Build the OS your business actually runs on.");
     await page.locator(".hdr-right").getByText("Sign in", { exact: true }).waitFor();
     await shot("01-home");
-    for (const [p, t] of [["/agents", "Ready-made roles for your team"], ["/agents/outreach", "Where it fits among the use cases"], ["/agents/client-book-watch", "Customer and supplier watch"], ["/agents/bookings", "Coming soon"], ["/how-it-works", "Get a team that reports to you"], ["/use-cases", "80 jobs an agent can do"], ["/pricing", "Pay per call"], ["/os", "Everything it takes to run a business, in one OS"], ["/trust", "Agents you can leave alone"], ["/developers", "Customers for your tools"], ["/for-agents", "Facts your agent can cite"], ["/health-check", "who are you about to pay"]]) {
+    for (const [p, t] of [["/agents", "Ready-made roles for your team"], ["/agents/outreach", "Where it fits among the use cases"], ["/agents/client-book-watch", "Customer and supplier watch"], ["/agents/bookings", "Coming soon"], ["/how-it-works", "Get a team that reports to you"], ["/use-cases", "80 jobs an agent can do"], ["/pricing", "Pay per call"], ["/os", "Your agents do the work. You decide, ask and see."], ["/trust", "Agents you can leave alone"], ["/developers", "Customers for your tools"], ["/for-agents", "Facts your agent can cite"], ["/health-check", "who are you about to pay"]]) {
       await go(p); await text(t);
     }
     await shot("02-for-agents");
   });
 
-  await check("demo workspace: signed out, approve an email and ask the research agent", async () => {
+  await check("demo workspace: signed out, edit and approve a decision, ask a question", async () => {
     await go("/workspace");
-    await text("Demo workspace for Brightwork Cleaning");
-    await text("things need you.");
-    await text("Learned from your edits");
-    await shot("03-demo-today");
-    await go("/workspace/approvals");
-    await page.locator("input[aria-label=Subject]").fill("Cleaning for Peel Street");
-    await btn("Approve and send");
-    await text("Sent to office@peelstreet.example with your edits");
-    await go("/workspace");
-    await page.fill("#ask", "Who are the biggest cleaning firms in Salford?");
-    await btn("Ask");
-    await runUntil(/Done/);
-    await text("Demo answer");
+    await text("Demo · start yours");
+    await text("Needs you");
+    await shot("03-demo-home");
+    const card = page.locator("[data-decision=apr_peel]");
+    await card.getByRole("button", { name: "Edit" }).click();
+    await card.locator("input[aria-label=Subject]").fill("Cleaning for Peel Street");
+    await card.getByRole("button", { name: "Approve with edits" }).click();
+    await text("Email sent: First email to Peel Street Accountants");
+    await page.keyboard.press("Control+k");
+    await page.locator(".w-cmd input").fill("Who owes us money?");
+    await page.keyboard.press("Enter");
+    await text("£2,336.00 in total");
+    await page.keyboard.press("Escape");
   });
 
-  await check("demo Today: approve two drafts in one go, keep a learned rule, add a house rule", async () => {
+  await check("demo Home: approve the routine items in one go, then undo", async () => {
     await go("/workspace");
-    await text("emails to approve");
-    const boxes = page.locator(".td-pick");
-    const n = await boxes.count();
-    for (let i = 2; i < n; i++) await boxes.nth(i).uncheck();
-    await btn("Approve 2");
-    await text("Sent 2 emails.");
-    await page.locator(".td-rule").first().getByRole("button", { name: "Keep" }).click();
-    await text("Rule saved. Every agent follows it from now on.");
-    await go("/workspace/rules");
-    await page.fill("#rule", "Always mention the free first clean");
-    await btn("Add");
-    await text("Always mention the free first clean");
-    await shot("03b-house-rules");
+    await page.getByRole("button", { name: /Approve all \d routine/ }).click();
+    await text("routine items.");
+    await page.locator(".w-toast", { hasText: "routine items" }).getByRole("button", { name: /Undo/ }).click();
+    await page.getByRole("button", { name: /Approve all \d routine/ }).waitFor();
+    await shot("03b-demo-undo");
   });
 
   await check("free customer check: upload a customer list", async () => {

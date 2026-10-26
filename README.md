@@ -57,6 +57,19 @@ The listener picks it up, the Worker raises a Critical alert, and it appears in 
 
 Opened straight from disk, `apps/web/dist/index.html` runs as an offline demo with example data.
 
+## The demo workspace
+
+Signed out, `/workspace` is the Brightwork Cleaning demo. It runs entirely in the browser from one store, `apps/web/src/workspace/demo`:
+- `seed.ts` holds the business.
+- `selectors.ts` works out every figure on screen.
+- `store.ts` holds the actions, each of which can be undone.
+
+The screens live in `apps/web/src/workspace`. `/workspace/design` shows every component. `docs/AUDIT.md` records what the overhaul replaced, and `docs/QA.md` the checks it passes.
+
+```bash
+npm run test:workspace   # builds the stand-alone demo and runs the workspace QA in Chromium
+```
+
 ## Tests
 
 ```bash

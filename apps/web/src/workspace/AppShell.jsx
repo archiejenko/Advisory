@@ -42,7 +42,7 @@ export function AppShell({ children }) {
   const [ask, setAsk] = useState(false);
   const [menu, setMenu] = useState(null);
   const { path } = useRoute();
-  useEffect(() => { setMenu(null); }, [path]);
+  useEffect(() => { setMenu(null); setAsk(false); }, [path]);
   useEffect(() => {
     const k = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setAsk((x) => !x); } };
     window.addEventListener("keydown", k);
@@ -79,7 +79,7 @@ export function AppShell({ children }) {
             <div className="w-sp"><AskButton onOpen={() => setAsk(true)} /></div>
             <AskButton compact onOpen={() => setAsk(true)} />
             <Button className={"w-pause" + (s.paused ? " is-paused" : "")} icon={s.paused ? "Play" : "Pause"} onClick={pause} aria-pressed={s.paused} title={s.paused ? "Resume all agents" : "Pause all agents"}>
-              <span className="w-hide-m">{s.paused ? "Resume agents" : "Pause agents"}</span>
+              <span className="w-hide-m"><span className="w-hide-t">{s.paused ? "Resume agents" : "Pause agents"}</span><span className="w-only-t">{s.paused ? "Resume" : "Pause"}</span></span>
             </Button>
             <div style={{ position: "relative" }}>
               <Button variant="ghost" icon="Bell" className="w-bell" onClick={() => setMenu(menu === "bell" ? null : "bell")} aria-expanded={menu === "bell"} aria-label={`Notifications, ${pending} decisions need you`}>
@@ -117,7 +117,7 @@ export function AppShell({ children }) {
             </div>
           </header>
           {s.paused && <div className="w-paused" role="status"><Icon name="Pause" size={16} />All agents are paused. Nothing runs or sends until you resume. <Button size="sm" onClick={pause}>Resume</Button></div>}
-          <main id="w-main" tabIndex={-1} className="w-content">{children}</main>
+          <div id="w-main" tabIndex={-1} className="w-content">{children}</div>
         </div>
       </div>
 

@@ -15,7 +15,14 @@ import { EmptyState, Button, Toaster } from "./ui.jsx";
 import { Start } from "./pages/Start.jsx";
 import { Link } from "../router.jsx";
 
+import { getState } from "./demo/store";
+import * as selectors from "./demo/selectors";
+import { pounds } from "./demo/format";
+
 const HUB_PAGES = { customers: Customers, money: Money, work: Work, team: Team };
+
+// The QA suite (tests/e2e/workspace-qa.mjs) checks the screens against the same selectors they use.
+if (typeof window !== "undefined") window.__workspace = { getState, q: selectors, pounds };
 
 /** Old demo addresses, sent to where that thing lives now. */
 const LEGACY = {
@@ -37,7 +44,7 @@ export function Workspace() {
     return (
       <div className="wk">
         <header className="w-top" style={{ position: "static" }}><Link to="/" className="w-brand" style={{ margin: 0 }}><span className="w-brand-mark" aria-hidden="true">A</span><b>Agent House</b></Link><span style={{ flex: 1 }} /><Link to="/workspace" className="w-link">Back to the demo</Link></header>
-        <main id="w-main" tabIndex={-1} className="w-content"><Start /></main>
+        <div id="w-main" tabIndex={-1} className="w-content"><Start /></div>
         <Toaster />
       </div>
     );
