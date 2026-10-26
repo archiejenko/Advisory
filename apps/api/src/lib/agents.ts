@@ -16,7 +16,7 @@ import { notifyChannel } from "./delivery";
 import { activeRules } from "./today";
 import { requireCredits, creditsProblem, available, agentBudgetProblem, agentUsed, chargeRun, pastRuns, CREDITS_USED } from "./credits";
 import { creditsFor, tokensOf, isMode } from "../../../../packages/core/credits";
-import { estimateRange, taskTypeOf } from "../../../../packages/core/modes";
+import { estimateRange, taskTypeOf, recommend } from "../../../../packages/core/modes";
 import { MODES, DEFAULT_MODE, type ModeKey } from "../../../../config/model-pricing";
 import { hit } from "./limits";
 import { logError } from "./log";
@@ -70,6 +70,12 @@ export function nextRunAt(rhythm: string, hour: number, from = new Date(), minut
 /* ---------- Plan limits ---------- */
 export { trialOver, TRIAL_DAYS };
 
+/**
+ * The mode an agent hired without one gets (by a swarm, at sign-up): the one its job suits, for catalogue agents.
+ * Custom roles start on Standard; the owner can move them, and a costlier mode then asks first.
+ */
+const defaultModeFor = (template: string): ModeKey => (template === "custom" ? DEFAULT_MODE : recommend({ template }).mode);
+
 /** The mode a run uses: the one asked for, else the agent's own. */
 export const modeFor = (agent: { mode?: string | null }, asked?: string | null): ModeKey => (isMode(asked) ? asked : isMode(agent.mode) ? agent.mode : DEFAULT_MODE);
 
@@ -117,7 +123,7 @@ export async function hireAgent(env: Env, orgId: string, userId: string, h: Hire
     JSON.stringify(h.settings || {}), rhythm, hour, ["approve_all", "approve_first", "auto"].includes(h.autonomy || "") ? h.autonomy : "approve_all",
     h.channel_id || null, t.engine === "llm" ? nextRunAt(rhythm, hour, new Date(), spreadMinute(id)) : null, userId, nowIso(),
     h.swarm_id ?? null, h.swarm_key ?? null, h.role?.slice(0, 120) ?? null, custom ? h.instructions!.slice(0, 4000) : null, custom ? JSON.stringify(h.tools || []) : null,
-    h.badges ? JSON.stringify(h.badges) : null, h.reports_to ?? null, isMode(h.mode) ? h.mode : DEFAULT_MODE, h.monthly_budget ?? null);
+    h.badges ? JSON.stringify(h.badges) : null, h.reports_to ?? null, isMode(h.mode) ? h.mode : defaultModeFor(t.key), h.monthly_budget ?? null);
   // The register agents keep their own engines: switching one on here switches it on there.
   const engineKey = { watch: "watch", check: "check", prospect: "prospect" }[t.engine as string];
   if (engineKey) await run(env, "UPDATE agent_config SET on_ = 1, channel_id = COALESCE(?, channel_id) WHERE org_id = ? AND agent = ?", h.channel_id || null, orgId, engineKey);

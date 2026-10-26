@@ -5,7 +5,8 @@ import { Link, useRoute } from "../router.jsx";
 import { useWs, useCan } from "../layout.jsx";
 import { api, useApi, useAction, dateTimeOf, pounds } from "../api.js";
 import { PLANS } from "../../../../packages/core/templates.ts";
-import { Shell, Notice, Loading, Failed } from "./Live.jsx";
+import { Shell, Notice, Loading, Failed, changed } from "./Live.jsx";
+import { ModeName } from "../credits.jsx";
 
 const SUB = { none: "No plan yet", pilot: "Pilot, founding rate", active: "Active", trialing: "Free trial", past_due: "Payment overdue", canceled: "Cancelled", incomplete: "Awaiting payment" };
 const thisMonth = () => new Date().toISOString().slice(0, 7);
@@ -13,68 +14,149 @@ const lastMonths = (n) => Array.from({ length: n }, (_, i) => { const d = new Da
 const monthName = (m) => new Date(m + "-01T00:00:00Z").toLocaleString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
 /* ---------- Usage and plan ---------- */
+const ENTRY = { run: "Run", system: "AI Team (system)", plan_grant: "Monthly credits", plan_expiry: "Unused plan credits lapsed", upgrade_grant: "Upgrade", topup: "Top-up", trial_grant: "Free trial", adjustment: "Adjustment" };
+const resetName = (d) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
+const n = (x) => (Math.round(x) || 0).toLocaleString("en-GB");
+
 export function WsUsage() {
   const { me } = useWs();
   const can = useCan();
   const { query } = useRoute();
   const [month, setMonth] = useState(thisMonth());
+  const [kind, setKind] = useState("all");
   const { data, error, loading, reload } = useApi("/api/ws/usage?month=" + month);
   const act = useAction();
-  const billing = (path, body) => act.run(async () => { const r = await api("POST", path, body); window.location.href = r.url; });
+  // Checkout and the portal are Stripe pages; the demo answers with a link back here, so reload to show the change.
+  const billing = (path, body) => act.run(async () => { const r = await api("POST", path, body); if (r.url) window.location.href = r.url; if (!r.url || r.url.startsWith("#")) await reload(); return r; });
   const sub = me.subscription?.status || "none";
-  const pct = data ? Math.min(100, Math.round((data.actions / Math.max(1, data.plan_actions)) * 100)) : 0;
+  const cr = data?.credits;
+  // How much is left of what the month started with (its plan credits plus any top-up credits).
+  const left = cr ? Math.min(100, Math.round((cr.balance.total / Math.max(cr.plan_credits + cr.balance.topup, cr.balance.total, 1)) * 100)) : 0;
+  // The demo answers top-ups and settings from memory, so its owner can try them.
+  const owner = can("owner");
+  const paidPlan = ["starter", "growth", "scale"].includes(me.org.plan) && ["active", "past_due"].includes(sub);
+  const [threshold, setThreshold] = useState("");
+  useEffect(() => { if (cr) setThreshold(String(cr.confirm_over)); }, [cr?.confirm_over]);
+  const entries = (cr?.entries || []).filter((e) => kind === "all" || (kind === "runs" ? e.kind === "run" || e.kind === "system" : e.kind !== "run" && e.kind !== "system"));
+  const changePlan = (k) => {
+    if (!paidPlan) return billing("/api/ws/billing/checkout", { plan: k });
+    return act.run(async () => { await api("POST", "/api/ws/billing/plan", { plan: k }); changed(); await reload(); });
+  };
   return (
     <Shell title="Usage and plan" crumbs={[["Usage and plan"]]}>
       {query.billing === "done" && <Notice>Thanks. Your plan is being activated; it shows here within a minute.</Notice>}
       {query.billing === "cancelled" && <Notice>Checkout was cancelled. Nothing was charged.</Notice>}
+      {query.topup === "done" && <Notice>Thanks. Your 1,000 credits arrive as soon as the payment clears, usually within a minute.</Notice>}
+      {query.topup === "cancelled" && <Notice>The top-up was cancelled. Nothing was charged.</Notice>}
       <div className="toolbar">
-        <p className="body">An action is one tool call by an agent: a search, a page read, a lead saved, an email drafted. Register watching and company checks don't count.</p>
+        <p className="body">Your AI Team uses credits for the work it does: 1 credit is 1p of AI. Quick jobs cost a credit or two; deep research and strategy cost more. You choose the mode for each agent and task.</p>
         <div className="field field-inline">
           <label htmlFor="us-month">Month</label>
           <select id="us-month" value={month} onChange={(e) => setMonth(e.target.value)}>{lastMonths(12).map((m) => <option key={m} value={m}>{monthName(m)}</option>)}</select>
         </div>
       </div>
       {error && <Failed error={error} retry={reload} />}
-      {loading && !data ? <Loading what="Loading usage" /> : data && (
+      {loading && !data ? <Loading what="Loading usage" /> : cr && (
         <>
+          {cr.current && cr.paused && <Notice signal>Your AI Team has used this month's credits, so it's paused until {resetName(cr.reset_on)}. {owner ? "Top up to carry on now. Nothing is charged without your say-so." : "Ask the owner to top up."}</Notice>}
+          {cr.pending_plan && <Notice>Your plan moves to {PLANS[cr.pending_plan]?.name} on {resetName(cr.reset_on)}. Until then you keep everything in {PLANS[me.org.plan]?.name}.</Notice>}
           <div className="stat-row">
-            <div><span className="dt">Actions used</span><b>{data.actions.toLocaleString("en-GB")}</b><span className="meter" aria-hidden="true"><i style={{ width: pct + "%" }} className={pct >= 90 ? "is-hot" : ""} /></span><span className="dt">of {data.plan_actions.toLocaleString("en-GB")} on {data.plan_name}</span></div>
-            <div><span className="dt">Emails sent</span><b>{data.emails_sent}</b></div>
-            <div><span className="dt">Agents hired</span><b>{data.by_agent.length} <span className="of">of {data.plan_agents}</span></b></div>
-            <div><span className="dt">Actions left this month</span><b>{Math.max(0, data.plan_actions - data.actions).toLocaleString("en-GB")}</b>{data.actions >= data.plan_actions && <span className="dt">Agents start again on the 1st</span>}</div>
+            <div><span className="dt">Credits left</span><b>{n(cr.balance.total)}</b>{cr.current && <span className="meter" aria-hidden="true"><i style={{ width: left + "%" }} className={left <= 10 ? "is-hot" : ""} /></span>}<span className="dt">{n(cr.balance.plan)} from your plan{cr.balance.topup ? `, ${n(cr.balance.topup)} topped up` : ""}</span></div>
+            <div><span className="dt">Used in {monthName(month).split(" ")[0]}</span><b>{n(cr.used)}</b><span className="dt">of {n(cr.plan_credits)} a month on {data.plan_name}</span></div>
+            <div><span className="dt">Plan credits reset</span><b className="b-s">{resetName(cr.reset_on)}</b><span className="dt">Top-up credits roll over</span></div>
+            <div>
+              <span className="dt">Top up</span><b className="b-s">{n(cr.topup.credits)} for £{(cr.topup.pence / 100).toFixed(0)}</b>
+              {owner ? <button className="btn btn-sm mt-s" disabled={act.busy || !cr.topup.available} onClick={() => billing("/api/ws/billing/topup")}>Top up</button> : <span className="dt">The owner can top up</span>}
+            </div>
           </div>
-          <h2 className="h-sub mt-l">By agent, {monthName(month)}</h2>
+          {cr.suggestions.length > 0 && (
+            <section className="mt-l">
+              <h2 className="h-sub">Ways to spend less</h2>
+              {cr.suggestions.map((s) => <Notice key={s.agent_id}>{s.text} <Link to={"/workspace/agents/" + s.agent_id} className="link link-s">Change its mode</Link></Notice>)}
+            </section>
+          )}
+          <div className="grid-2 mt-l">
+            <section>
+              <h2 className="h-sub">By agent, {monthName(month)}</h2>
+              <table className="ledger ws-table">
+                <thead><tr><th>Agent</th><th>Mode</th><th className="num">Runs</th><th className="num">Credits</th></tr></thead>
+                <tbody>
+                  {cr.by_agent.length === 0 && <tr><td colSpan={4} className="empty">No agents hired yet.</td></tr>}
+                  {cr.by_agent.map((a) => (
+                    <tr key={a.id}>
+                      <td><Link to={"/workspace/agents/" + a.id} className="link">{a.name}</Link>{a.budget_paused && <span className="st st-waiting">Budget reached</span>}</td>
+                      <td><ModeName mode={a.mode} /></td>
+                      <td className="num">{a.runs}</td>
+                      <td className="num" style={{ whiteSpace: "nowrap" }}>{n(a.credits)}{a.budget ? <span className="dt"> of {n(a.budget)}</span> : ""}</td>
+                    </tr>
+                  ))}
+                  {cr.system.calls > 0 && <tr><td>AI Team (system)<span className="dt"> the command bar, swarm drafts, house rules</span></td><td /><td className="num">{cr.system.calls}</td><td className="num">{n(cr.system.credits)}</td></tr>}
+                </tbody>
+              </table>
+            </section>
+            <section>
+              <h2 className="h-sub">By mode</h2>
+              <table className="ledger ws-table">
+                <thead><tr><th>Mode</th><th className="num">Runs</th><th className="num">Credits</th></tr></thead>
+                <tbody>{cr.by_mode.map((m) => <tr key={m.mode}><td><ModeName mode={m.mode} /></td><td className="num">{m.runs}</td><td className="num">{n(m.credits)}</td></tr>)}</tbody>
+              </table>
+            </section>
+          </div>
+          <div className="panel-h mt-l">
+            <h2 className="h-sub">Ledger</h2>
+            <div className="actions actions-tight">
+              <select aria-label="Show" value={kind} onChange={(e) => setKind(e.target.value)}><option value="all">Everything</option><option value="runs">Runs</option><option value="credits">Credits added and reset</option></select>
+              <a className="link link-s" href={"/api/ws/usage/credits.csv?month=" + month}>Download CSV</a>
+            </div>
+          </div>
           <table className="ledger ws-table">
-            <thead><tr><th>Agent</th><th className="num">Runs</th><th className="num">Actions</th></tr></thead>
+            <thead><tr><th>When</th><th>What</th><th className="hide-sm">Mode</th><th className="num hide-sm">Tokens in / out</th><th className="num">Credits</th></tr></thead>
             <tbody>
-              {data.by_agent.length === 0 && <tr><td colSpan={3} className="empty">No agents hired yet.</td></tr>}
-              {data.by_agent.map((a, i) => <tr key={i}><td>{a.name}</td><td className="num">{a.runs}</td><td className="num">{a.actions}</td></tr>)}
+              {entries.length === 0 && <tr><td colSpan={5} className="empty">Nothing this month yet.</td></tr>}
+              {entries.map((e, i) => (
+                <tr key={i}>
+                  <td className="dt">{dateTimeOf(e.at)}</td>
+                  <td>{e.kind === "run" ? (e.run_id ? <Link to={"/workspace/runs/" + e.run_id} className="link">{e.agent || "Run"}</Link> : e.agent || "Run") : ENTRY[e.kind]}{e.kind === "system" && e.note ? <span className="dt"> {e.note}</span> : ""}</td>
+                  <td className="hide-sm">{e.mode ? <ModeName mode={e.mode} /> : ""}</td>
+                  <td className="num hide-sm dt">{e.kind === "run" || e.kind === "system" ? `${n(e.tokens_in + e.cache_read + e.cache_write)} / ${n(e.tokens_out)}` : ""}</td>
+                  <td className="num">{e.credits > 0 ? "+" : ""}{n(e.credits)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
+          {owner && cr.current && (
+            <form className="field field-inline mt-l" onSubmit={(e) => { e.preventDefault(); act.run(async () => { await api("PATCH", "/api/ws/credits/settings", { confirm_over: Number(threshold) }); await reload(); }); }}>
+              <label htmlFor="us-confirm">Ask me before a run likely to use more than</label>
+              <input id="us-confirm" type="number" min={1} inputMode="numeric" value={threshold} onChange={(e) => setThreshold(e.target.value)} style={{ maxWidth: 110 }} />
+              <span className="dt">credits</span>
+              <button className="btn btn-sm btn-line" disabled={act.busy || String(cr.confirm_over) === threshold}>Save</button>
+            </form>
+          )}
         </>
       )}
       <h2 className="h-sub mt-l">Plan</h2>
-      <p className="body">{me.org.plan === "trial" || sub === "trialing" ? <>You're on the <b>14-day free trial</b>, with the whole OS.</> : <>You're on <b>{(PLANS[me.org.plan] || PLANS.trial).name}</b>{sub !== "active" && SUB[sub] ? ` (${SUB[sub].toLowerCase()})` : ""}.</>} Every plan has all the apps, unlimited people and up to 100 agents; plans differ in how many actions agents get each month. When the month's actions are used, agents pause until the 1st; nothing is ever charged on top.</p>
+      <p className="body">{me.org.plan === "trial" || sub === "trialing" ? <>You're on the <b>14-day free trial</b>, with the whole OS and {PLANS.trial.credits} credits to try every mode.</> : <>You're on <b>{(PLANS[me.org.plan] || PLANS.trial).name}</b>{sub !== "active" && SUB[sub] ? ` (${SUB[sub].toLowerCase()})` : ""}.</>} Every plan has every app, unlimited people and up to 100 AI Team members; plans differ in how many credits the AI Team gets each month. Moving up takes effect now, with this month's extra credits; moving down takes effect on the 1st.</p>
       <div className="plans">
         {["starter", "growth", "scale"].map((k) => {
-          const p = PLANS[k], current = me.org.plan === k;
+          const p = PLANS[k], current = me.org.plan === k, pending = cr?.pending_plan === k;
           return (
             <article key={k} className={"plan" + (k === "growth" ? " is-pick" : "") + (current ? " is-current" : "")}>
               <p className="plan-n">{p.name}{k === "growth" && <span className="st st-done">Most chosen</span>}</p>
               <p className="plan-p"><b>£{p.price}</b><span>a month</span></p>
               <p className="dt">{p.blurb}</p>
-              <ul className="ticks"><li>{p.agents} agents working at once</li><li>{p.actions.toLocaleString("en-GB")} actions a month</li><li>Every agent in the catalogue</li></ul>
+              <ul className="ticks"><li>Every app</li><li>{p.credits.toLocaleString("en-GB")} credits a month</li><li>Unlimited people</li></ul>
               {can("owner") && (current
                 ? <button className="btn btn-line btn-sm btn-block" disabled>Your plan</button>
-                : <button className={"btn btn-sm btn-block" + (k === "growth" ? "" : " btn-line")} disabled={act.busy || (me.demo && !isPass())} onClick={() => billing("/api/ws/billing/checkout", { plan: k })}>Choose {p.name}</button>)}
+                : <button className={"btn btn-sm btn-block" + (k === "growth" ? "" : " btn-line")} disabled={act.busy || pending || (me.demo && !isPass())} onClick={() => changePlan(k)}>{pending ? "From the 1st" : paidPlan ? (p.credits > (PLANS[me.org.plan]?.credits || 0) ? `Move up to ${p.name}` : `Move to ${p.name} on the 1st`) : `Choose ${p.name}`}</button>)}
             </article>
           );
         })}
       </div>
+      <p className="source">Prices before VAT. Top up anytime at £35 per 1,000 credits, or the AI Team pauses until the 1st — nothing is charged without your say-so.</p>
       {me.demo && !isPass() && <p className="dt">Plans are chosen in your own workspace. <Link to="/start" className="link link-s">Start a free trial</Link></p>}
       {act.error && <Notice signal>{act.error}</Notice>}
       {can("owner") && ["active", "past_due"].includes(sub) && <button className="btn btn-line mt-s" disabled={act.busy} onClick={() => billing("/api/ws/billing/portal")}>Manage billing and invoices</button>}
-      {!can("owner") && <p className="dt">Only the workspace owner can change the plan.</p>}
+      {!can("owner") && <p className="dt">Only the workspace owner can change the plan or top up.</p>}
     </Shell>
   );
 }

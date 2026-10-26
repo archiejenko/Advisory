@@ -1,7 +1,7 @@
 // The demo Floor: a simulated swarm for Brightwork Cleaning, answered from memory. Each poll moves the simulation
 // on a step: agents pick up work, call tools, hand cards on and draft emails for the desk. Approving an email in the
 // demo moves its lead, exactly as it would for real, because cards take their stage from the record.
-import { PRESETS, preset, stageFor, nearestPreset, estimateActions, KPIS, withOrchestrator } from "../../../packages/core/swarms.ts";
+import { PRESETS, preset, stageFor, nearestPreset, estimateCredits, KPIS, withOrchestrator } from "../../../packages/core/swarms.ts";
 import { isPass } from "./pass.js";
 import { applyOrgChanges, defaultBadges, toolsFor, role as roleOf } from "../../../packages/core/badges.ts";
 import { PLANS } from "../../../packages/core/templates.ts";
@@ -190,7 +190,7 @@ function state(s, sw, since) {
     kpis: sw.bp.kpis.map((k) => ({ key: k, label: KPIS[k].label, unit: KPIS[k].unit, value: kpi(s, k) })),
     desk: { approvals: proposed.map((x) => ({ id: x.id, agent: sw.agents.find((a) => a.id === x.agent_id)?.name, agent_id: x.agent_id, title: x.title, reason: x.reason, payload: x.payload, created_at: x.created_at })), tasks: s.tasks.filter((t) => t.status === "open").map((t) => ({ ...t, agent: s.agents.find((a) => a.id === t.agent_id)?.name || null })), failed: [] },
     events: evs, cursor: sw.events.at(-1)?.id || 0,
-    usage: { actions_month: 412 + sw.events.filter((e) => e.kind === "tool").length, allowance: PLANS.trial.actions },
+    usage: { credits_month: 1037 + sw.events.filter((e) => e.kind === "tool").length, plan_credits: (PLANS[s.org.plan] || PLANS.growth).credits, credits_left: Math.max(0, (PLANS[s.org.plan] || PLANS.growth).credits - 1037) },
   };
 }
 
@@ -218,8 +218,8 @@ function orgOf(s, sw) {
 
 const previewOf = (s, bp) => {
   const reuse = bp.agents.filter((a) => a.template !== "custom" && s.agents.some((x) => x.template === a.template && !x.swarm_id)).length;
-  const after = s.agents.length + bp.agents.length - reuse, plan = PLANS[s.org.plan] || PLANS.trial, actions = estimateActions(bp);
-  return { agents: bp.agents.length, orchestrator: true, reuses: [], new_agents: bp.agents.length - reuse, plan: plan.name, plan_agents: plan.agents + 4, agents_after: after, fits: true, actions_a_month: actions, allowance: plan.actions, within_allowance: actions <= plan.actions, needs: bp.needs };
+  const after = s.agents.length + bp.agents.length - reuse, plan = PLANS[s.org.plan] || PLANS.trial, credits = estimateCredits(bp);
+  return { agents: bp.agents.length, orchestrator: true, reuses: [], new_agents: bp.agents.length - reuse, plan: plan.name, plan_agents: plan.agents + 4, agents_after: after, fits: true, credits_a_month: credits, plan_credits: plan.credits, within_plan: credits <= plan.credits, needs: bp.needs };
 };
 
 /** Answer a Floor request in the demo, or return undefined for paths that aren't the Floor's. */

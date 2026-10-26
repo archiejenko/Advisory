@@ -57,9 +57,17 @@ export function planCheckout(env: Env, orgId: string, email: string, plan: PaidP
   });
 }
 
+/** Call off a downgrade waiting for the 1st: release the subscription from its schedule, keeping today's price. */
+export async function releaseSchedule(env: Env, subscription: string) {
+  const sub = await stripe(env, `/v1/subscriptions/${subscription}`, {}, "GET");
+  if (sub.schedule) await stripe(env, `/v1/subscription_schedules/${typeof sub.schedule === "string" ? sub.schedule : sub.schedule.id}/release`, {});
+  return sub;
+}
+
 /** An upgrade: the new price from now, the difference for the rest of the month invoiced straight away. */
 export async function upgradeSubscription(env: Env, subscription: string, plan: PaidPlan) {
-  const sub = await stripe(env, `/v1/subscriptions/${subscription}`, {}, "GET");
+  // A downgrade waiting for the 1st would otherwise still switch the price then.
+  const sub = await releaseSchedule(env, subscription);
   const item = sub.items?.data?.[0]?.id;
   if (!item) throw new HttpError(502, "stripe_error", "Couldn't read the subscription from Stripe.");
   return stripe(env, `/v1/subscriptions/${subscription}`, {

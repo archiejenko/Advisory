@@ -17,14 +17,14 @@ import { registerSwarmRoutes } from "./swarms";
 import { registerTodayRoutes } from "./today";
 import { registerOsRoutes } from "./os";
 import { PLANS } from "../../../../packages/core/templates";
-import { planCheckout, portal, topupCheckout, upgradeSubscription, scheduleDowngrade, type PaidPlan } from "../lib/stripe";
+import { planCheckout, portal, topupCheckout, upgradeSubscription, scheduleDowngrade, releaseSchedule, type PaidPlan } from "../lib/stripe";
 import { sendMail } from "../lib/mail";
 import { storedCompany, companyCached } from "../lib/registers";
-import { balance, available, grantUpgrade, periodOf, agentUsed } from "../lib/credits";
+import { balance, available, grantUpgrade, periodOf } from "../lib/credits";
 import { upgradeRef } from "../lib/billing";
-import { PLAN_CREDITS, TOPUP, MODES, MODELS, MODE_ORDER, CONFIRM_OVER_DEFAULT, type ModeKey } from "../../../../config/model-pricing";
-import { showCredits, modeLabel, isMode } from "../../../../packages/core/credits";
-import { cheaperSuggestion } from "../../../../packages/core/modes";
+import { PLAN_CREDITS } from "../../../../config/model-pricing";
+import { modeLabel } from "../../../../packages/core/credits";
+import { summariseCredits } from "../../../../packages/core/usage";
 
 export const ws = new Hono<{ Bindings: Env; Variables: Vars }>();
 ws.use("*", requireSession);
@@ -358,42 +358,16 @@ async function usage(c: any, month: string) {
 async function creditUsage(c: any, month: string, o: { plan: string; pending_plan: string | null; confirm_over: number }) {
   const db = c.get("db"), orgId = c.get("orgId") as string;
   const bal = await balance(c.env, orgId);
-  const used = Number((await db.one("SELECT COALESCE(-SUM(credits), 0) AS n FROM credit_entry WHERE org_id = ?1 AND kind IN ('run', 'system') AND period = ?2", month)).n);
-  const agents = await db.all(`SELECT g.id, g.name, g.template, g.mode, g.role, g.instructions, g.monthly_budget, g.budget_paused_period, g.status,
-      COALESCE((SELECT -SUM(e.credits) FROM credit_entry e WHERE e.org_id = g.org_id AND e.agent_id = g.id AND e.kind = 'run' AND e.period = ?2), 0) AS credits,
-      (SELECT COUNT(*) FROM credit_entry e WHERE e.org_id = g.org_id AND e.agent_id = g.id AND e.kind = 'run' AND e.period = ?2) AS runs
-    FROM agent g WHERE g.org_id = ?1 ORDER BY credits DESC, g.name`, month);
-  const byMode = await db.all("SELECT mode, model, COUNT(*) AS runs, -SUM(credits) AS credits FROM credit_entry WHERE org_id = ?1 AND kind = 'run' AND period = ?2 GROUP BY mode, model", month);
-  const system = await db.one("SELECT COUNT(*) AS n, COALESCE(-SUM(credits), 0) AS credits FROM credit_entry WHERE org_id = ?1 AND kind = 'system' AND period = ?2", month);
-  const entries = await db.all(`SELECT e.kind, e.at, e.credits, e.mode, e.model, e.tokens_in, e.cache_read, e.cache_write, e.tokens_out, e.note, e.run_id, g.name AS agent
-    FROM credit_entry e LEFT JOIN agent g ON g.id = e.agent_id WHERE e.org_id = ?1 AND e.period = ?2 ORDER BY e.at DESC LIMIT 200`, month);
-  // Tips for the month: runs repriced on the cheaper mode their job suits.
-  const runRows = await db.all(`SELECT e.agent_id, e.credits, e.tokens_in, e.cache_read, e.cache_write, e.tokens_out, e.requests, r.status
-    FROM credit_entry e LEFT JOIN agent_run r ON r.id = e.run_id WHERE e.org_id = ?1 AND e.kind = 'run' AND e.period = ?2`, month);
-  const suggestions = agents.flatMap((a: any) => {
-    if (!isMode(a.mode)) return [];
-    const runs = runRows.filter((r: any) => r.agent_id === a.id).map((r: any) => ({ charged: -r.credits, ok: r.status !== "failed", requests: r.requests,
-      tokens: { input: r.tokens_in, cacheRead: r.cache_read, cacheWrite: r.cache_write, output: r.tokens_out } }));
-    const s = cheaperSuggestion(a, runs);
-    return s ? [{ agent_id: a.id, agent: a.name, from: a.mode, ...s }] : [];
+  const entries = await db.all(`SELECT e.kind, e.at, e.credits, e.from_plan, e.from_topup, e.period, e.agent_id, e.run_id, e.mode, e.model, e.note, e.tokens_in, e.cache_read, e.cache_write, e.tokens_out, e.requests,
+      CASE WHEN r.status = 'failed' THEN 0 ELSE 1 END AS ok
+    FROM credit_entry e LEFT JOIN agent_run r ON r.id = e.run_id WHERE e.org_id = ?1 AND e.period = ?2`, month);
+  const agents = await db.all("SELECT id, name, template, mode, role, instructions, monthly_budget, budget_paused_period FROM agent WHERE org_id = ?1");
+  return summariseCredits({
+    month, period: periodOf(), plan: o.plan, entries: entries.map((e: any) => ({ ...e, ok: !!e.ok })), agents,
+    balance: { ...bal, available: await available(c.env, orgId) }, reset_on: bal.reset_on,
+    pending_plan: o.pending_plan, confirm_over: o.confirm_over, topup_available: !!c.env.STRIPE_PRICE_TOPUP,
+    planCredits: PLAN_CREDITS[o.plan] ?? (PLANS[o.plan] || PLANS.trial).credits,
   });
-  const period = periodOf();
-  return {
-    period: month, current: month === period,
-    balance: { plan: showCredits(Math.max(0, bal.plan)), topup: showCredits(Math.max(0, bal.topup)), total: showCredits(bal.total), available: showCredits(Math.max(0, await available(c.env, orgId))) },
-    reset_on: bal.reset_on, plan_credits: PLAN_CREDITS[o.plan] ?? (PLANS[o.plan] || PLANS.trial).credits, used: showCredits(used),
-    paused: bal.total <= 0, pending_plan: o.pending_plan, confirm_over: o.confirm_over ?? CONFIRM_OVER_DEFAULT,
-    topup: { credits: TOPUP.credits, pence: TOPUP.pence, available: !!c.env.STRIPE_PRICE_TOPUP },
-    by_agent: agents.map((a: any) => ({ id: a.id, name: a.name, mode: a.mode, mode_label: modeLabel(a.mode), credits: showCredits(a.credits), runs: a.runs,
-      budget: a.monthly_budget, budget_paused: a.budget_paused_period === period && month === period })),
-    by_mode: MODE_ORDER.map((k) => {
-      const rows = byMode.filter((r: any) => r.mode === k);
-      return { mode: k, name: MODES[k].name, model: MODELS[MODES[k].model].label, runs: rows.reduce((n: number, r: any) => n + r.runs, 0), credits: showCredits(rows.reduce((n: number, r: any) => n + r.credits, 0)) };
-    }),
-    system: { calls: system.n, credits: showCredits(system.credits) },
-    entries: entries.map((e: any) => ({ ...e, credits: e.kind === "run" ? -showCredits(-e.credits, { run: true }) : showCredits(e.credits), credits_exact: e.credits, mode_label: e.mode ? modeLabel(e.mode) : null })),
-    suggestions,
-  };
 }
 
 const nextMonth = (m: string) => { const [y, mo] = m.split("-").map(Number); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`; };
@@ -505,7 +479,12 @@ ws.post("/billing/plan", owner, async (c) => {
   const sub = await db.one("SELECT stripe_subscription, status FROM subscription WHERE org_id = ?1");
   if (!sub?.stripe_subscription || sub.status === "cancelled") throw new HttpError(409, "no_subscription", "Choose a plan with checkout first.");
   if (b.plan === org.plan) {
-    if (org.pending_plan) await db.run("UPDATE org SET pending_plan = NULL WHERE id = ?1");
+    // Staying put calls off a downgrade waiting for the 1st, in Stripe as well as here.
+    if (org.pending_plan) {
+      await releaseSchedule(c.env, sub.stripe_subscription);
+      await db.run("UPDATE org SET pending_plan = NULL WHERE id = ?1");
+      await audit(c.env, orgId, c.get("user").id, "plan_downgrade_cancelled", org.pending_plan);
+    }
     return c.json({ plan: org.plan, pending_plan: null, effective: "now" });
   }
   const up = (PLAN_CREDITS[b.plan] || 0) > (PLAN_CREDITS[org.plan] || 0);

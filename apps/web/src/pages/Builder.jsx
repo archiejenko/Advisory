@@ -352,7 +352,7 @@ export function WsBuild() {
             <span><b>{live.filter((m) => m.mode === "outsourced").length}</b> outsourced</span>
             <span><b>{live.filter((m) => m.mode === "external").length}</b> kept in current tools</span>
             <span><b>{team.size}</b> AI Team members</span>
-            <span title="A rough guide from the apps and autonomy you set"><b>~{est.actions.toLocaleString("en-GB")}</b> actions a month</span>
+            <span title="A rough guide from the apps and autonomy you set"><b>~{est.credits.toLocaleString("en-GB")}</b> credits a month</span>
             <label className="ob-people" title="Nothing needs a connection: imports are CSV or Excel.">for <input type="number" min="1" max="500" value={people} onChange={(e) => setPeople(Math.max(1, Number(e.target.value) || 1))} aria-label="People in the business" /> people → <b>{plan.name}</b> £{plan.price}/mo</label>
           </div>
           <div className="ob-foot-a">

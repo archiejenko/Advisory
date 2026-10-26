@@ -38,7 +38,7 @@ export const toLedger = (x: number) => Math.round(x * 100) / 100;
 /** What a run is charged: its cost at 2dp, and never less than the per-run minimum. */
 export const runCharge = (x: number) => toLedger(Math.max(MIN_CREDITS_PER_RUN, x));
 /** What people see: whole credits. A single run never shows less than the minimum. */
-export const showCredits = (x: number, opts: { run?: boolean } = {}) => (opts.run ? Math.max(MIN_CREDITS_PER_RUN, Math.round(x)) : Math.round(x));
+export const showCredits = (x: number, opts: { run?: boolean } = {}) => (opts.run ? Math.max(MIN_CREDITS_PER_RUN, Math.round(x)) : Math.round(x) || 0);
 
 export const modeName = (k: string) => MODES[k as ModeKey]?.name ?? k;
 /** "Deep · Opus". */

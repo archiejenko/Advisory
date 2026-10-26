@@ -42,7 +42,7 @@ export function Start() {
   };
   return (
     <Page title="Start free">
-      <PageHead crumbs={[["Start free"]]} label="Free for 14 days" title={pick ? `Put ${pick.name.toLowerCase()} to work` : "Put your team to work"} lede={`Tell us about your business. We'll set up your workspace and email you a link to sign in. Every app in the OS, up to 100 agents and ${PLANS.trial.actions.toLocaleString("en-GB")} actions, no card needed.`} />
+      <PageHead crumbs={[["Start free"]]} label="Free for 14 days" title={pick ? `Put ${pick.name.toLowerCase()} to work` : "Put your team to work"} lede={`Tell us about your business. We'll set up your workspace and email you a link to sign in. Every app in the OS, up to 100 AI Team members and ${PLANS.trial.credits.toLocaleString("en-GB")} credits to try every mode, no card needed.`} />
       <Section tight>
         <div className="start">
           {done ? (

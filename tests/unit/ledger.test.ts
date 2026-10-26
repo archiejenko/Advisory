@@ -235,3 +235,16 @@ describe("asking before an expensive run", () => {
     expect((raw.prepare("SELECT mode, model FROM agent_run ORDER BY created_at DESC LIMIT 1").get() as any)).toEqual({ mode: "strategy", model: "claude-fable-5-1" });
   });
 });
+
+describe("default modes", () => {
+  it("an agent hired without a mode gets the one its job suits; custom roles start on Standard", async () => {
+    const { raw, env } = testEnv();
+    const org = seedOrg(raw, { plan: "growth" });
+    const { hireAgent } = await import("../../apps/api/src/lib/agents");
+    const mode = async (template: string) => (raw.prepare("SELECT mode FROM agent WHERE id = ?").get(await hireAgent(env, org.id, org.user, { template })) as any).mode;
+    expect(await mode("inbox")).toBe("quick");
+    expect(await mode("outreach")).toBe("standard");
+    expect(await mode("research")).toBe("deep");
+    expect((raw.prepare("SELECT mode FROM agent WHERE id = ?").get(await hireAgent(env, org.id, org.user, { template: "outreach", mode: "strategy" })) as any).mode).toBe("strategy");
+  });
+});

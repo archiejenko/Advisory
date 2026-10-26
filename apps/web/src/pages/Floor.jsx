@@ -156,7 +156,7 @@ const SwarmPreview = React.forwardRef(function SwarmPreview({ plan, busy, onSpin
       <dl className="pv-nums">
         <div><dt>Agents</dt><dd>{pv.agents ?? plan.agents.length}{pv.reuses?.length ? <small>{pv.reuses.length} already working for you</small> : null}</dd></div>
         <div><dt>On your {pv.plan} plan</dt><dd className={pv.fits === false ? "is-bad" : ""}>{pv.agents_after} of {pv.plan_agents} agents</dd></div>
-        <div><dt>Actions a month, about</dt><dd className={pv.within_allowance === false ? "is-warn" : ""}>{(pv.actions_a_month || 0).toLocaleString("en-GB")}<small>of {(pv.allowance || 0).toLocaleString("en-GB")} included</small></dd></div>
+        <div><dt>Credits a month, about</dt><dd className={pv.within_plan === false ? "is-warn" : ""}>{(pv.credits_a_month || 0).toLocaleString("en-GB")}<small>of {(pv.plan_credits || 0).toLocaleString("en-GB")} on your plan</small></dd></div>
         <div><dt>Sending</dt><dd>Every email waits for you<small>Change it per agent later</small></dd></div>
       </dl>
       {plan.locked && <Notice signal>{plan.locked}</Notice>}
@@ -296,9 +296,9 @@ function Kpis({ kpis, usage }) {
     <div className="fl-kpis">
       {kpis.map((k) => <div key={k.key} className="fl-kpi"><span>{k.label}</span><b>{fmt(k.unit, k.value)}</b></div>)}
       <div className="fl-kpi fl-kpi-use">
-        <span>Actions this month</span>
-        <b>{usage.actions_month.toLocaleString("en-GB")}<small> / {usage.allowance.toLocaleString("en-GB")}</small></b>
-        <i className="fl-meter" style={{ "--p": Math.min(1, usage.actions_month / Math.max(1, usage.allowance)) }} aria-hidden="true" />
+        <span>Credits this month</span>
+        <b>{usage.credits_month.toLocaleString("en-GB")}<small> / {usage.plan_credits.toLocaleString("en-GB")}</small></b>
+        <i className="fl-meter" style={{ "--p": Math.min(1, usage.credits_month / Math.max(1, usage.plan_credits)) }} aria-hidden="true" />
       </div>
     </div>
   );

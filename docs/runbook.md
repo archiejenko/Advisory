@@ -49,7 +49,8 @@ Old answers must keep verifying, so publish the old public key before switching.
 
 ## Spend and abuse
 
-- Model spend per business is capped monthly by plan (`MODEL_BUDGETS`). A business at its cap gets "This month's AI budget for your plan is used".
+- Model spend per business is its credits: plan credits a month plus any top-ups, on the ledger in `credit_entry` (1 credit = 1p of model cost, rates in `config/model-pricing.ts`). A business with none left gets 402 `credits_used` ("Your AI Team has used this month's credits…") and its owner one email a month offering a top-up. An agent at its own budget gets 402 `agent_budget_used`.
+- To give a business credits by hand (a goodwill credit, a fix): insert a `credit_entry` with `kind = 'adjustment'`, `from_topup` equal to `credits` (so it rolls over), the current `period` and a unique `ref`. Never edit or delete ledger rows; correct with another entry.
 - Outside API callers use their own 35% lane of the Companies House budget. A flood of API calls returns 503 `busy` to them, not to customers' alerts.
 - Turn on Turnstile for public forms: set `TURNSTILE_SITE_KEY` in `[vars]` and `TURNSTILE_SECRET` as a secret.
 
