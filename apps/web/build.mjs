@@ -13,7 +13,7 @@ const out = await build({
   jsx: "automatic", loader: { ".js": "jsx" }, define: { "process.env.NODE_ENV": '"production"', __DEMO_BUILD__: DEMO ? "true" : "false" }, target: "es2020",
 });
 const js = out.outputFiles[0].text.replace(/<\/script/g, "<\\/script");
-const css = ["src/styles.css", "src/theme.css", "src/floor.css", "src/landing.css", "src/os.css"].map((f) => readFileSync(f, "utf8")).join("\n");
+const css = ["src/styles.css", "src/theme.css", "src/floor.css", "src/landing.css", "src/os.css", "src/workspace/ws.css"].map((f) => readFileSync(f, "utf8")).join("\n");
 const sw = `if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });`;
 // Content Security Policy for the hosted site: only these two inline scripts (by hash), our own origin, and
 // Turnstile may run, so an injected <script> can't. (Inline styles stay allowed: React sets them. The demo build,

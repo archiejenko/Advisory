@@ -278,7 +278,8 @@ export function seed(nowMs: number = Date.now()): State {
   const email = (to: string, subject: string, body: string) => ({ kind: "email" as const, to, subject, body });
   const fmt = (p: number) => "£" + (p / 100).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const ukDate = (s: string) => new Date(s).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
-  const daysLate = (x: Invoice) => Math.floor((nowMs - Date.parse(x.dueAt)) / D);
+  const midnightOf = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const daysLate = (x: Invoice) => Math.round((midnightOf(nowMs) - midnightOf(Date.parse(x.dueAt))) / D);
   // Routine
   apr({ id: "apr_spinning", agentId: "agt_credit", type: "send_reminder", risk: "routine", value: spinningInv.total, createdAt: ago(3 * H), linkedRecord: { type: "invoice", id: spinningInv.id },
     title: `First reminder to Spinningfields Law for ${spinningInv.id}`, reason: `${fmt(spinningInv.total)} · ${daysLate(spinningInv)} days late · 1st reminder · always pays within a week of one`,

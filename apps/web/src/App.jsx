@@ -1,6 +1,7 @@
 import React from "react";
 import { RouterProvider, useRoute, match } from "./router.jsx";
-import { Header, Footer, WorkspaceProvider } from "./layout.jsx";
+import { Header, Footer, WorkspaceProvider, useWs } from "./layout.jsx";
+import { Workspace } from "./workspace/Workspace.jsx";
 import Home from "./pages/Home.jsx";
 import { AgentsIndex, AgentPage } from "./pages/Agents.jsx";
 import { Start, Unsubscribe } from "./pages/Start.jsx";
@@ -87,8 +88,13 @@ function Chrome({ children }) {
   );
 }
 
+// Signed out, the workspace is the Brightwork demo, answered from the demo store (src/workspace).
+const isDemoWorkspace = (path) => path === "/workspace/design";
+
 function Routes() {
   const { path } = useRoute();
+  const { me } = useWs();
+  if (me === null && isDemoWorkspace(path)) return <Workspace key="ws" />;
   for (const [pattern, C] of ROUTES) {
     const params = match(pattern, path);
     if (params) return <C key={path} {...params} />;

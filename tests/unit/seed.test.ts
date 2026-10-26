@@ -54,6 +54,7 @@ describe.each(CLOCKS.map((t) => [new Date(t).toISOString(), t]))("Brightwork see
     const c = p.find((a) => a.linkedRecord.id === "cv_castlefield")!;
     expect(c.note).toMatch(/diary/i);
     expect(c.preview.kind === "email" && c.preview.body).toMatch(/5\.30pm/);
+    expect(p.find((a) => a.id === "apr_tarnbrook")!.reason).toMatch(/21 days late/);
   });
 
   it("has six agents and eight people", () => {
