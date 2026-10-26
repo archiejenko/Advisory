@@ -30,7 +30,7 @@ function agentFor(s, a) {
   // Every role on a Floor is done by one of the business's six agents; extra roles are that agent's sub-agents.
   let ag = s.agents.find((x) => x.id === staffFor(a));
   if (!ag) {
-    ag = { id: "agt_" + a.key + "_" + (SIM.seq++), template: a.template, name: a.name, status: "running", rhythm: a.rhythm, autonomy: "approve_all", created_at: now(), engine: "llm", glyph: "spark", category: "Run", settings: {}, monthly_cap: 300, brief: a.role };
+    ag = { id: "agt_" + a.key + "_" + (SIM.seq++), template: a.template, name: a.name, status: "running", rhythm: a.rhythm, autonomy: "approve_all", created_at: now(), engine: "llm", glyph: "spark", category: "Run", settings: {}, brief: a.role };
     s.agents.push(ag);
   }
   ag.swarm_id = "set";
@@ -290,7 +290,7 @@ export function floorDemo(method, p, q, body, s, fail) {
       let ag = sw.agents.find((x) => x.id === a.id);
       if (!ag) {
         const role = roleOf(a.role);
-        ag = { id: "agt_d" + (SIM.seq++), template: a.role === "orchestrator" ? "orchestrator" : "custom", name: a.name, status: "running", rhythm: a.rhythm, autonomy: a.autonomy, created_at: now(), engine: "llm", glyph: "spark", category: "Run", settings: {}, monthly_cap: 300, brief: role.about, swarm_id: sw.id, swarm_key: role.key + "-" + SIM.seq, role: role.about };
+        ag = { id: "agt_d" + (SIM.seq++), template: a.role === "orchestrator" ? "orchestrator" : "custom", name: a.name, status: "running", rhythm: a.rhythm, autonomy: a.autonomy, created_at: now(), engine: "llm", glyph: "spark", category: "Run", settings: {}, brief: role.about, swarm_id: sw.id, swarm_key: role.key + "-" + SIM.seq, role: role.about };
         ids[a.id] = ag.id; s.agents.push(ag); sw.agents.push(ag);
       }
       const real = s.agents.find((x) => x.id === ag.id);

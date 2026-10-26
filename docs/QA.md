@@ -147,8 +147,8 @@ This branch is `claude/peaceful-bell-mkmpa8` (the workspace overhaul) with `clau
 | Suite | Result |
 |---|---|
 | `npm run typecheck` | Clean |
-| `npm test` | 495 passed |
-| `npm run test:e2e` (API, local Worker and mocks) | 46 of 46 flows passed |
+| `npm test` | 496 passed |
+| `npm run test:e2e` (API, local Worker and mocks) | 47 of 47 flows passed |
 | `npm run test:workspace` | 42 of 42 checks passed |
 | `node tests/e2e/os-check.mjs` (demo build) | 6 of 6 passed |
 | `node tests/e2e/ui.mjs` (browser, signed in and out) | 21 flows passed, 1 known failure (#1) |
@@ -166,6 +166,9 @@ This branch is `claude/peaceful-bell-mkmpa8` (the workspace overhaul) with `clau
   - the research box, which now lives on `/workspace/overview`
   - the app count, which moved from 118 apps in 17 areas to 138 in 18
   - the Payables check, now on Invoicing because Payables isn't in the Trades pack (see #1)
+- **No team cap.** `monthly_cap` on swarms and agents was never enforced; credits and per-agent budgets are. The API no longer accepts or returns it and the demo no longer carries it, so no screen, signed in or out, shows it.
+  - Production had no swarms when checked (0 with a cap), so no carry-over migration was needed.
+  - `tests/unit/no-monthly-cap.test.ts` fails if any app source reads it, the Floor test checks the API response leaves it out even when an old row has one, and `workspace-qa.mjs` bans "monthly cap" and "team cap" on every route.
 - **`os-check.mjs` moved onto the new shell.** It covers the landing page, `/os`, pricing in credits, Usage with a top-up, agent modes, and phone width. The workspace screens themselves are covered by `workspace-qa.mjs`.
 
 ## Known limits

@@ -49,7 +49,7 @@ export async function previewFor(env: Env, orgId: string, raw: Blueprint) {
   };
 }
 
-export async function createSwarm(env: Env, orgId: string, userId: string, raw: unknown, opts: { preset?: string | null; description?: string | null; monthly_cap?: number | null } = {}) {
+export async function createSwarm(env: Env, orgId: string, userId: string, raw: unknown, opts: { preset?: string | null; description?: string | null } = {}) {
   const checked = checkBlueprint(raw);
   if (!checked.ok) throw new HttpError(400, "invalid_blueprint", "This swarm's blueprint has problems: " + checked.errors.join("; "), { errors: checked.errors });
   const bp = withOrchestrator(checked.blueprint);
@@ -60,8 +60,8 @@ export async function createSwarm(env: Env, orgId: string, userId: string, raw: 
   if (!pv.fits) throw new HttpError(409, "plan_limit", `This swarm needs ${pv.new_agents} new ${pv.new_agents === 1 ? "agent" : "agents"}, which would take you to ${pv.agents_after}. Your ${pv.plan} plan includes ${pv.plan_agents}. Drop an agent from the swarm or move to a bigger plan.`);
   const adopt = await adoptions(env, orgId, bp);
   const id = newId("swm");
-  await run(env, "INSERT INTO swarm (id, org_id, name, sector, description, preset, blueprint, monthly_cap, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-    id, orgId, bp.name, bp.sector, opts.description?.slice(0, 2000) ?? null, opts.preset ?? null, JSON.stringify(bp), opts.monthly_cap ?? null, userId, nowIso());
+  await run(env, "INSERT INTO swarm (id, org_id, name, sector, description, preset, blueprint, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    id, orgId, bp.name, bp.sector, opts.description?.slice(0, 2000) ?? null, opts.preset ?? null, JSON.stringify(bp), userId, nowIso());
   const hired: string[] = [], adopted: string[] = [];
   try {
     for (const a of bp.agents) {

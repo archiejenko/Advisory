@@ -170,6 +170,10 @@ describe("the work board and handoffs", () => {
     expect(f.cursor).toBeGreaterThan(0);
     const later = await floorState(env, org.id, swarmId, f.cursor);
     expect(later.events).toEqual([]);
+    // The team cap was never enforced (credits are), so the Floor mustn't offer it even when an old row still has one.
+    raw.prepare("UPDATE swarm SET monthly_cap = 300 WHERE id = ?").run(swarmId);
+    raw.prepare("UPDATE agent SET monthly_cap = 50 WHERE swarm_id = ?").run(swarmId);
+    expect(JSON.stringify(await floorState(env, org.id, swarmId))).not.toMatch(/monthly_cap/);
   });
 });
 

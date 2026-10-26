@@ -24,7 +24,7 @@ const ROUTES = [
   "/workspace/work/jobs/job_tarnbrook", "/workspace/customers/inbox/cv_castlefield", "/workspace/team/agents/agt_credit", "/workspace/team/people/p_sam",
   "/workspace/money/bills/bill_1", "/workspace/work/tasks/task_coshh", "/workspace/customers/contacts/con_1", "/workspace/work/safety/rec_coshh",
 ];
-const BANNED = [/Partly built/i, /Records and AI Team/i, /Some of this runs natively today/i, /records and the AI Team fill the rest/i, /The full native screen is still being built/i, /Open the full .* screen/i, /\bentrys\b/i, /\bcrm\b/];
+const BANNED = [/Partly built/i, /Records and AI Team/i, /Some of this runs natively today/i, /records and the AI Team fill the rest/i, /The full native screen is still being built/i, /Open the full .* screen/i, /\bentrys\b/i, /\bcrm\b/, /monthly[ _]cap/i, /team cap/i];
 const AMERICAN = [/\borganiz/i, /\bcolor\b/i, /\bcenter\b/i, /\bbehavior/i, /\bfavorite/i, /\banalyz/i, /\bcatalog\b/i, /\bcanceled\b/i, /\$\d/];
 
 const results = { checks: [], failures: [] };

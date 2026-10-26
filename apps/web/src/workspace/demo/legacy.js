@@ -26,7 +26,7 @@ export function syncFromStore(s) {
   const st = getState();
   // Agents: the same six, keeping whatever the Floor has attached to them.
   const keep = new Map((s.agents || []).map((a) => [a.id, a]));
-  s.agents = st.agents.map((a) => Object.assign(keep.get(a.id) || { settings: {}, monthly_cap: 300, engine: "llm", category: "Run", glyph: "spark", created_at: st.now, run_hour: 8 }, {
+  s.agents = st.agents.map((a) => Object.assign(keep.get(a.id) || { settings: {}, engine: "llm", category: "Run", glyph: "spark", created_at: st.now, run_hour: 8 }, {
     id: a.id, template: TPL[a.id], name: a.name, brief: a.description, status: st.paused ? "paused" : "running", rhythm: a.id === "agt_brief" ? "weekly" : "weekdays",
     autonomy: a.autonomy.every((r) => r.mode === "auto") ? "auto" : "approve_first",
     // Credits: the mode each agent runs in. Theo reads every enquiry closely, so he's on Deep.

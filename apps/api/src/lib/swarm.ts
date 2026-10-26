@@ -287,7 +287,7 @@ export type StationState = "idle" | "queued" | "working" | "tool" | "needs_you" 
 export async function floorState(env: Env, orgId: string, swarmId: string, since?: number) {
   await syncSwarm(env, orgId, swarmId, { gapMs: POLL_SYNC_MS });
   const s = await loadSwarm(env, orgId, swarmId);
-  const agents = await all<any>(env, "SELECT id, template, name, role, swarm_key, status, rhythm, autonomy, last_run_at, next_run_at, monthly_cap FROM agent WHERE swarm_id = ? AND org_id = ?", swarmId, orgId);
+  const agents = await all<any>(env, "SELECT id, template, name, role, swarm_key, status, rhythm, autonomy, last_run_at, next_run_at FROM agent WHERE swarm_id = ? AND org_id = ?", swarmId, orgId);
   const ids = agents.map((a) => a.id), qs = ids.map(() => "?").join(",") || "''";
   const [runs, proposed, items, events, tasks, failed] = await Promise.all([
     all<any>(env, `SELECT r.agent_id, r.id, r.status, r.started_at, r.created_at, r.finished_at, r.summary, r.error FROM agent_run r WHERE r.agent_id IN (${qs}) AND r.created_at >= ? ORDER BY r.created_at DESC`, ...ids, new Date(Date.now() - 2 * DAY).toISOString()),
@@ -322,7 +322,7 @@ export async function floorState(env: Env, orgId: string, swarmId: string, since
   const plan = await one<any>(env, "SELECT plan FROM org WHERE id = ?", orgId);
   const used = values.credits_month ?? 0;
   return {
-    swarm: { id: s.id, name: s.name, sector: s.sector, preset: s.preset, status: s.status, skin: s.blueprint.skin, layout: s.layout, created_at: s.created_at, last_brief_at: s.last_brief_at, monthly_cap: s.monthly_cap },
+    swarm: { id: s.id, name: s.name, sector: s.sector, preset: s.preset, status: s.status, skin: s.blueprint.skin, layout: s.layout, created_at: s.created_at, last_brief_at: s.last_brief_at },
     blueprint: { stages: s.blueprint.stages, handoffs: s.blueprint.handoffs, goals: s.blueprint.goals, agents: s.blueprint.agents.map(({ key, name, role, template, rhythm }) => ({ key, name, role, template, rhythm })) },
     stations, kpis,
     items: items.map((i) => ({ ...i })),

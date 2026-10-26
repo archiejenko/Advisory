@@ -40,7 +40,7 @@ export function registerSwarmRoutes(ws: App) {
   });
 
   ws.post("/swarms", manager, async (c) => {
-    const b = await body(c, z.object({ preset: z.string().optional(), blueprint: z.unknown().optional(), description: z.string().max(2000).optional(), monthly_cap: z.number().int().min(10).max(100000).optional() }));
+    const b = await body(c, z.object({ preset: z.string().optional(), blueprint: z.unknown().optional(), description: z.string().max(2000).optional() }));
     let bp: unknown = b.blueprint;
     if (b.preset) {
       const p = preset(b.preset);
@@ -49,7 +49,7 @@ export function registerSwarmRoutes(ws: App) {
       bp = p.blueprint;
     }
     if (!bp) throw bad("Choose a preset or send a blueprint.");
-    const r = await createSwarm(c.env, c.get("orgId"), c.get("user").id, bp, { preset: b.preset ?? null, description: b.description ?? null, monthly_cap: b.monthly_cap ?? null });
+    const r = await createSwarm(c.env, c.get("orgId"), c.get("user").id, bp, { preset: b.preset ?? null, description: b.description ?? null });
     return c.json(r, 201);
   });
 
@@ -67,14 +67,13 @@ export function registerSwarmRoutes(ws: App) {
   });
 
   ws.patch("/swarms/:id", manager, async (c) => {
-    const b = await body(c, z.object({ name: z.string().min(1).max(60).optional(), status: z.enum(["running", "paused"]).optional(), layout: z.record(z.unknown()).optional(), monthly_cap: z.number().int().min(10).max(100000).nullable().optional() }));
+    const b = await body(c, z.object({ name: z.string().min(1).max(60).optional(), status: z.enum(["running", "paused"]).optional(), layout: z.record(z.unknown()).optional() }));
     const id = c.req.param("id")!, orgId = c.get("orgId");
     await loadSwarm(c.env, orgId, id);
     if (b.layout && JSON.stringify(b.layout).length > 20000) throw bad("That layout is too large.");
     const db = c.get("db");
     if (b.name) await db.run("UPDATE swarm SET name = ?3 WHERE org_id = ?1 AND id = ?2", id, b.name);
     if (b.layout) await db.run("UPDATE swarm SET layout = ?3 WHERE org_id = ?1 AND id = ?2", id, JSON.stringify(b.layout));
-    if (b.monthly_cap !== undefined) await db.run("UPDATE swarm SET monthly_cap = ?3 WHERE org_id = ?1 AND id = ?2", id, b.monthly_cap);
     if (b.status) {
       await db.run("UPDATE swarm SET status = ?3 WHERE org_id = ?1 AND id = ?2", id, b.status);
       for (const a of await db.all("SELECT id FROM agent WHERE org_id = ?1 AND swarm_id = ?2", id)) await setAgentStatus(c.env, orgId, (a as any).id, b.status);
