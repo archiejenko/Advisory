@@ -1,6 +1,7 @@
 // Claude through the Messages API (no SDK, so it runs in a Worker). The runtime gives it tools and runs them.
 import type { Env } from "./db";
 import { UpstreamError } from "./registers";
+import { MODELS, MODES, SYSTEM_MODE } from "../../../../config/model-pricing";
 
 export type Block =
   | { type: "text"; text: string; cache_control?: CacheControl }
@@ -33,11 +34,27 @@ export function withCaching(req: { system: string; messages: Msg[]; tools: ToolD
   return { system: [{ type: "text", text: req.system, cache_control: EPHEMERAL }], messages, tools };
 }
 
-export async function claude(env: Env, req: { system: string; messages: Msg[]; tools: ToolDef[]; max_tokens?: number }): Promise<Reply> {
+/** A model request. `model` and the effort and output limits come from the mode (config/model-pricing.ts). */
+export type ModelReq = { system: string; messages: Msg[]; tools: ToolDef[]; model?: string; effort?: "low" | "medium" | "high"; max_tokens?: number };
+
+/** One adapter per provider. Adding a provider's model means adding its adapter here and its rates in config. */
+const PROVIDERS: Record<string, (env: Env, model: string, req: ModelReq) => Promise<Reply>> = { anthropic: anthropicMessages };
+
+/** Call the model a mode runs on. Every caller passes the model, so what is billed is what ran. */
+export async function claude(env: Env, req: ModelReq): Promise<Reply> {
+  const model = req.model || MODES[SYSTEM_MODE].model;
+  const provider = MODELS[model]?.provider;
+  if (!provider || !PROVIDERS[provider]) throw new UpstreamError("Model", 500, `No provider for model ${model}: add it to config/model-pricing.ts`);
+  return PROVIDERS[provider](env, model, req);
+}
+
+async function anthropicMessages(env: Env, model: string, req: ModelReq): Promise<Reply> {
   if (!env.ANTHROPIC_API_KEY) throw new UpstreamError("Claude", 503, "ANTHROPIC_API_KEY is not set");
   const cached = withCaching(req);
+  // Thinking is adaptive by default on these models and is billed as output tokens; effort sets how much they do.
   const payload = JSON.stringify({
-    model: env.AGENT_MODEL || "claude-sonnet-5-5", max_tokens: req.max_tokens || 1500,
+    model, max_tokens: req.max_tokens || 4000,
+    ...(req.effort ? { output_config: { effort: req.effort } } : {}),
     system: cached.system, messages: cached.messages, tools: cached.tools.length ? cached.tools : undefined,
   });
   const retries = Number(env.CLAUDE_RETRIES ?? 4);
@@ -59,14 +76,4 @@ export async function claude(env: Env, req: { system: string; messages: Msg[]; t
     const wait = after > 0 ? Math.min(after * 1000, 20000) : Math.min(baseMs * 2 ** attempt, 20000) * (0.75 + Math.random() * 0.5);
     await sleep(wait);
   }
-}
-
-/**
- * Model cost in pence. Prices per million tokens, in pence, set per deployment (AGENT_PRICE_IN_PENCE, AGENT_PRICE_OUT_PENCE).
- * Cache writes cost 1.25x the input price and cache reads 0.1x (override with AGENT_CACHE_WRITE_X / AGENT_CACHE_READ_X).
- */
-export function modelCost(env: Env, tokensIn: number, tokensOut: number, cacheWrite = 0, cacheRead = 0) {
-  const pin = Number(env.AGENT_PRICE_IN_PENCE || 240), pout = Number(env.AGENT_PRICE_OUT_PENCE || 1200);
-  const wx = Number(env.AGENT_CACHE_WRITE_X || 1.25), rx = Number(env.AGENT_CACHE_READ_X || 0.1);
-  return Math.ceil((tokensIn * pin + cacheWrite * pin * wx + cacheRead * pin * rx + tokensOut * pout) / 1e6);
 }

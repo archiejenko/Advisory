@@ -1,3 +1,4 @@
+import { PLAN_CREDITS, TRIAL_CREDITS } from "../../config/model-pricing";
 import { ROLES } from "./badges";
 // The agent catalogue. One source for the API (what an agent may do) and the website (what we say it does).
 
@@ -183,12 +184,12 @@ export const RHYTHM_LABEL: Record<Template["rhythm"], string> = {
   weekdays: "Every weekday", daily: "Every day", weekly: "Every Monday", monthly: "First working day of the month", on_demand: "When you ask", on_event: "When something arrives",
 };
 
-/** Plans: how many agents a business can hire and how many tool calls its agents get a month. */
-export const PLANS: Record<string, { name: string; price: number | null; agents: number; actions: number; blurb: string }> = {
-  // Priced per business, not per agent: every plan has the whole OS and up to 100 agents. Actions are what scale.
-  trial: { name: "Free trial", price: 0, agents: 100, actions: 1500, blurb: "14 days of the whole OS" },
-  pilot: { name: "Pilot", price: null, agents: 100, actions: 6000, blurb: "Founding rate, agreed with us" },
-  starter: { name: "Solo", price: 39, agents: 100, actions: 500, blurb: "The whole OS for an owner and a few people" },
-  growth: { name: "Team", price: 129, agents: 100, actions: 2000, blurb: "For a team of up to 25 running every area in one place" },
-  scale: { name: "Business", price: 299, agents: 100, actions: 6000, blurb: "For a business of up to 100 people and 100 agents" },
+/** Plans: priced per business. Every plan has every app, unlimited people and up to 100 agents; credits are what scale. */
+export const PLANS: Record<string, { name: string; price: number | null; agents: number; credits: number; blurb: string }> = {
+  // Credits a month come from config/model-pricing.ts, with the rates they're spent at.
+  trial: { name: "Free trial", price: 0, agents: 100, credits: TRIAL_CREDITS, blurb: "14 days of the whole OS" },
+  pilot: { name: "Pilot", price: null, agents: 100, credits: PLAN_CREDITS.pilot, blurb: "Founding rate, agreed with us" },
+  starter: { name: "Starter", price: 79, agents: 100, credits: PLAN_CREDITS.starter, blurb: "The whole OS for an owner and a few people" },
+  growth: { name: "Growth", price: 249, agents: 100, credits: PLAN_CREDITS.growth, blurb: "For a team of up to 25 running every area in one place" },
+  scale: { name: "Business", price: 599, agents: 100, credits: PLAN_CREDITS.scale, blurb: "For a business of up to 100 people and 100 agents" },
 };

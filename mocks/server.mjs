@@ -54,6 +54,7 @@ const streamClients = new Map(); // stream -> Set(res)
 const backlog = []; // {stream, line, tp}
 const gazetteFeed = [];
 const captured = [];
+const scheduled = new Set(); // Stripe subscriptions with a schedule attached (a downgrade waiting for the 1st)
 let claudeFailures = 0; // the next N Messages API calls answer 529 overloaded, to exercise retries
 let gazetteId = 900000;
 
@@ -329,6 +330,17 @@ const server = http.createServer(async (req, res) => {
       if (p === "/stripe/v1/checkout/sessions") return json(res, 200, { id: "cs_test_" + Date.now(), url: "https://checkout.stripe.example/c/pay/cs_test", mode: form.get("mode") });
       if (p === "/stripe/v1/billing_portal/sessions") return json(res, 200, { id: "bps_test", url: "https://billing.stripe.example/p/session/test" });
       if (p === "/stripe/v1/billing/meter_events") return json(res, 200, { object: "billing.meter_event", event_name: form.get("event_name") });
+      // Subscriptions, for plan changes: one item on the plan's price, billed from the 1st.
+      let sm;
+      if ((sm = p.match(/^\/stripe\/v1\/subscriptions\/([\w-]+)$/))) {
+        const price = form.get("items[0][price]") || "price_starter";
+        const start = Math.floor(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1) / 1000);
+        return json(res, 200, { id: sm[1], object: "subscription", status: "active", schedule: scheduled.has(sm[1]) ? "sub_sched_" + sm[1] : null, current_period_start: start, current_period_end: start + 31 * 86400,
+          items: { data: [{ id: "si_" + sm[1], price: { id: price } }] }, metadata: { plan: form.get("metadata[plan]") || null } });
+      }
+      if ((sm = p.match(/^\/stripe\/v1\/subscription_schedules\/sub_sched_([\w-]+)\/release$/))) { scheduled.delete(sm[1]); return json(res, 200, { id: "sub_sched_" + sm[1], object: "subscription_schedule", status: "released" }); }
+      if (p === "/stripe/v1/subscription_schedules") { scheduled.add(form.get("from_subscription")); return json(res, 200, { id: "sub_sched_" + (form.get("from_subscription") || "x"), object: "subscription_schedule" }); }
+      if ((sm = p.match(/^\/stripe\/v1\/subscription_schedules\/([\w-]+)$/))) return json(res, 200, { id: sm[1], object: "subscription_schedule", end_behavior: form.get("end_behavior"), phases: [{ items: [{ price: form.get("phases[0][items][0][price]") }] }, { items: [{ price: form.get("phases[1][items][0][price]") }] }] });
       return json(res, 404, { error: { message: "Unknown Stripe path" } });
     }
 

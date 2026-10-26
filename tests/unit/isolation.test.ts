@@ -49,6 +49,10 @@ const REVIEWED = [
   "FROM agent WHERE id IN (", "FROM agent_action WHERE agent_id IN (${qs})",
   // the WHERE list is built with "org_id = ?" first (listRecords)
   "SELECT * FROM os_record WHERE ${where",
+  // an agent's credits this month, by an agent id read from an org-checked row
+  "FROM credit_entry WHERE agent_id = ? AND kind = 'run' AND period",
+  // the monthly credit reset brings every business into the new month
+  "FROM org o WHERE o.cancelled_at IS NULL AND o.purged_at IS NULL AND o.plan != 'trial'",
   // retention clears old bodies for every business
   "UPDATE inbox_message SET body = NULL WHERE rowid",
 ];

@@ -115,8 +115,8 @@ export function registerSwarmRoutes(ws: App) {
   });
 
   ws.post("/swarms/:id/tasks", manager, async (c) => {
-    const b = await body(c, z.object({ agent_id: Id, title: z.string().min(2).max(200), detail: z.string().max(1500).optional() }));
-    return c.json(await ownerTask(c.env, c.get("orgId"), c.req.param("id")!, c.get("user"), b.agent_id, b.title, b.detail), 201);
+    const b = await body(c, z.object({ agent_id: Id, title: z.string().min(2).max(200), detail: z.string().max(1500).optional(), mode: z.enum(["quick", "standard", "deep", "strategy"]).optional(), confirm: z.boolean().optional() }));
+    return c.json(await ownerTask(c.env, c.get("orgId"), c.req.param("id")!, c.get("user"), b.agent_id, b.title, b.detail, { mode: b.mode, confirm: b.confirm }), 201);
   });
 
   /** Close or drop a task an agent was given. (Owner to-dos are /tasks/:id, in routes/agents.ts.) */

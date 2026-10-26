@@ -335,12 +335,13 @@ async function main() {
     await shot("17b-os-messages");
   });
 
-  await check("usage and plan: actions counted; choosing Team goes to Stripe Checkout", async () => {
+  await check("usage and plan: credits left, by agent and mode; choosing Growth goes to Stripe Checkout", async () => {
     await go("/workspace/usage");
-    await text("Actions used");
+    await text("Credits left");
+    await text("By mode");
     await text("14-day free trial");
     await shot("15-usage");
-    await btn("Choose Team");
+    await btn("Choose Growth");
     await page.waitForURL(/checkout\.stripe\.example/);
   });
 

@@ -371,8 +371,11 @@ async function main() {
     ok(co.status === 200 && co.json.url, co.text);
     const cap = (await mock("GET", "/control/captured")).captured.find((c) => c.target === "stripe/v1/checkout/sessions" && c.body.mode === "subscription");
     ok(cap.body["line_items[0][price]"] === "price_growth" && !cap.body["line_items[1][price]"] && cap.body["metadata[plan]"] === "growth", "one plan price, no metered extras");
+    // Billing is anchored to the 1st, when plan credits reset, so the first invoice is prorated.
+    const anchor = Number(cap.body["subscription_data[billing_cycle_anchor]"]);
+    ok(anchor > Date.now() / 1000 && anchor < Date.now() / 1000 + 32 * 86400 && cap.body["subscription_data[proration_behavior]"] === "create_prorations", JSON.stringify(cap.body));
     const orgId = cap.body.client_reference_id;
-    const ev = { id: "evt_1", type: "checkout.session.completed", data: { object: { mode: "subscription", client_reference_id: orgId, customer: "cus_1", subscription: "sub_1" } } };
+    const ev = { id: "evt_1", type: "checkout.session.completed", data: { object: { mode: "subscription", client_reference_id: orgId, customer: "cus_1", subscription: "sub_1", metadata: { plan: "growth" } } } };
     const payload = JSON.stringify(ev), t = Math.floor(Date.now() / 1000);
     const key = await wc.subtle.importKey("raw", new TextEncoder().encode(vars.STRIPE_WEBHOOK_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
     const sig = Buffer.from(await wc.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${payload}`))).toString("hex");
@@ -385,6 +388,40 @@ async function main() {
     ok((await call("GET", "/api/ws/me")).json.subscription.status === "active", "plan active");
     const portal = await call("POST", "/api/ws/billing/portal");
     ok(portal.status === 200 && portal.json.url, portal.text);
+    // From next month the plan's 5,000 credits; this month keeps the pilot credits it already had.
+    const u = (await call("GET", "/api/ws/usage")).json.credits;
+    ok(u.plan_credits === 5000 && u.balance.plan > 0 && u.entries.filter((e) => e.kind === "plan_grant").length === 1, JSON.stringify(u.balance));
+  });
+
+  await check("credits: a top-up is a one-off checkout, added only when Stripe says it's paid, once", async () => {
+    const before = (await call("GET", "/api/ws/usage")).json.credits.balance;
+    const co = await call("POST", "/api/ws/billing/topup");
+    ok(co.status === 200 && co.json.url, co.text);
+    const cap = (await mock("GET", "/control/captured")).captured.filter((c) => c.target === "stripe/v1/checkout/sessions" && c.body.mode === "payment").at(-1);
+    ok(cap.body["line_items[0][price]"] === "price_topup" && cap.body["metadata[kind]"] === "topup", JSON.stringify(cap.body));
+    const paid = (id, status) => stripeEvent({ id, type: "checkout.session.completed", data: { object: { id: "cs_top_e2e", mode: "payment", payment_status: status, metadata: { kind: "topup", org_id: cap.body["metadata[org_id]"] } } } });
+    await paid("evt_top_unpaid", "unpaid");
+    ok((await call("GET", "/api/ws/usage")).json.credits.balance.topup === before.topup, "not added before payment");
+    await paid("evt_top_paid", "paid");
+    await paid("evt_top_paid_again", "paid");
+    ok((await call("GET", "/api/ws/usage")).json.credits.balance.topup === before.topup + 1000, "1,000 credits, once");
+  });
+
+  await check("credits: moving up takes effect now with the month's extra credits; moving down waits for the 1st", async () => {
+    const before = (await call("GET", "/api/ws/usage")).json.credits.balance.plan;
+    const up = await call("POST", "/api/ws/billing/plan", { plan: "scale" });
+    ok(up.status === 200 && up.json.plan === "scale" && up.json.credits_added > 0, up.text);
+    const cap = (await mock("GET", "/control/captured")).captured.filter((c) => c.target === "stripe/v1/subscriptions/sub_1" && c.body.proration_behavior).at(-1);
+    ok(cap.body["items[0][price]"] === "price_scale" && cap.body.proration_behavior === "always_invoice", JSON.stringify(cap?.body));
+    ok((await call("GET", "/api/ws/usage")).json.credits.balance.plan === before + up.json.credits_added, "extra credits now");
+    const down = await call("POST", "/api/ws/billing/plan", { plan: "starter" });
+    ok(down.status === 200 && down.json.plan === "scale" && down.json.pending_plan === "starter", down.text);
+    const sched = (await mock("GET", "/control/captured")).captured.filter((c) => c.target.startsWith("stripe/v1/subscription_schedules/")).at(-1);
+    ok(sched.body["phases[1][items][0][price]"] === "price_starter" && sched.body["phases[0][items][0][price]"] && sched.body.proration_behavior === "none", JSON.stringify(sched.body));
+    ok((await call("GET", "/api/ws/me")).json.org.plan === "scale", "still on Business until the 1st");
+    // Changing their mind before the 1st keeps them where they are, in Stripe too: the schedule is released.
+    ok((await call("POST", "/api/ws/billing/plan", { plan: "scale" })).json.pending_plan === null, "downgrade called off");
+    ok((await mock("GET", "/control/captured")).captured.some((c) => c.target === "stripe/v1/subscription_schedules/sub_sched_sub_1/release"), "schedule released in Stripe");
   });
 
   /* 14. Inbound email */
@@ -834,13 +871,13 @@ async function main() {
   });
 
   /* 16. Retention and audit */
-  await check("plan limits: the trial allows 100 agents; usage shows the allowance", async () => {
+  await check("plan limits: the trial allows 100 agents; usage shows its 150 credits and what used them", async () => {
     let n = (await call("GET", "/api/ws/my-agents", undefined, { cookie: biz })).json.agents.length;
     while (n < 100) { const h = await call("POST", "/api/ws/my-agents", { template: "research", name: "Research " + n }, { cookie: biz }); ok(h.status === 201, h.text); n++; }
     const over = await call("POST", "/api/ws/my-agents", { template: "outreach" }, { cookie: biz });
     ok(over.status === 409 && over.json.error.code === "plan_limit", over.text);
     const u = (await call("GET", "/api/ws/usage", undefined, { cookie: biz })).json;
-    ok(u.plan === "trial" && u.plan_actions === 1500 && u.plan_agents === 100 && u.actions > 0 && u.by_agent.length >= 6, JSON.stringify(u).slice(0, 300));
+    ok(u.plan === "trial" && u.plan_agents === 100 && u.credits.used > 0 && u.credits.by_agent.length >= 6 && u.credits.entries.some((e) => e.kind === "trial_grant" && e.credits === 150), JSON.stringify(u.credits).slice(0, 300));
   });
 
   await check("billing state: plan changes follow Stripe; past-due and cancelled workspaces stop their agents", async () => {

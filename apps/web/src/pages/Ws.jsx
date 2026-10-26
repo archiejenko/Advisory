@@ -7,6 +7,7 @@ import { useWs, useCan } from "../layout.jsx";
 import { Glyph } from "../kit.jsx";
 import { api, useApi, useAction, dateOf, dateTimeOf, pounds, LIVE } from "../api.js";
 import { Shell, Notice, Loading, Failed, changed } from "./Live.jsx";
+import { ModePicker, useCostCheck, credits, defaultChoices, modeName, modelOf } from "../credits.jsx";
 
 /* ---------- Shared bits ---------- */
 export function since(iso) {
@@ -219,9 +220,12 @@ export function WsHire() {
   const tpls = useApi("/api/ws/templates");
   const chans = useApi("/api/ws/channels");
   const t = tpls.data?.templates.find((x) => x.key === query.t);
+  const rec = useApi(t && t.engine === "llm" ? "/api/ws/recommend?template=" + encodeURIComponent(t.key) : null);
   const [f, setF] = useState(null);
   const act = useAction();
-  useEffect(() => { if (t && !f) setF({ name: t.name, brief: t.default_brief, rhythm: t.rhythm, run_hour: t.key === "briefing" ? 7 : 8, autonomy: t.key === "briefing" ? "auto" : "approve_all", channel_id: "" }); }, [t]);
+  const cost = useCostCheck(act.run);
+  useEffect(() => { if (t && !f) setF({ name: t.name, brief: t.default_brief, rhythm: t.rhythm, run_hour: t.key === "briefing" ? 7 : 8, autonomy: t.key === "briefing" ? "auto" : "approve_all", channel_id: "", mode: "", monthly_budget: "" }); }, [t]);
+  useEffect(() => { if (rec.data && f && !f.mode) setF({ ...f, mode: rec.data.recommended.mode }); }, [rec.data, f]);
   if (tpls.error) return <Shell title="Hire an agent" crumbs={[["Agents", "/workspace/agents"], ["Hire"]]}><Failed error={tpls.error} retry={tpls.reload} /></Shell>;
   if (!tpls.data) return <Shell title="Hire an agent" crumbs={[["Agents", "/workspace/agents"], ["Hire"]]}><Loading /></Shell>;
   if (!t) return <Shell title="Choose an agent" crumbs={[["Agents", "/workspace/agents"], ["Hire"]]}><p className="body">That agent isn't in the catalogue. <Link to="/workspace/agents?s=hire" className="link">See every agent</Link></p></Shell>;
@@ -231,11 +235,12 @@ export function WsHire() {
   const submit = (e) => {
     e.preventDefault();
     if (!f.brief.trim()) return act.setError("Tell the agent what to do. The suggested brief is a good start.");
-    act.run(async () => {
-      const r = await api("POST", "/api/ws/my-agents", { template: t.key, name: f.name.trim() || t.name, brief: f.brief.trim(), rhythm: f.rhythm, run_hour: Number(f.run_hour), autonomy: f.autonomy, channel_id: f.channel_id || null });
+    act.run(() => cost.guard(async (confirm) => {
+      const r = await api("POST", "/api/ws/my-agents", { template: t.key, name: f.name.trim() || t.name, brief: f.brief.trim(), rhythm: f.rhythm, run_hour: Number(f.run_hour), autonomy: f.autonomy, channel_id: f.channel_id || null,
+        ...(t.engine === "llm" ? { mode: f.mode || undefined, monthly_budget: f.monthly_budget ? Number(f.monthly_budget) : null, confirm } : {}) });
       changed();
       navigate("/workspace/agents/" + r.id + "?hired=1");
-    });
+    }));
   };
   return (
     <Shell title={"Hire " + t.name.toLowerCase().replace(/^./, (c) => c.toUpperCase())} crumbs={[["Agents", "/workspace/agents"], ["Hire " + t.name]]}>
@@ -258,6 +263,14 @@ export function WsHire() {
                   {f.rhythm !== "on_demand" && <div className="field"><label htmlFor="h-hour">At</label><select id="h-hour" value={f.run_hour} onChange={(e) => setF({ ...f, run_hour: e.target.value })}>{HOURS.map((h) => <option key={h} value={h}>{hh(h)}, UK time</option>)}</select></div>}
                 </div>
               )}
+              {t.engine === "llm" && <ModePicker value={f.mode} onChange={(mode) => setF({ ...f, mode })} choices={rec.data} legend="Mode: the mind it works with" />}
+              {t.engine === "llm" && (
+                <div className="field">
+                  <label htmlFor="h-budget">Monthly budget, in credits (optional)</label>
+                  <input id="h-budget" type="number" min={1} inputMode="numeric" value={f.monthly_budget} onChange={(e) => setF({ ...f, monthly_budget: e.target.value })} placeholder="No limit" />
+                  <p className="hint">When it reaches this, only this agent pauses until the 1st, and we tell you.</p>
+                </div>
+              )}
               {sends && (
                 <fieldset className="opts">
                   <legend className="flabel">Before it sends an email</legend>
@@ -278,7 +291,8 @@ export function WsHire() {
                 <p className="hint">Add Slack, Teams or a shared inbox in <Link to="/workspace/settings?s=channels" className="link link-s">Settings</Link>.</p>
               </div>
               {act.error && <Notice signal>{act.error}</Notice>}
-              <div className="actions actions-tight"><button className="btn" disabled={act.busy}>{act.busy ? "Hiring…" : "Hire " + (f.name || t.name)}</button><Link to="/workspace/agents" className="link">Cancel</Link></div>
+              {cost.prompt}
+              <div className="actions actions-tight"><button className="btn" disabled={act.busy || cost.pending}>{act.busy ? "Hiring…" : "Hire " + (f.name || t.name)}</button><Link to="/workspace/agents" className="link">Cancel</Link></div>
             </form>
           )}
         </div>
@@ -289,7 +303,7 @@ export function WsHire() {
           <h3 className="flabel mt-s">What it does</h3>
           <ul className="ticks">{t.does.map((x) => <li key={x}>{x}</li>)}</ul>
           {t.tools?.length > 0 && <><h3 className="flabel mt-s">Tools it can use</h3><p className="chips">{t.tools.map((x) => <span key={x} className="chip mono">{x}</span>)}</p></>}
-          <p className="dt mt-s">{t.rhythm_label}. Each tool call counts as one action against your plan.</p>
+          <p className="dt mt-s">{t.rhythm_label}. Each run uses credits for the work it does, at its mode's rate.</p>
         </aside>
       </div>
     </Shell>
@@ -308,17 +322,18 @@ export function WsAgent({ id }) {
   const [note, setNote] = useState(query.hired ? "Hired. It's working for you now." : "");
   const [confirm, setConfirm] = useState(false);
   const act = useAction();
+  const cost = useCostCheck(act.run);
   useEffect(() => { if (data && !f) setF(data.agent); }, [data]);
   if (error?.status === 404) return <Shell title="Agent not found" crumbs={[["Agents", "/workspace/agents"], ["Not found"]]}><p className="body">This agent has been removed. <Link to="/workspace/agents" className="link">Back to your agents</Link></p></Shell>;
   if (!data || !f) return <Shell title="Agent" crumbs={[["Agents", "/workspace/agents"], ["…"]]}>{error ? <Failed error={error} retry={reload} /> : <Loading />}</Shell>;
   const a = data.agent, t = data.template, llm = a.engine === "llm";
-  const dirty = ["name", "brief", "rhythm", "run_hour", "autonomy", "channel_id", "monthly_cap"].some((k) => String(f[k] ?? "") !== String(a[k] ?? ""));
+  const dirty = ["name", "brief", "rhythm", "run_hour", "autonomy", "channel_id", "mode", "monthly_budget"].some((k) => String(f[k] ?? "") !== String(a[k] ?? ""));
   const save = (e) => {
     e?.preventDefault();
-    act.run(async () => {
-      await api("PATCH", "/api/ws/my-agents/" + id, { name: f.name, ...(llm ? { brief: f.brief, rhythm: f.rhythm, run_hour: Number(f.run_hour), autonomy: f.autonomy, monthly_cap: Number(f.monthly_cap) } : {}), channel_id: f.channel_id || null });
+    act.run(() => cost.guard(async (confirm) => {
+      await api("PATCH", "/api/ws/my-agents/" + id, { name: f.name, ...(llm ? { brief: f.brief, rhythm: f.rhythm, run_hour: Number(f.run_hour), autonomy: f.autonomy, mode: f.mode, monthly_budget: f.monthly_budget === "" || f.monthly_budget == null ? null : Number(f.monthly_budget), confirm } : {}), channel_id: f.channel_id || null });
       const r = await api("GET", "/api/ws/my-agents/" + id); setF(r.agent); await reload(); setNote("Saved.");
-    });
+    }));
   };
   const toggle = () => act.run(async () => {
     const status = a.status === "running" ? "paused" : "running";
@@ -328,10 +343,11 @@ export function WsAgent({ id }) {
   const runNow = (e) => {
     e?.preventDefault();
     if (a.template === "research" && input.trim().length < 5) return act.setError("Ask the research agent a question first.");
-    act.run(async () => { const r = await api("POST", `/api/ws/my-agents/${id}/run`, { input: input.trim() || undefined }); navigate("/workspace/runs/" + r.run_id); });
+    act.run(() => cost.guard(async (confirm) => { const r = await api("POST", `/api/ws/my-agents/${id}/run`, { input: input.trim() || undefined, confirm }); navigate("/workspace/runs/" + r.run_id); }));
   };
   const remove = () => act.run(async () => { await api("DELETE", "/api/ws/my-agents/" + id); changed(); navigate("/workspace/agents"); });
-  const pct = Math.min(100, Math.round((data.actions_this_month / a.monthly_cap) * 100));
+  const used = data.credits_this_month || 0;
+  const pct = a.monthly_budget ? Math.min(100, Math.round((used / a.monthly_budget) * 100)) : 0;
   const canEdit = can("manager");
   return (
     <Shell title={a.name} crumbs={[["Agents", "/workspace/agents"], [a.name]]}
@@ -342,6 +358,8 @@ export function WsAgent({ id }) {
       <p className="body ws-intro">{t.short} <Link to={"/agents/" + t.key} className="link link-s">How it works</Link></p>
       <Notice>{note}</Notice>
       {act.error && <Notice signal>{act.error}</Notice>}
+      {a.budget_paused && <Notice signal>{a.name} has reached its monthly budget of {credits(a.monthly_budget)}, so it's paused until the 1st. The rest of your AI Team carries on. {canEdit && "Raise or remove its budget in Settings to carry on now."}</Notice>}
+      {cost.prompt}
       {a.template === "research" && canEdit && (
         <form className="askbar" onSubmit={runNow} noValidate>
           <label htmlFor="ask" className="askbar-l"><Glyph name="search" size={20} />Ask a question</label>
@@ -353,7 +371,8 @@ export function WsAgent({ id }) {
         <div><span className="dt">Status</span><b className="b-s">{a.status === "running" ? "Running" : "Paused"}</b></div>
         <div><span className="dt">{llm ? "Next run" : "Runs"}</span><b className="b-s">{llm ? (a.status !== "running" ? "Paused" : a.next_run_at ? since(a.next_run_at) : a.rhythm_label) : a.rhythm_label}</b></div>
         <div><span className="dt">Last run</span><b className="b-s">{a.last_run_at ? since(a.last_run_at) : "Not yet"}</b></div>
-        {llm && <div><span className="dt">Actions this month</span><b className="b-s">{data.actions_this_month} of {a.monthly_cap}</b><span className="meter" aria-hidden="true"><i style={{ width: pct + "%" }} /></span></div>}
+        {llm && <div className="mode-stat"><span className="dt">Mode</span><b className="b-s">{modeName(a.mode)}</b><span className="dt">{modelOf(a.mode)}</span></div>}
+        {llm && <div><span className="dt">Credits this month</span><b className="b-s">{used.toLocaleString("en-GB")}{a.monthly_budget ? ` of ${a.monthly_budget.toLocaleString("en-GB")}` : ""}</b>{a.monthly_budget ? <span className="meter" aria-hidden="true"><i style={{ width: pct + "%" }} className={pct >= 90 ? "is-hot" : ""} /></span> : <span className="dt">No budget set</span>}</div>}
       </div>
       {!llm && (
         <section className="panel mt-l">
@@ -388,7 +407,8 @@ export function WsAgent({ id }) {
                 {(chans.data?.channels || []).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
             </div>
-            {llm && <div className="field"><label htmlFor="a-cap">Monthly limit, in actions</label><input id="a-cap" type="number" min={10} max={10000} value={f.monthly_cap} onChange={(e) => setF({ ...f, monthly_cap: e.target.value })} /><p className="hint">The agent stops for the month when it reaches this, and tells you.</p></div>}
+            {llm && <ModePicker value={f.mode} onChange={(mode) => setF({ ...f, mode })} choices={data.choices || defaultChoices(a.mode)} legend="Default mode" />}
+            {llm && <div className="field"><label htmlFor="a-budget">Monthly budget, in credits</label><input id="a-budget" type="number" min={1} inputMode="numeric" value={f.monthly_budget ?? ""} placeholder="No limit" onChange={(e) => setF({ ...f, monthly_budget: e.target.value })} /><p className="hint">Optional. When it reaches this, only this agent pauses until the 1st, and we tell you.</p></div>}
           </fieldset>
           {canEdit && <div className="actions actions-tight"><button className="btn btn-sm" disabled={!dirty || act.busy}>Save changes</button>{dirty && <button type="button" className="link link-s" onClick={() => setF(a)}>Undo</button>}</div>}
           {canEdit && (

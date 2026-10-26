@@ -3,7 +3,10 @@
 import { newId, nowIso } from "../../../../packages/core/util";
 import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
-import { claude, modelCost } from "./llm";
+import { claude } from "./llm";
+import { creditsProblem, chargeSystem } from "./credits";
+import { tokensOf } from "../../../../packages/core/credits";
+import { MODES, SYSTEM_MODE } from "../../../../config/model-pricing";
 
 const DAY = 864e5;
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
@@ -116,13 +119,15 @@ export async function learnFromEdit(env: Env, orgId: string, actionId: string, b
   const b0 = `${before.subject || ""}\n${before.body || ""}`, a0 = `${after.subject || before.subject || ""}\n${after.body || before.body || ""}`;
   if (!meaningfulEdit(b0, a0)) return null;
   if ((await one<any>(env, "SELECT COUNT(*) AS n FROM house_rule WHERE org_id = ? AND status = 'proposed'", orgId)).n >= MAX_PROPOSED) return null;
+  if (await creditsProblem(env, orgId)) return null;
+  const sys = MODES[SYSTEM_MODE];
   const known = await activeRules(env, orgId);
   const r = await claude(env, {
     system: LEARN + (known.length ? `\nRules they already have (don't repeat these): ${known.join(" | ")}` : ""),
     messages: [{ role: "user", content: `DRAFT\nSubject: ${(before.subject || "").slice(0, 300)}\n${(before.body || "").slice(0, 4000)}\n\nSENT\nSubject: ${(after.subject || before.subject || "").slice(0, 300)}\n${(after.body || before.body || "").slice(0, 4000)}` }],
-    tools: [], max_tokens: 200,
+    tools: [], model: sys.model, effort: "low", max_tokens: 1000,
   });
-  await run(env, "INSERT INTO usage_event (id, org_id, kind, units, cost_pence, payment, at) VALUES (?,?,?,1,?,'plan',?)", newId("use"), orgId, "rule_learn", modelCost(env, r.usage?.input_tokens || 0, r.usage?.output_tokens || 0), nowIso());
+  await chargeSystem(env, orgId, sys.model, tokensOf(r.usage), 1, "Learning a house rule");
   const text = r.content.filter((x) => x.type === "text").map((x: any) => x.text).join("\n");
   let rule: string | null = null;
   try { rule = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)).rule ?? null; } catch { return null; }

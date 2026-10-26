@@ -43,11 +43,64 @@ try {
     ok((await page.locator(".osp-row").count()) === FACETS.filter((f) => f.area === "F").length, "area filter");
     await shot("os-02-map");
   });
-  await check("pricing is per business, with the whole OS on every plan", async () => {
+  await check("pricing is per business, with the whole OS on every plan, priced in credits", async () => {
     await go("/pricing");
     await text("One price for the whole business");
-    await text("Up to 100 agents");
+    await text("Plans differ in how many credits the AI Team gets each month");
+    await text("Up to 100 AI Team members");
     await text(`All ${FACETS.length} apps`);
+    for (const [plan, price, credits] of [["Starter", "£79", "1,500"], ["Growth", "£249", "5,000"], ["Business", "£599", "12,000"]]) {
+      const card = page.locator(".plan", { hasText: price });
+      ok((await card.count()) === 1 && (await card.innerText()).includes(plan) && (await card.innerText()).includes(`${credits} credits a month`), `${plan} card`);
+    }
+    ok((await page.locator(".plan.is-pick").innerText()).includes("Most chosen"), "Growth is most chosen");
+    await text("Choose the right mind for the job");
+    ok((await page.locator(".mode-card").count()) === 4, "four modes");
+    for (const m of ["Runs on Haiku", "Runs on Sonnet", "Runs on Opus", "Runs on Fable"]) await text(m);
+    await text("Prices before VAT. 14 days free with 150 credits, no card. Top up anytime at £35 per 1,000 credits, or the AI Team pauses until the 1st — nothing is charged without your say-so.");
+    for (const q of ["What's a credit?", "Which mode should I use?", "What happens when I run out?", "Do unused credits roll over?"]) await text(q);
+    ok(!(await page.locator("body").innerText()).match(/\bactions a month\b/i), "no action allowances left");
+    await shot("os-02b-pricing");
+    await go("/");
+    await page.locator("#pricing").scrollIntoViewIfNeeded();
+    await text("1,500 credits a month");
+    await text("Choose the right mind for the job.");
+  });
+  await check("usage: credits left, by agent and by mode, the ledger, a cheaper-mode tip and a top-up", async () => {
+    await go("/workspace/usage");
+    await text("Credits left");
+    await text("Plan credits reset");
+    await text("By mode");
+    await text("Strategy");
+    await text("Deep · Opus".split(" · ")[0]);
+    await text("Inbox runs on Deep; Quick would likely do the job and save ~");
+    await text("Budget reached");
+    ok((await page.locator("table.ledger").last().locator("tbody tr").count()) > 20, "the ledger lists the month's entries");
+    await shot("os-02c-usage");
+    const before = await page.locator(".stat-row > div").first().locator("b").innerText();
+    await page.getByRole("button", { name: "Top up", exact: true }).click();
+    await text("Your 1,000 credits arrive as soon as the payment clears");
+    const want = (Number(before.replace(/,/g, "")) + 1000).toLocaleString("en-GB");
+    await page.locator(".stat-row > div").first().locator("b", { hasText: want }).waitFor({ timeout: 5000 }).catch(async () => {
+      throw new Error(`top-up adds 1,000 (${before} -> ${await page.locator(".stat-row > div").first().locator("b").innerText()})`);
+    });
+  });
+  await check("modes: hiring suggests one with a reason; an agent's default mode shows its model; a costly run asks first", async () => {
+    await go("/workspace/agents/new?t=bookings");
+    await go("/workspace/agents/new?t=reviews");
+    await go("/workspace/agents/new?t=outreach");
+    await text("We suggest Standard");
+    ok(await page.locator(".opt.is-on", { hasText: "Standard · Sonnet" }).count() === 1, "Standard picked for outreach");
+    await go("/workspace/agents/agt_inb");
+    await text("Default mode");
+    ok((await page.locator(".stat-row .mode-stat").innerText()).replace(/\s+/g, " ").includes("Mode Deep Opus"), "mode with the model underneath");
+    await page.locator(".opt", { hasText: "Strategy · Fable" }).click();
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await text("Confirm to go ahead");
+    await text("credits a month");
+    await page.getByRole("button", { name: "Go ahead" }).click();
+    await text("Saved.");
+    await shot("os-02d-agent-mode");
   });
   await check("the launcher shows all 118 apps by area; search narrows them", async () => {
     await go("/workspace/apps");
@@ -121,7 +174,7 @@ try {
   });
   await check("phone width: landing, apps, a module and messages fit without sideways scroll", async () => {
     await page.setViewportSize({ width: 390, height: 844 });
-    for (const [h, n] of [["/", "os-06-phone-home"], ["/os", "os-07-phone-map"], ["/workspace/apps", "os-08-phone-apps"], ["/workspace/app/payroll", "os-09-phone-module"], ["/workspace/messages", "os-10-phone-messages"]]) {
+    for (const [h, n] of [["/", "os-06-phone-home"], ["/pricing", "os-06b-phone-pricing"], ["/workspace/usage", "os-06c-phone-usage"], ["/os", "os-07-phone-map"], ["/workspace/apps", "os-08-phone-apps"], ["/workspace/app/payroll", "os-09-phone-module"], ["/workspace/messages", "os-10-phone-messages"]]) {
       await go(h); await page.waitForTimeout(300);
       const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       ok(wide <= 1, `${h} scrolls sideways by ${wide}px`);

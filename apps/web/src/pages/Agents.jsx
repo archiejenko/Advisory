@@ -185,7 +185,7 @@ export function AgentPage({ slug }) {
   const faq = [
     ...(SENDS.has(t.key) ? [["Will it send anything without asking?", "Not unless you tell it to. By default every email waits on your desk. You can edit it, approve it or reject it, and replies come straight back to you, not to us."]] : []),
     ["Where does its information come from?", t.engine === "llm" ? "Your business profile, the data you give it (leads, invoices, messages) and the tools it calls: Companies House, The Gazette, web search and the pages it reads. It's told never to invent facts or email addresses, and every step is recorded." : "Companies House, The Gazette and the FCA register, read directly and cited on every fact. It never guesses which company you meant; uncertain matches come back to you."],
-    ["What does it cost?", `Every agent is included in every plan. Plans differ in how many agents work at once and how many actions they take a month. Starter is £${PLANS.starter.price} a month for two agents.`],
+    ["What does it cost?", `Every agent is included in every plan, and every plan has room for up to 100. Plans differ in how many credits the AI Team gets each month; Starter is £${PLANS.starter.price} a month with ${PLANS.starter.credits.toLocaleString("en-GB")} credits. You choose each agent's mode, and with it what its work costs.`],
     ["Can I change what it does?", t.engine === "llm" ? "Yes. Edit its brief in plain English, or move badges on the org chart: give it a skill, take one away, change when it runs or how much it does on its own. Changes wait until you apply them." : "You choose which companies it covers and where its alerts go: Slack, Teams or email."],
   ];
   return (

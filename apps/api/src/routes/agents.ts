@@ -6,9 +6,14 @@ import { newId, nowIso } from "../../../../packages/core/util";
 import { parseCsv } from "../../../../packages/core/csv";
 import { TEMPLATES, template, RHYTHM_LABEL } from "../../../../packages/core/templates";
 import { type Env, audit } from "../lib/db";
-import { body, bad, notFound } from "../lib/http";
+import { body, bad, notFound, HttpError } from "../lib/http";
 import { requireRole, type Vars } from "./auth";
-import { hireAgent, setAgentStatus, startRun, nextRunAt, spreadMinute } from "../lib/agents";
+import { hireAgent, setAgentStatus, startRun, nextRunAt, spreadMinute, estimateRun, modeFor } from "../lib/agents";
+import { agentUsed, clearBudgetPause, pastRuns, periodOf } from "../lib/credits";
+import { recommend, estimateRange, taskTypeOf } from "../../../../packages/core/modes";
+import { modeLabel, showCredits } from "../../../../packages/core/credits";
+import { MODES, MODELS, MODE_ORDER, type ModeKey } from "../../../../config/model-pricing";
+import { RUNS_A_MONTH } from "../../../../packages/core/swarms";
 import { executeAction, rejectAction } from "../lib/actions";
 import { specFor, syncOrgSwarms } from "../lib/swarm";
 import { logActivity } from "../lib/crm";
@@ -16,6 +21,35 @@ import { learnAfterApprove } from "./today";
 
 type App = Hono<{ Bindings: Env; Variables: Vars }>;
 const manager = requireRole("manager");
+const Mode = z.enum(["quick", "standard", "deep", "strategy"]);
+/** Runs that start without anyone there to confirm: on a schedule or when something arrives. */
+const UNATTENDED = new Set(["weekdays", "daily", "weekly", "monthly", "on_event"]);
+
+/** Every mode's likely credits for a job, cheapest first, with the one its job suits. */
+async function modeChoices(env: Env, orgId: string, job: { template: string; text?: string | null }) {
+  const rec = recommend(job);
+  const past = await pastRuns(env, orgId, rec.task_type);
+  const r = recommend(job, past);
+  return {
+    recommended: { mode: r.mode, reason: r.reason, low: r.low, high: r.high, from: r.from, task_type: r.task_type },
+    modes: MODE_ORDER.map((k) => ({ mode: k, name: MODES[k].name, model: MODELS[MODES[k].model].label, label: modeLabel(k), for: MODES[k].for, ...estimateRange(k, past) })),
+  };
+}
+
+/**
+ * Setting an agent to run on its own in a mode likely to cost more than the business's threshold per run needs the
+ * owner's say-so once, with what it means per month. Returns the per-run estimate they approved.
+ */
+async function confirmUnattended(c: any, a: { template: string; role?: string | null; instructions?: string | null }, mode: ModeKey, rhythm: string, confirm?: boolean) {
+  const org = await c.get("db").one("SELECT confirm_over FROM org WHERE id = ?1");
+  const est = await estimateRun(c.env, c.get("orgId"), a, mode);
+  if (UNATTENDED.has(rhythm) && est.high > Number(org.confirm_over) && !confirm) {
+    const runs = RUNS_A_MONTH[rhythm as keyof typeof RUNS_A_MONTH] || 0;
+    throw new HttpError(409, "needs_confirmation", `In ${MODES[mode].name} mode this agent is likely to use ${est.low}–${est.high} credits a run, about ${(est.low * runs).toLocaleString("en-GB")}–${(est.high * runs).toLocaleString("en-GB")} a month on its schedule. Confirm to go ahead.`,
+      { estimate: { low: est.low, high: est.high, mode, from: est.from, per_month: { low: est.low * runs, high: est.high * runs } }, threshold: Number(org.confirm_over) });
+  }
+  return est.high;
+}
 const tplOut = (t: (typeof TEMPLATES)[number], profile: any) => {
   const { brief, instructions, kickoff, ...rest } = t;
   return { ...rest, rhythm_label: RHYTHM_LABEL[t.rhythm], default_brief: brief(profile) };
@@ -51,7 +85,7 @@ export function registerAgentRoutes(ws: App) {
   /* ---------- My agents ---------- */
   const agentOut = (a: any) => {
     const t = template(a.template) || (a.template === "custom" ? { engine: "llm", category: "Run", glyph: "spark" } : undefined);
-    return { id: a.id, template: a.template, swarm_id: a.swarm_id ?? null, role: a.role ?? null, name: a.name, brief: a.brief, settings: JSON.parse(a.settings || "{}"), status: a.status, rhythm: a.rhythm, rhythm_label: RHYTHM_LABEL[a.rhythm as keyof typeof RHYTHM_LABEL], run_hour: a.run_hour, autonomy: a.autonomy, channel_id: a.channel_id, monthly_cap: a.monthly_cap, next_run_at: a.next_run_at, last_run_at: a.last_run_at, created_at: a.created_at, engine: t?.engine, category: t?.category, glyph: t?.glyph, waiting: a.waiting ?? undefined, runs: a.runs ?? undefined };
+    return { id: a.id, template: a.template, swarm_id: a.swarm_id ?? null, role: a.role ?? null, name: a.name, brief: a.brief, settings: JSON.parse(a.settings || "{}"), status: a.status, rhythm: a.rhythm, rhythm_label: RHYTHM_LABEL[a.rhythm as keyof typeof RHYTHM_LABEL], run_hour: a.run_hour, autonomy: a.autonomy, channel_id: a.channel_id, mode: a.mode, mode_label: modeLabel(a.mode), monthly_budget: a.monthly_budget ?? null, budget_paused: a.budget_paused_period === periodOf(), next_run_at: a.next_run_at, last_run_at: a.last_run_at, created_at: a.created_at, engine: t?.engine, category: t?.category, glyph: t?.glyph, waiting: a.waiting ?? undefined, runs: a.runs ?? undefined };
   };
   ws.get("/my-agents", async (c) => {
     const rows = await c.get("db").all(`SELECT a.*, (SELECT COUNT(*) FROM agent_action x WHERE x.agent_id = a.id AND x.status = 'proposed') AS waiting,
@@ -59,37 +93,58 @@ export function registerAgentRoutes(ws: App) {
     return c.json({ agents: rows.map(agentOut) });
   });
 
+  /** Which mode suits a job and what each mode would likely cost, for the hire and task forms. */
+  ws.get("/recommend", async (c) => {
+    const tpl = c.req.query("template") || "custom", text = (c.req.query("text") || "").slice(0, 2000);
+    return c.json(await modeChoices(c.env, c.get("orgId"), { template: tpl, text: text || null }));
+  });
+
   ws.post("/my-agents", manager, async (c) => {
-    const b = await body(c, z.object({ template: z.string(), name: z.string().max(80).optional(), brief: z.string().max(4000).optional(), rhythm: z.string().optional(), run_hour: z.number().int().min(0).max(23).optional(), autonomy: z.enum(["approve_all", "approve_first", "auto"]).optional(), channel_id: z.string().nullable().optional() }));
+    const b = await body(c, z.object({ template: z.string(), name: z.string().max(80).optional(), brief: z.string().max(4000).optional(), rhythm: z.string().optional(), run_hour: z.number().int().min(0).max(23).optional(), autonomy: z.enum(["approve_all", "approve_first", "auto"]).optional(), channel_id: z.string().nullable().optional(),
+      mode: Mode.optional(), monthly_budget: z.number().min(1).max(1000000).nullable().optional(), confirm: z.boolean().optional() }));
     if (b.channel_id && !(await c.get("db").one("SELECT id FROM channel WHERE org_id = ?1 AND id = ?2", b.channel_id))) throw notFound("Channel");
-    const id = await hireAgent(c.env, c.get("orgId"), c.get("user").id, b);
-    return c.json({ id }, 201);
+    const t = template(b.template);
+    const mode = b.mode || (t ? recommend({ template: t.key }).mode : "standard");
+    const approved = t?.engine === "llm" ? await confirmUnattended(c, { template: b.template }, mode, b.rhythm || t.rhythm, b.confirm) : null;
+    const id = await hireAgent(c.env, c.get("orgId"), c.get("user").id, { ...b, mode });
+    if (approved != null) await c.get("db").run("UPDATE agent SET confirmed_estimate = ?3 WHERE org_id = ?1 AND id = ?2", id, approved);
+    return c.json({ id, mode }, 201);
   });
 
   ws.get("/my-agents/:id", async (c) => {
     const db = c.get("db"), id = c.req.param("id");
     const a = await db.one("SELECT * FROM agent WHERE org_id = ?1 AND id = ?2", id);
     if (!a) throw notFound("Agent");
-    const runs = await db.all("SELECT id, trigger, status, steps, tool_calls, summary, error, cost_pence, created_at, finished_at FROM agent_run WHERE org_id = ?1 AND agent_id = ?2 ORDER BY created_at DESC LIMIT 20", id);
-    const month = nowIso().slice(0, 7) + "-01";
-    const used = ((await db.one("SELECT COALESCE(SUM(tool_calls),0) AS n FROM agent_run WHERE org_id = ?1 AND agent_id = ?2 AND created_at >= ?3", id, month)) as any).n;
+    const runs = (await db.all("SELECT id, trigger, status, steps, tool_calls, summary, error, mode, model, credits, created_at, finished_at FROM agent_run WHERE org_id = ?1 AND agent_id = ?2 ORDER BY created_at DESC LIMIT 20", id))
+      .map((r: any) => ({ ...r, credits: r.steps ? showCredits(r.credits, { run: true }) : 0, mode_label: r.mode ? modeLabel(r.mode) : null }));
+    const used = showCredits(await agentUsed(c.env, id));
     const org = await db.one("SELECT name, profile FROM org WHERE id = ?1");
     const t = template(a.template);
     const spec = specFor(a)!;
     const tpl = t ? tplOut(t, { name: org.name, ...JSON.parse(org.profile || "{}") })
       : { key: "custom", name: a.name, category: spec.category, glyph: spec.glyph, short: a.role || "A custom role in a swarm.", description: a.role || "", does: [], needs: "", status: "live", engine: "llm", rhythm: a.rhythm, rhythm_label: RHYTHM_LABEL[a.rhythm as keyof typeof RHYTHM_LABEL], tools: spec.tools, default_brief: a.brief };
-    return c.json({ agent: agentOut(a), runs, actions_this_month: used, template: tpl });
+    const choices = spec.engine === "llm" ? await modeChoices(c.env, c.get("orgId"), { template: a.template, text: a.template === "custom" ? `${a.role || ""} ${a.instructions || ""}` : null }) : null;
+    return c.json({ agent: agentOut(a), runs, credits_this_month: used, choices, template: tpl });
   });
 
   ws.patch("/my-agents/:id", manager, async (c) => {
-    const b = await body(c, z.object({ name: z.string().min(1).max(80).optional(), brief: z.string().min(1).max(4000).optional(), status: z.enum(["running", "paused"]).optional(), rhythm: z.enum(["weekdays", "daily", "weekly", "monthly", "on_demand", "on_event"]).optional(), run_hour: z.number().int().min(0).max(23).optional(), autonomy: z.enum(["approve_all", "approve_first", "auto"]).optional(), channel_id: z.string().nullable().optional(), monthly_cap: z.number().int().min(10).max(10000).optional() }));
+    const b = await body(c, z.object({ name: z.string().min(1).max(80).optional(), brief: z.string().min(1).max(4000).optional(), status: z.enum(["running", "paused"]).optional(), rhythm: z.enum(["weekdays", "daily", "weekly", "monthly", "on_demand", "on_event"]).optional(), run_hour: z.number().int().min(0).max(23).optional(), autonomy: z.enum(["approve_all", "approve_first", "auto"]).optional(), channel_id: z.string().nullable().optional(),
+      mode: Mode.optional(), monthly_budget: z.number().min(1).max(1000000).nullable().optional(), confirm: z.boolean().optional() }));
     const db = c.get("db"), id = c.req.param("id")!;
     const a = await db.one("SELECT * FROM agent WHERE org_id = ?1 AND id = ?2", id);
     if (!a) throw notFound("Agent");
     if (b.channel_id && !(await db.one("SELECT id FROM channel WHERE org_id = ?1 AND id = ?2", b.channel_id))) throw notFound("Channel");
-    for (const k of ["name", "brief", "rhythm", "run_hour", "autonomy", "channel_id", "monthly_cap"] as const) {
+    // A new mode or schedule for an agent that runs on its own may need the owner's say-so on what it will cost.
+    if ((b.mode !== undefined && b.mode !== a.mode) || (b.rhythm !== undefined && b.rhythm !== a.rhythm)) {
+      if (specFor(a)?.engine === "llm") {
+        const approved = await confirmUnattended(c, a, modeFor(a, b.mode), b.rhythm ?? a.rhythm, b.confirm);
+        await db.run("UPDATE agent SET confirmed_estimate = ?3 WHERE org_id = ?1 AND id = ?2", id, approved);
+      }
+    }
+    for (const k of ["name", "brief", "rhythm", "run_hour", "autonomy", "channel_id", "mode", "monthly_budget"] as const) {
       if (b[k] !== undefined) await db.run(`UPDATE agent SET ${k} = ?3 WHERE org_id = ?1 AND id = ?2`, id, b[k]);
     }
+    if (b.monthly_budget !== undefined) await clearBudgetPause(c.env, id);
     if (b.rhythm !== undefined || b.run_hour !== undefined) {
       const t = specFor(a)!;
       await db.run("UPDATE agent SET next_run_at = ?3 WHERE org_id = ?1 AND id = ?2", id, t.engine === "llm" && a.status === "running" ? nextRunAt(b.rhythm ?? a.rhythm, b.run_hour ?? a.run_hour, new Date(), spreadMinute(id)) : null);
@@ -113,15 +168,16 @@ export function registerAgentRoutes(ws: App) {
   });
 
   ws.post("/my-agents/:id/run", manager, async (c) => {
-    const b = await body(c, z.object({ input: z.string().max(4000).optional() }));
-    const id = await startRun(c.env, c.get("orgId"), c.req.param("id")!, "manual", b.input);
+    const b = await body(c, z.object({ input: z.string().max(4000).optional(), mode: Mode.optional(), confirm: z.boolean().optional() }));
+    // A person is here, so a run likely to cost more than the threshold asks them first (409 with the estimate).
+    const id = await startRun(c.env, c.get("orgId"), c.req.param("id")!, "manual", b.input, { mode: b.mode, confirm: b.confirm ?? false });
     return c.json({ run_id: id, status: "queued" }, 202);
   });
 
   /* ---------- Runs ---------- */
   ws.get("/runs", async (c) => {
     const agent = c.req.query("agent");
-    const rows = await c.get("db").all(`SELECT r.id, r.agent_id, g.name AS agent, g.template, r.trigger, r.status, r.steps, r.tool_calls, r.summary, r.error, r.cost_pence, r.created_at, r.finished_at
+    const rows = await c.get("db").all(`SELECT r.id, r.agent_id, g.name AS agent, g.template, r.trigger, r.status, r.steps, r.tool_calls, r.summary, r.error, r.mode, r.model, r.credits, r.created_at, r.finished_at
       FROM agent_run r LEFT JOIN agent g ON g.id = r.agent_id WHERE r.org_id = ?1 ${agent ? "AND r.agent_id = ?2" : ""} ORDER BY r.created_at DESC LIMIT 100`, ...(agent ? [agent] : []));
     return c.json({ runs: rows });
   });

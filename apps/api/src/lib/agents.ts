@@ -6,7 +6,7 @@ import { newId, nowIso } from "../../../../packages/core/util";
 import { template, TEMPLATES, PLANS, type Template } from "../../../../packages/core/templates";
 import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
-import { claude, modelCost, type Msg, type Block } from "./llm";
+import { claude, type Msg, type Block } from "./llm";
 import { accessError, orgAccess, trialOver, TRIAL_DAYS } from "./billing";
 import { specFor, emit, swarmContext, syncSwarm } from "./swarm";
 import { settleTasksForRun } from "./orgbase";
@@ -14,7 +14,10 @@ import type { Blueprint } from "../../../../packages/core/swarms";
 import { getTool, runTool, toolDefs, noteTrustedUrls, type Tool, type ToolCtx } from "./tools";
 import { notifyChannel } from "./delivery";
 import { activeRules } from "./today";
-import { budgetProblem, requireBudget } from "./budget";
+import { requireCredits, creditsProblem, available, agentBudgetProblem, agentUsed, chargeRun, pastRuns, CREDITS_USED } from "./credits";
+import { creditsFor, tokensOf, isMode } from "../../../../packages/core/credits";
+import { estimateRange, taskTypeOf, recommend } from "../../../../packages/core/modes";
+import { MODES, DEFAULT_MODE, type ModeKey } from "../../../../config/model-pricing";
 import { hit } from "./limits";
 import { logError } from "./log";
 
@@ -66,26 +69,20 @@ export function nextRunAt(rhythm: string, hour: number, from = new Date(), minut
 
 /* ---------- Plan limits ---------- */
 export { trialOver, TRIAL_DAYS };
-const monthStart = () => nowIso().slice(0, 7) + "-01";
-/** Actions used this month across the whole business, against the plan's allowance. */
-export async function orgActionsLeft(env: Env, org: { id: string; plan?: string }) {
-  const used = ((await one<any>(env, "SELECT COUNT(*) AS n FROM usage_event WHERE org_id = ? AND kind = 'agent_action' AND at >= ?", org.id, monthStart())) as any).n as number;
-  return (PLANS[org.plan || "trial"] || PLANS.trial).actions - used;
-}
 
 /**
- * Claim one action for an agent, atomically: the usage row is written only while both the business's monthly
- * allowance and the agent's own cap have room. Concurrent runs can't overspend, and usage is on record the
- * moment the action happens, even if the run dies later.
+ * The mode an agent hired without one gets (by a swarm, at sign-up): the one its job suits, for catalogue agents.
+ * Custom roles start on Standard; the owner can move them, and a costlier mode then asks first.
  */
-export async function claimAction(env: Env, a: { orgId: string; plan?: string; agentId: string; cap: number; runId: string; tool: string }) {
-  const allowance = (PLANS[a.plan || "trial"] || PLANS.trial).actions, month = monthStart();
-  const r = await run(env, `INSERT INTO usage_event (id, org_id, agent_id, kind, units, cost_pence, payment, payment_ref, at)
-    SELECT ?, ?, ?, 'agent_action', 1, 0, 'plan', ?, ?
-    WHERE (SELECT COUNT(*) FROM usage_event WHERE org_id = ? AND kind = 'agent_action' AND at >= ?) < ?
-      AND (SELECT COUNT(*) FROM usage_event WHERE agent_id = ? AND kind = 'agent_action' AND at >= ?) < ?`,
-    newId("use"), a.orgId, a.agentId, a.runId, nowIso(), a.orgId, month, allowance, a.agentId, month, a.cap);
-  return !!r.meta.changes;
+const defaultModeFor = (template: string): ModeKey => (template === "custom" ? DEFAULT_MODE : recommend({ template }).mode);
+
+/** The mode a run uses: the one asked for, else the agent's own. */
+export const modeFor = (agent: { mode?: string | null }, asked?: string | null): ModeKey => (isMode(asked) ? asked : isMode(agent.mode) ? agent.mode : DEFAULT_MODE);
+
+/** Likely credits for one run of this agent in a mode, from past runs of the same kind of job. */
+export async function estimateRun(env: Env, orgId: string, agent: { template: string; role?: string | null; instructions?: string | null }, mode: ModeKey, input?: string | null) {
+  const taskType = taskTypeOf({ template: agent.template, text: input || (agent.template === "custom" ? `${agent.role || ""} ${agent.instructions || ""}` : null) });
+  return { task_type: taskType, ...estimateRange(mode, await pastRuns(env, orgId, taskType)) };
 }
 
 /* ---------- Hiring ---------- */
@@ -95,6 +92,8 @@ export type HireInput = {
   swarm_id?: string; swarm_key?: string; role?: string; instructions?: string; tools?: string[];
   /** The org chart: role and skills (badges), and who it reports to. */
   badges?: { role: string; skills: string[] }; reports_to?: string | null;
+  /** The mode it runs in by default, and an optional cap on credits a month. */
+  mode?: string; monthly_budget?: number | null;
 };
 
 export async function hireAgent(env: Env, orgId: string, userId: string, h: HireInput) {
@@ -119,12 +118,12 @@ export async function hireAgent(env: Env, orgId: string, userId: string, h: Hire
   const rhythm = h.rhythm && ["weekdays", "daily", "weekly", "monthly", "on_demand", "on_event"].includes(h.rhythm) ? h.rhythm : t.rhythm;
   const hour = Number.isInteger(h.run_hour) && h.run_hour! >= 0 && h.run_hour! <= 23 ? h.run_hour! : 8;
   const id = newId("agt");
-  await run(env, `INSERT INTO agent (id, org_id, template, name, brief, settings, rhythm, run_hour, autonomy, channel_id, next_run_at, created_by, created_at, swarm_id, swarm_key, role, instructions, tools, badges, reports_to) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  await run(env, `INSERT INTO agent (id, org_id, template, name, brief, settings, rhythm, run_hour, autonomy, channel_id, next_run_at, created_by, created_at, swarm_id, swarm_key, role, instructions, tools, badges, reports_to, mode, monthly_budget) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     id, orgId, t.key, (h.name || t.name).slice(0, 80), (h.brief || t.brief({ name: org.name, ...JSON.parse(org.profile || "{}") })).slice(0, 4000),
     JSON.stringify(h.settings || {}), rhythm, hour, ["approve_all", "approve_first", "auto"].includes(h.autonomy || "") ? h.autonomy : "approve_all",
     h.channel_id || null, t.engine === "llm" ? nextRunAt(rhythm, hour, new Date(), spreadMinute(id)) : null, userId, nowIso(),
     h.swarm_id ?? null, h.swarm_key ?? null, h.role?.slice(0, 120) ?? null, custom ? h.instructions!.slice(0, 4000) : null, custom ? JSON.stringify(h.tools || []) : null,
-    h.badges ? JSON.stringify(h.badges) : null, h.reports_to ?? null);
+    h.badges ? JSON.stringify(h.badges) : null, h.reports_to ?? null, isMode(h.mode) ? h.mode : defaultModeFor(t.key), h.monthly_budget ?? null);
   // The register agents keep their own engines: switching one on here switches it on there.
   const engineKey = { watch: "watch", check: "check", prospect: "prospect" }[t.engine as string];
   if (engineKey) await run(env, "UPDATE agent_config SET on_ = 1, channel_id = COALESCE(?, channel_id) WHERE org_id = ? AND agent = ?", h.channel_id || null, orgId, engineKey);
@@ -142,7 +141,18 @@ export async function setAgentStatus(env: Env, orgId: string, agentId: string, s
 }
 
 /* ---------- Running ---------- */
-export async function startRun(env: Env, orgId: string, agentId: string, trigger: "schedule" | "manual" | "event", input?: string, opts: { replyChannel?: string } = {}) {
+export type StartOpts = {
+  replyChannel?: string;
+  /** Run this one in a different mode from the agent's default (a task given in its own mode). */
+  mode?: string | null;
+  /**
+   * Set by callers where a person is there to confirm (the Run button, giving a task). Undefined for schedules,
+   * events and chat, which run on the estimate the owner approved when they set the agent's mode.
+   */
+  confirm?: boolean;
+};
+
+export async function startRun(env: Env, orgId: string, agentId: string, trigger: "schedule" | "manual" | "event", input?: string, opts: StartOpts = {}) {
   const a = await one<any>(env, "SELECT * FROM agent WHERE id = ? AND org_id = ?", agentId, orgId);
   if (!a) throw new HttpError(404, "not_found", "Agent not found.");
   const t = specFor(a);
@@ -150,12 +160,21 @@ export async function startRun(env: Env, orgId: string, agentId: string, trigger
   if (t.needsInput && !input?.trim()) throw new HttpError(400, "invalid_request", t.key === "os" ? `Ask ${t.name} something.` : "Ask the research agent a question.");
   const { org, problem } = await orgAccess(env, orgId);
   if (problem) throw accessError(problem);
-  if ((await orgActionsLeft(env, org)) <= 0) throw new HttpError(402, "allowance_used", "Your agents have used this month's actions. They start again on the 1st, or move to a bigger plan in Usage and plan.");
-  await requireBudget(env, org);
+  await requireCredits(env, orgId);
+  const budget = await agentBudgetProblem(env, a);
+  if (budget) throw new HttpError(402, "agent_budget_used", budget);
+  const mode = modeFor(a, opts.mode);
+  const est = await estimateRun(env, orgId, a, mode, input);
+  // A run likely to cost more than the business's threshold waits for the person who started it to say yes.
+  if (opts.confirm === false && est.high > Number(org.confirm_over ?? 100)) {
+    throw new HttpError(409, "needs_confirmation", `This run is likely to use ${est.low === est.high ? est.high : `${est.low}–${est.high}`} credits in ${MODES[mode].name} mode. Confirm to go ahead.`,
+      { estimate: { low: est.low, high: est.high, mode, from: est.from }, threshold: Number(org.confirm_over ?? 100) });
+  }
   // However runs are started (asked, mentioned, handed off, woken by mail), one business can't start more than this an hour.
   if (!(await hit(env, "runs", orgId, Number(env.RUNS_PER_HOUR || RUNS_PER_HOUR)))) throw new HttpError(429, "slow_down", "Your agents have started a lot of runs this hour. New ones can start again shortly.");
   const id = newId("run");
-  await run(env, "INSERT INTO agent_run (id, org_id, agent_id, trigger, input, status, created_at, reply_channel) VALUES (?,?,?,?,?,?,?,?)", id, orgId, agentId, trigger, input?.slice(0, 4000) ?? null, "queued", nowIso(), opts.replyChannel ?? null);
+  await run(env, "INSERT INTO agent_run (id, org_id, agent_id, trigger, input, status, created_at, reply_channel, mode, model, task_type) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    id, orgId, agentId, trigger, input?.slice(0, 4000) ?? null, "queued", nowIso(), opts.replyChannel ?? null, mode, MODES[mode].model, est.task_type);
   await (env.AGENT_JOBS ?? env.JOBS).send({ type: "agent_run", run_id: id });
   return id;
 }
@@ -163,12 +182,16 @@ export async function startRun(env: Env, orgId: string, agentId: string, trigger
 export type LoopOut = {
   messages: Msg[]; steps: number; toolCalls: { tool: string; input: any; ok: boolean; result?: any }[]; text: string;
   tokensIn: number; tokensOut: number; cacheWrite: number; cacheRead: number;
+  /** Model cost so far in credits, unrounded: each request priced on its own, on the model that ran it. */
+  credits: number;
 };
-export const newLoopOut = (): LoopOut => ({ messages: [], steps: 0, toolCalls: [], text: "", tokensIn: 0, tokensOut: 0, cacheWrite: 0, cacheRead: 0 });
-export const loopCost = (env: Env, o: LoopOut) => modelCost(env, o.tokensIn, o.tokensOut, o.cacheWrite, o.cacheRead);
+export const newLoopOut = (): LoopOut => ({ messages: [], steps: 0, toolCalls: [], text: "", tokensIn: 0, tokensOut: 0, cacheWrite: 0, cacheRead: 0, credits: 0 });
+export const loopTokens = (o: LoopOut) => ({ input: o.tokensIn, cacheRead: o.cacheRead, cacheWrite: o.cacheWrite, output: o.tokensOut });
 
 export type LoopOpts = {
   system: string; user: string; tools: Tool[]; ctx: ToolCtx; maxSteps?: number;
+  /** The mode to run in (its model, effort and output limit). Standard when not given. */
+  mode?: ModeKey;
   /** Called before each model step. Return a message to stop the run there (the AI budget is used up, say). */
   beforeStep?: () => Promise<string | null>;
   /** Called before each tool call. Return false (or a message) to refuse the call. */
@@ -196,8 +219,10 @@ export async function agentLoop(env: Env, o: LoopOpts): Promise<LoopOut> {
   for (let step = 0; step < (o.maxSteps || MAX_STEPS); step++) {
     const stop = o.beforeStep ? await o.beforeStep() : null;
     if (stop) throw new HttpError(409, "run_stopped", stop);
-    const r = await claude(env, { system: o.system, messages, tools: defs });
+    const m = MODES[o.mode || DEFAULT_MODE];
+    const r = await claude(env, { system: o.system, messages, tools: defs, model: m.model, effort: m.effort, max_tokens: m.maxTokens });
     out.steps++;
+    out.credits += creditsFor(m.model, tokensOf(r.usage));
     out.tokensIn += r.usage?.input_tokens || 0; out.tokensOut += r.usage?.output_tokens || 0;
     out.cacheWrite += r.usage?.cache_creation_input_tokens || 0; out.cacheRead += r.usage?.cache_read_input_tokens || 0;
     messages.push({ role: "assistant", content: r.content });
@@ -263,21 +288,29 @@ function seedTrustedUrls(org: any, r: { trigger: string; input?: string | null }
   return ctx.trustedUrls!;
 }
 
-/** Record what a run cost and did, whether it finished or failed partway. */
+/** Record what a run cost and did, whether it finished or failed partway, and charge it to the credit ledger. */
 async function settleRun(env: Env, orgId: string, runId: string, out: LoopOut, fields: { status: string; summary?: string | null; error?: string | null; transcript_key?: string | null }) {
-  const cost = loopCost(env, out);
+  const pence = Math.ceil(out.credits);
   // Only a run still marked running is settled. If the sweep already called it interrupted, that stands:
   // the cost and transcript are still recorded, but the status isn't overwritten.
-  const r = await run(env, `UPDATE agent_run SET status = ?, steps = ?, tool_calls = ?, summary = ?, error = ?, transcript_key = COALESCE(?, transcript_key), tokens_in = ?, tokens_out = ?, cost_pence = ?, finished_at = ? WHERE id = ? AND status = 'running'`,
+  const r = await run(env, `UPDATE agent_run SET status = ?, steps = ?, tool_calls = ?, summary = ?, error = ?, transcript_key = COALESCE(?, transcript_key), tokens_in = ?, cache_read = ?, cache_write = ?, tokens_out = ?, credits = ?, cost_pence = ?, finished_at = ? WHERE id = ? AND status = 'running'`,
     fields.status, out.steps, out.toolCalls.length, fields.summary ?? null, fields.error ?? null, fields.transcript_key ?? null,
-    out.tokensIn + out.cacheWrite + out.cacheRead, out.tokensOut, cost, nowIso(), runId);
-  if (!r.meta.changes) await run(env, "UPDATE agent_run SET steps = ?, tool_calls = ?, tokens_in = ?, tokens_out = ?, cost_pence = ?, transcript_key = COALESCE(?, transcript_key) WHERE id = ?",
-    out.steps, out.toolCalls.length, out.tokensIn + out.cacheWrite + out.cacheRead, out.tokensOut, cost, fields.transcript_key ?? null, runId);
-  // Model cost goes on record once per run (unique by run id), so a sweep or a retry can't count it twice.
-  await run(env, `INSERT INTO usage_event (id, org_id, kind, units, cost_pence, payment, payment_ref, at)
-    SELECT ?, ?, 'agent_run', 1, ?, 'plan', ?, ? WHERE NOT EXISTS (SELECT 1 FROM usage_event WHERE kind = 'agent_run' AND payment_ref = ?)`,
-    newId("use"), orgId, cost, runId, nowIso(), runId);
-  return cost;
+    out.tokensIn, out.cacheRead, out.cacheWrite, out.tokensOut, out.credits, pence, nowIso(), runId);
+  if (!r.meta.changes) await run(env, "UPDATE agent_run SET steps = ?, tool_calls = ?, tokens_in = ?, cache_read = ?, cache_write = ?, tokens_out = ?, credits = ?, cost_pence = ?, transcript_key = COALESCE(?, transcript_key) WHERE id = ?",
+    out.steps, out.toolCalls.length, out.tokensIn, out.cacheRead, out.cacheWrite, out.tokensOut, out.credits, pence, fields.transcript_key ?? null, runId);
+  await chargeSettled(env, runId);
+  return out.credits;
+}
+
+/**
+ * Put a run on the ledger from its row (unique by run id, so a sweep or a retry can't charge twice). A run that
+ * never reached the model used nothing and isn't charged.
+ */
+async function chargeSettled(env: Env, runId: string) {
+  const x = await one<any>(env, "SELECT * FROM agent_run WHERE id = ?", runId);
+  if (!x || !x.steps || !x.model) return;
+  await chargeRun(env, { orgId: x.org_id, runId: x.id, agentId: x.agent_id, mode: x.mode, model: x.model, taskType: x.task_type, cost: x.credits || 0, requests: x.steps,
+    tokens: { input: x.tokens_in, cacheRead: x.cache_read, cacheWrite: x.cache_write, output: x.tokens_out } });
 }
 
 async function saveTranscript(env: Env, orgId: string, runId: string, out: LoopOut) {
@@ -329,7 +362,10 @@ export async function runAgent(env: Env, runId: string) {
     if (!agent || !t) throw new Error("Agent no longer exists");
     const { org, problem } = await orgAccess(env, r.org_id);
     if (problem) throw new Error(problem);
-    if ((await orgActionsLeft(env, org)) <= 0) throw new Error("This month's actions are used up. Agents start again on the 1st, or move to a bigger plan.");
+    if (await creditsProblem(env, org.id, runId)) throw new Error(CREDITS_USED);
+    const mode = modeFor(agent, r.mode);
+    // Runs queued before credits existed have no mode yet: they run, and are billed, in the agent's.
+    if (!r.model) await run(env, "UPDATE agent_run SET mode = ?, model = ?, task_type = COALESCE(task_type, ?) WHERE id = ?", mode, MODES[mode].model, taskTypeOf({ template: agent.template, text: r.input }), runId);
     // Your OS decides what the AI Team may touch: a paused team doesn't run, an agent whose apps are all off
     // doesn't run, and tools for apps the business doesn't use here aren't offered at all.
     const os = await loadOs(env, org.id);
@@ -337,15 +373,18 @@ export async function runAgent(env: Env, runId: string) {
     if (os && !templateAllowed(os, agent.template)) throw new Error(`${agent.name} works in apps that aren't in this business's OS. Add them in Your OS, or retire the agent.`);
     const tools = (await Promise.all(t.tools.filter((s) => toolAllowed(os, s)).map((s) => getTool(env, s, { business: true })))).filter(Boolean) as Tool[];
     await agentLoop(env, {
-      system: systemFor(t, agent, org, swarmLines, await activeRules(env, org.id)), user: [t.kickoff || "Do your work.", r.input || ""].filter(Boolean).join("\n\n"), tools, out,
+      system: systemFor(t, agent, org, swarmLines, await activeRules(env, org.id)), user: [t.kickoff || "Do your work.", r.input || ""].filter(Boolean).join("\n\n"), tools, out, mode,
       onTool: agent.swarm_id ? async (tool, ok) => { await swarmEv("tool", tool, { ok }); } : undefined,
       ctx: { env, orgId: org.id, agentId: agent.id, runId, trustedUrls: seedTrustedUrls(org, r) },
-      beforeStep: async () => Date.now() - startedAt > Number(env.RUN_DEADLINE_MS || RUN_DEADLINE_MS)
-        ? "The run reached its time limit. What it did so far is saved; run it again to carry on."
-        : budgetProblem(env, org),
-      budget: async (tool) => (await claimAction(env, { orgId: org.id, plan: org.plan, agentId: agent.id, cap: agent.monthly_cap, runId, tool })) || "Monthly action limit reached for this agent or business. Stop and summarise.",
+      // Before each model step: within the time limit, the business has credits left after this run's use so far,
+      // and the agent is inside its own budget. At most one step can go past either.
+      beforeStep: async () => {
+        if (Date.now() - startedAt > Number(env.RUN_DEADLINE_MS || RUN_DEADLINE_MS)) return "The run reached its time limit. What it did so far is saved; run it again to carry on.";
+        if ((await available(env, org.id, runId)) - out.credits <= 0) return CREDITS_USED;
+        return agentBudgetProblem(env, agent);
+      },
       // Keep running totals on the run row, so a run that dies partway still shows what it cost.
-      onStep: async (o) => { await run(env, "UPDATE agent_run SET steps = ?, tool_calls = ?, tokens_in = ?, tokens_out = ?, cost_pence = ? WHERE id = ?", o.steps, o.toolCalls.length, o.tokensIn + o.cacheWrite + o.cacheRead, o.tokensOut, loopCost(env, o), runId); },
+      onStep: async (o) => { await run(env, "UPDATE agent_run SET steps = ?, tool_calls = ?, tokens_in = ?, cache_read = ?, cache_write = ?, tokens_out = ?, credits = ?, cost_pence = ? WHERE id = ?", o.steps, o.toolCalls.length, o.tokensIn, o.cacheRead, o.cacheWrite, o.tokensOut, o.credits, Math.ceil(o.credits), runId); },
     });
     const key = await saveTranscript(env, org.id, runId, out);
     const waiting = (await one<any>(env, "SELECT COUNT(*) AS n FROM agent_action WHERE run_id = ? AND status = 'proposed'", runId)).n as number;
@@ -384,9 +423,7 @@ export async function sweepRuns(env: Env, now = new Date()) {
     const done = await run(env, "UPDATE agent_run SET status = 'failed', error = ?, finished_at = ? WHERE id = ? AND status = 'running'",
       "Interrupted: the run stopped partway. Anything already sent is in Approvals; run the agent again if needed.", nowIso(), r.id);
     if (!done.meta.changes) continue;
-    await run(env, `INSERT INTO usage_event (id, org_id, kind, units, cost_pence, payment, payment_ref, at)
-      SELECT ?, ?, 'agent_run', 1, ?, 'plan', ?, ? WHERE NOT EXISTS (SELECT 1 FROM usage_event WHERE kind = 'agent_run' AND payment_ref = ?)`,
-      newId("use"), r.org_id, r.cost_pence || 0, r.id, nowIso(), r.id);
+    await chargeSettled(env, r.id);
   }
   // Re-queue a run once. A run waiting behind a backlog still has its message; sending another every 15 minutes
   // would only multiply the backlog.

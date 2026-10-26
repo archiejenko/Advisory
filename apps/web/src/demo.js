@@ -7,6 +7,12 @@ import { osDemo } from "./osDemo.js";
 import { builderDemo, withModes } from "./builderDemo.js";
 import { isPass } from "./pass.js";
 import { syncFromStore, decideInStore } from "./workspace/demo/legacy.js";
+import { demoLedger } from "../../../packages/core/demoUsage.ts";
+import { summariseCredits, balanceOf } from "../../../packages/core/usage.ts";
+import { recommend, estimateRange } from "../../../packages/core/modes.ts";
+import { RUNS_A_MONTH } from "../../../packages/core/swarms.ts";
+import { MODES, MODELS, MODE_ORDER, PLAN_CREDITS, TOPUP } from "../../../config/model-pricing.ts";
+import { modeLabel } from "../../../packages/core/credits.ts";
 
 const H = 3600e3, D = 24 * H;
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
@@ -29,20 +35,20 @@ export const DEMO_ME = {
   demo: true,
   user: { id: "usr_demo", email: "dana@brightwork.example", name: "Dana Price" },
   role: "owner",
-  org: { id: "org_demo", name: "Brightwork Cleaning Ltd", profile: PROFILE, plan: "trial", inbox_address: "brightwork-k7q2@in.agenthouse.example", markup_pct: 0, prospect_districts: ["M1", "M2", "M3", "M15", "M50"], prospect_sic: ["69", "86"], prospect_min_age: 3 },
-  subscription: { status: "trialing" },
+  org: { id: "org_demo", name: "Brightwork Cleaning Ltd", profile: PROFILE, plan: "growth", inbox_address: "brightwork-k7q2@in.agenthouse.example", markup_pct: 0, prospect_districts: ["M1", "M2", "M3", "M15", "M50"], prospect_sic: ["69", "86"], prospect_min_age: 3 },
+  subscription: { status: "active" },
 };
 
 const tpl = (k) => TEMPLATES.find((t) => t.key === k);
-const agent = (o) => ({ settings: {}, status: "running", run_hour: 8, autonomy: "approve_all", channel_id: null, monthly_cap: 300, last_run_at: null, next_run_at: null, created_at: ago(9 * D), ...o, engine: tpl(o.template).engine, category: tpl(o.template).category, glyph: tpl(o.template).glyph, brief: o.brief || tpl(o.template).brief({ name: DEMO_ME.org.name, ...PROFILE }) });
+const agent = (o) => ({ settings: {}, status: "running", run_hour: 8, autonomy: "approve_all", channel_id: null, mode: tpl(o.template).engine === "llm" ? recommend({ template: o.template }).mode : null, monthly_budget: null, budget_paused: false, last_run_at: null, next_run_at: null, created_at: ago(9 * D), ...o, engine: tpl(o.template).engine, category: tpl(o.template).category, glyph: tpl(o.template).glyph, brief: o.brief || tpl(o.template).brief({ name: DEMO_ME.org.name, ...PROFILE }) });
 
 function seed() {
   const agents = [
     agent({ id: "agt_out", template: "outreach", name: "Outreach", rhythm: "weekdays", autonomy: "approve_first", channel_id: "chn_team", last_run_at: ago(5 * H), next_run_at: nextAt(8) }),
-    agent({ id: "agt_inb", template: "inbox", name: "Inbox", rhythm: "on_event", last_run_at: ago(40 * 60e3) }),
+    agent({ id: "agt_inb", template: "inbox", name: "Inbox", rhythm: "on_event", mode: "deep", last_run_at: ago(40 * 60e3) }),
     agent({ id: "agt_cc", template: "credit-control", name: "Credit control", rhythm: "weekdays", run_hour: 9, autonomy: "approve_first", last_run_at: ago(4 * H), next_run_at: nextAt(9) }),
     agent({ id: "agt_watch", template: "customer-watch", name: "Customer and supplier watch", rhythm: "on_event", channel_id: "chn_team", last_run_at: ago(14 * H) }),
-    agent({ id: "agt_res", template: "research", name: "Research", rhythm: "on_demand", last_run_at: ago(2 * D) }),
+    agent({ id: "agt_res", template: "research", name: "Research", rhythm: "on_demand", mode: "deep", monthly_budget: 150, last_run_at: ago(2 * D) }),
     agent({ id: "agt_brief", template: "briefing", name: "Weekly briefing", rhythm: "weekly", run_hour: 7, autonomy: "auto", last_run_at: ago(2 * D), next_run_at: nextAt(7, true) }),
   ];
   const leads = [
@@ -154,7 +160,33 @@ let S = null;
 const st = () => (S ||= seed());
 const agentName = (aid) => st().agents.find((a) => a.id === aid)?.name || "Removed agent";
 const agentTpl = (aid) => st().agents.find((a) => a.id === aid)?.template;
-const fail = (status, message) => { const e = new Error(message); e.status = status; e.code = "demo"; throw e; };
+const fail = (status, message, code = "demo", details) => { const e = new Error(message); e.status = status; e.code = code; e.details = details; throw e; };
+
+/* Credits: a few months of the demo team's use, built by the ledger's own rules and summarised like the API. */
+const llmAgents = (s) => s.agents.filter((a) => a.engine === "llm").map((a) => ({ ...a, mode: a.mode || "standard" }));
+function demoCredits(s) {
+  if (!s.ledger || s.ledgerPlan !== s.org.plan) {
+    const plan = PLAN_CREDITS[s.org.plan] ? s.org.plan : "growth";
+    s.ledger = demoLedger({ plan, agents: llmAgents(s), seed: 11 }); s.ledgerPlan = s.org.plan;
+    for (const a of s.agents) a.budget_paused = !!s.ledger.budgetPaused[a.id] && s.ledger.budgetPaused[a.id] === s.ledger.period;
+  }
+  return s.ledger;
+}
+const resetOn = () => { const d = new Date(); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)).toISOString().slice(0, 10); };
+const demoChoices = (job) => {
+  const rec = recommend(job);
+  return { recommended: { mode: rec.mode, reason: rec.reason, low: rec.low, high: rec.high, from: rec.from, task_type: rec.task_type },
+    modes: MODE_ORDER.map((k) => ({ mode: k, name: MODES[k].name, model: MODELS[MODES[k].model].label, label: modeLabel(k), for: MODES[k].for, ...estimateRange(k) })) };
+};
+/** Like the API: a run likely to cost more than the threshold asks first. */
+const checkCost = (s, mode, confirm, rhythm) => {
+  const [low, high] = MODES[mode || "standard"].typical, over = s.confirmOver ?? 100;
+  if (confirm !== false || high <= over) return;
+  if (!rhythm) fail(409, `This run is likely to use ${low}–${high} credits in ${MODES[mode].name} mode. Confirm to go ahead.`, "needs_confirmation", { estimate: { low, high, mode, from: "defaults" }, threshold: over });
+  const runs = RUNS_A_MONTH[rhythm] || 0;
+  fail(409, `In ${MODES[mode].name} mode this agent is likely to use ${low}–${high} credits a run, about ${(low * runs).toLocaleString("en-GB")}–${(high * runs).toLocaleString("en-GB")} a month on its schedule. Confirm to go ahead.`, "needs_confirmation",
+    { estimate: { low, high, mode, from: "defaults", per_month: { low: low * runs, high: high * runs } }, threshold: over });
+};
 const signUp = () => fail(409, "This is the demo workspace. Start a free trial to do this with your own business.");
 const runOut = ({ log, ...r }) => ({ ...r, agent: agentName(r.agent_id), template: agentTpl(r.agent_id) });
 
@@ -223,7 +255,8 @@ export async function demoApi(method, path, body) {
       const a = s.agents.find((x) => x.id === r[1]);
       if (!a) fail(404, "Agent not found.");
       const { brief, instructions, kickoff, ...t } = tpl(a.template);
-      return { agent: { ...a, rhythm_label: RHYTHM_LABEL[a.rhythm] }, runs: s.runs.filter((x) => x.agent_id === a.id).map(runOut), actions_this_month: s.runs.filter((x) => x.agent_id === a.id).reduce((n, x) => n + x.tool_calls, 0) + 38, template: { ...t, rhythm_label: RHYTHM_LABEL[t.rhythm], default_brief: brief({ name: s.org.name, ...PROFILE }) } };
+      const led = demoCredits(s), used = led.entries.filter((e) => e.kind === "run" && e.agent_id === a.id && e.period === led.period).reduce((n, e) => n - e.credits, 0);
+      return { agent: { ...a, mode_label: a.mode ? modeLabel(a.mode) : null, rhythm_label: RHYTHM_LABEL[a.rhythm] }, runs: s.runs.filter((x) => x.agent_id === a.id).map(runOut), credits_this_month: Math.round(used), choices: a.engine === "llm" ? demoChoices({ template: a.template }) : null, template: { ...t, rhythm_label: RHYTHM_LABEL[t.rhythm], default_brief: brief({ name: s.org.name, ...PROFILE }) } };
     }
     if (p === "/runs") return { runs: s.runs.filter((x) => !q.agent || x.agent_id === q.agent).map(runOut) };
     if ((r = m(/^\/runs\/([^/]+)$/))) {
@@ -265,10 +298,14 @@ export async function demoApi(method, path, body) {
     }
     if (p === "/briefs") return { briefs: [] };
     if (p === "/usage") {
-      const plan = PLANS[s.org.plan];
-      const byAgent = s.agents.map((a) => ({ name: a.name, template: a.template, runs: s.runs.filter((x) => x.agent_id === a.id).length + (a.engine === "llm" ? 6 : 0), actions: s.runs.filter((x) => x.agent_id === a.id).reduce((n, x) => n + x.tool_calls, 0) + (a.engine === "llm" ? 34 : 0) }));
-      return { plan: s.org.plan, plan_name: plan.name, plan_actions: plan.actions, plan_agents: plan.agents, actions: byAgent.reduce((n, a) => n + a.actions, 0), model_pence: 412, emails_sent: s.actions.filter((a) => a.status === "sent").length + 17, by_agent: byAgent.sort((a, b) => b.actions - a.actions), month: q.month, clients: s.clients.length, runs: 0, briefs: 0, alerts: s.alerts.length, weeks: [], per_client: [] };
+      const plan = PLANS[s.org.plan], led = demoCredits(s), month = q.month || led.period;
+      const bal = balanceOf([...led.entries, ...(s.topups || [])], led.period);
+      const agents = llmAgents(s).map((a) => ({ ...a, budget_paused_period: a.budget_paused ? led.period : null }));
+      const credits = summariseCredits({ month, period: led.period, plan: s.org.plan, entries: [...led.entries, ...(s.topups || [])].filter((e) => e.period === month), agents,
+        balance: { ...bal, available: bal.total }, reset_on: resetOn(), pending_plan: s.pendingPlan || null, confirm_over: s.confirmOver ?? 100, topup_available: true, planCredits: plan.credits });
+      return { plan: s.org.plan, plan_name: plan.name, plan_agents: plan.agents, emails_sent: s.actions.filter((a) => a.status === "sent").length + 17, month, clients: s.clients.length, runs: 0, briefs: 0, alerts: s.alerts.length, weeks: [], per_client: [], credits };
     }
+    if (p === "/recommend") return demoChoices({ template: q.template || "custom", text: q.text || null });
     if (p === "/prospects/preview") return { index_month: day(0).slice(0, 7), index_size: 48210, rows: PROSPECTS.map(([name, number, district, sic, inc]) => ({ name, number, district, sic, incorporated: inc + "-01-01" })) };
     fail(404, "Not in the demo.");
   }
@@ -316,15 +353,20 @@ export async function demoApi(method, path, body) {
     if (t.status !== "live" && !isPass()) fail(409, `${t.name} isn't available yet: it needs ${t.needs}.`);
     if (t.engine !== "llm" && s.agents.some((a) => a.template === t.key)) fail(409, `${t.name} is already working for you.`);
     if (!isPass() && s.agents.length >= PLANS[s.org.plan].agents) fail(409, `Your ${PLANS[s.org.plan].name} includes ${PLANS[s.org.plan].agents} agents. Pause or remove one to hire another in the demo.`);
-    const a = agent({ id: id("agt"), template: t.key, name: body.name || t.name, brief: body.brief, rhythm: body.rhythm || t.rhythm, run_hour: body.run_hour ?? 8, autonomy: body.autonomy || "approve_all", channel_id: body.channel_id || null, created_at: now() });
+    if (t.engine === "llm" && !["on_demand"].includes(body.rhythm || t.rhythm)) checkCost(s, body.mode, body.confirm ?? false, body.rhythm || t.rhythm);
+    const a = agent({ id: id("agt"), template: t.key, name: body.name || t.name, brief: body.brief, rhythm: body.rhythm || t.rhythm, run_hour: body.run_hour ?? 8, autonomy: body.autonomy || "approve_all", channel_id: body.channel_id || null, created_at: now(),
+      ...(t.engine === "llm" ? { mode: body.mode || recommend({ template: t.key }).mode, monthly_budget: body.monthly_budget ?? null } : {}) });
     s.agents.push(a);
-    return { id: a.id };
+    return { id: a.id, mode: a.mode };
   }
   if ((r = m(/^\/my-agents\/([^/]+)$/))) {
     const i = s.agents.findIndex((x) => x.id === r[1]);
     if (i < 0) fail(404, "Agent not found.");
     if (method === "DELETE") { s.actions.forEach((x) => { if (x.agent_id === r[1] && x.status === "proposed") x.status = "rejected"; }); s.agents.splice(i, 1); return { ok: true }; }
-    Object.assign(s.agents[i], body);
+    const a = s.agents[i], { confirm, ...change } = body || {};
+    if (change.mode && change.mode !== a.mode && !["on_demand"].includes(change.rhythm || a.rhythm)) checkCost(s, change.mode, confirm ?? false, change.rhythm || a.rhythm);
+    Object.assign(a, change);
+    if (change.monthly_budget !== undefined) a.budget_paused = false;
     return { ok: true };
   }
   if (method === "POST" && (r = m(/^\/my-agents\/([^/]+)\/run$/))) {
@@ -332,6 +374,8 @@ export async function demoApi(method, path, body) {
     if (!a) fail(404, "Agent not found.");
     if (a.engine !== "llm") fail(409, "This agent runs on its own schedule from the registers.");
     if (a.template === "research" && !body?.input?.trim()) fail(400, "Ask the research agent a question.");
+    if (a.budget_paused) fail(402, `${a.name} has reached its monthly credit budget, so it's paused until the 1st.`, "agent_budget_used");
+    checkCost(s, body?.mode || a.mode, body?.confirm ?? false);
     return { run_id: startDemoRun(a, body?.input), status: "queued" };
   }
   if (method === "PATCH" && (r = m(/^\/leads\/([^/]+)$/))) { Object.assign(s.leads.find((x) => x.id === r[1]) || fail(404, "Lead not found."), body); return { ok: true }; }
@@ -344,6 +388,13 @@ export async function demoApi(method, path, body) {
   if (method === "PATCH" && m(/^\/clients\/[^/]+$/)) { const c = s.clients.find((x) => p.endsWith(x.number)); if (c && body.watching !== undefined) c.watching = body.watching; return { ok: true }; }
   if (method === "POST" && m(/^\/channels\/[^/]+\/test$/)) return { status: "dry_run" };
   if (method === "PATCH" && m(/^\/agents\/[^/]+$/)) return { ok: true };
+  // Credits: a top-up and the ask-first threshold work in the demo; plan changes need the pass or a real workspace.
+  if (method === "POST" && p === "/billing/topup") {
+    const led = demoCredits(s);
+    (s.topups ||= []).push({ kind: "topup", at: now(), credits: TOPUP.credits, from_plan: 0, from_topup: TOPUP.credits, period: led.period, note: "1,000 credits top-up", tokens_in: 0, cache_read: 0, cache_write: 0, tokens_out: 0, requests: 0 });
+    return { url: "#/workspace/usage?topup=done" };
+  }
+  if (method === "PATCH" && p === "/credits/settings") { s.confirmOver = Number(body?.confirm_over) || 100; return { ok: true, confirm_over: s.confirmOver }; }
   if (isPass()) return passApi(method, p, body, s, now);
   return signUp();
 }
@@ -353,6 +404,11 @@ function passApi(method, p, body, s, now) {
   let r;
   const m = (re) => p.match(re);
   if (method === "POST" && p === "/billing/checkout") { if (PLANS[body?.plan]) s.org.plan = body.plan; return { url: "#/workspace/usage?billing=done" }; }
+  if (method === "POST" && p === "/billing/plan") {
+    if (!PLANS[body?.plan]) fail(400, "Choose a plan.");
+    if (PLANS[body.plan].credits > PLANS[s.org.plan].credits) { s.org.plan = body.plan; s.pendingPlan = null; return { plan: body.plan, pending_plan: null, effective: "now" }; }
+    s.pendingPlan = body.plan; return { plan: s.org.plan, pending_plan: body.plan, effective: resetOn() };
+  }
   if (method === "POST" && p === "/billing/portal") return { url: "#/workspace/usage" };
   if (method === "POST" && p === "/channels") { const c = { id: id("chn"), kind: body.kind, label: body.label || body.kind, verified_at: null, created_at: now() }; s.channels.push(c); return { id: c.id }; }
   if (method === "DELETE" && (r = m(/^\/channels\/([^/]+)$/))) { s.channels = s.channels.filter((c) => c.id !== r[1]); return { ok: true }; }

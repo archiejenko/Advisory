@@ -5,6 +5,7 @@ import { OS_AGENT_TOOLS } from "./ostools";
 import { z } from "zod";
 import { newId, nowIso } from "../../../../packages/core/util";
 import { template, TEMPLATES, PLANS } from "../../../../packages/core/templates";
+import { balance, periodOf } from "./credits";
 import { KPIS, SWARM_TOOLS, CUSTOM_TOOLS, stageFor, type Blueprint, type SourceKind } from "../../../../packages/core/swarms";
 import { PLANNING_TOOLS, toolsFor } from "../../../../packages/core/badges";
 import { type Env, one, all, run } from "./db";
@@ -128,7 +129,7 @@ export async function emitForAgent(env: Env, agentId: string | null | undefined,
   if (a?.swarm_id) await emit(env, { ...e, orgId: a.org_id, swarmId: a.swarm_id, agentId });
 }
 
-/** Queue a run for an agent (handoffs and the command bar). The run itself checks the plan and allowance. */
+/** Queue a run for an agent (handoffs and the command bar). The run itself checks the plan and credits. */
 export async function queueRun(env: Env, orgId: string, agentId: string, trigger: "manual" | "event", input: string) {
   const id = newId("run");
   await run(env, "INSERT INTO agent_run (id, org_id, agent_id, trigger, input, status, created_at) VALUES (?,?,?,?,?,?,?)", id, orgId, agentId, trigger, input.slice(0, 4000), "queued", nowIso());
@@ -257,7 +258,8 @@ export async function kpi(env: Env, orgId: string, key: string): Promise<number>
     case "inbox_waiting": return n("SELECT COUNT(*) AS n FROM inbox_message WHERE org_id = ? AND status = 'new'", orgId);
     case "open_alerts": return n("SELECT COUNT(*) AS n FROM alert WHERE org_id = ? AND state = 'open'", orgId);
     case "tasks_open": return n("SELECT COUNT(*) AS n FROM task WHERE org_id = ? AND status = 'open'", orgId);
-    case "actions_month": return n("SELECT COUNT(*) AS n FROM usage_event WHERE org_id = ? AND kind = 'agent_action' AND at >= ?", orgId, month);
+    case "credits_month": case "actions_month": // swarms saved before credits still name the old number
+      return Math.round(await n("SELECT COALESCE(-SUM(credits), 0) AS n FROM credit_entry WHERE org_id = ? AND kind IN ('run', 'system') AND period = ?", orgId, periodOf()));
     default: return 0;
   }
 }
@@ -274,7 +276,7 @@ async function cachedKpis(env: Env, orgId: string, swarmId: string, keys: string
   const ck = `kpi:${swarmId}`;
   try { const hit = await env.CACHE.get(ck, "json"); if (hit) return hit as Record<string, number>; } catch {}
   const out: Record<string, number> = {};
-  for (const k of new Set([...keys, "actions_month"])) out[k] = await kpi(env, orgId, k);
+  for (const k of new Set([...keys, "credits_month"])) out[k] = await kpi(env, orgId, k);
   try { await env.CACHE.put(ck, JSON.stringify(out), { expirationTtl: 60 }); } catch {}
   return out;
 }
@@ -318,7 +320,7 @@ export async function floorState(env: Env, orgId: string, swarmId: string, since
   const values = await cachedKpis(env, orgId, swarmId, s.blueprint.kpis);
   for (const k of s.blueprint.kpis) kpis.push({ key: k, label: KPIS[k]?.label || k, unit: KPIS[k]?.unit || "count", value: values[k] ?? 0 });
   const plan = await one<any>(env, "SELECT plan FROM org WHERE id = ?", orgId);
-  const used = values.actions_month ?? 0;
+  const used = values.credits_month ?? 0;
   return {
     swarm: { id: s.id, name: s.name, sector: s.sector, preset: s.preset, status: s.status, skin: s.blueprint.skin, layout: s.layout, created_at: s.created_at, last_brief_at: s.last_brief_at, monthly_cap: s.monthly_cap },
     blueprint: { stages: s.blueprint.stages, handoffs: s.blueprint.handoffs, goals: s.blueprint.goals, agents: s.blueprint.agents.map(({ key, name, role, template, rhythm }) => ({ key, name, role, template, rhythm })) },
@@ -331,6 +333,6 @@ export async function floorState(env: Env, orgId: string, swarmId: string, since
     events: events.map((e) => ({ ...e, detail: e.detail ? JSON.parse(e.detail) : null })),
     cursor: events.length ? events[events.length - 1].id : since ?? 0,
     more: !!since && events.length === EVENT_PAGE,
-    usage: { actions_month: used, allowance: (PLANS[plan?.plan || "trial"] || PLANS.trial).actions },
+    usage: { credits_month: used, plan_credits: (PLANS[plan?.plan || "trial"] || PLANS.trial).credits, credits_left: Math.round((await balance(env, orgId)).total) },
   };
 }

@@ -50,7 +50,7 @@ describe("the catalogue", () => {
   });
   it("is priced per business: every plan has the whole OS and room for 100 agents", () => {
     for (const k of ["starter", "growth", "scale", "trial"]) expect(PLANS[k].agents).toBe(100);
-    expect([PLANS.starter.name, PLANS.growth.name, PLANS.scale.name]).toEqual(["Solo", "Team", "Business"]);
+    expect([PLANS.starter.name, PLANS.growth.name, PLANS.scale.name]).toEqual(["Starter", "Growth", "Business"]);
   });
   it("the workspace catalogue counts each module's records", async () => {
     const { post, call } = await signedIn();

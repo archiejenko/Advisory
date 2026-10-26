@@ -64,7 +64,7 @@ Customers pay by Stripe subscription (trial, then Starter, Growth or Scale), wit
 | Secrets Store | five bindings at the end of `wrangler.toml` | Anthropic, Brave, Resend, CH, FCA keys | read once per isolate; a failed read is retried (`storesecrets.ts`) |
 | Workers AI | `AI` | speech to text and spoken replies | 503 `voice_off` |
 | Rate limiting | `WS_LIMITER` | workspace API | n/a |
-| Anthropic Messages API | `ANTHROPIC_API_KEY`, `AGENT_MODEL` | agents, planner, router | retries 408/429/5xx/529, 90 s timeout (`llm.ts`) |
+| Anthropic Messages API | `ANTHROPIC_API_KEY`; models per mode in `config/model-pricing.ts` | agents, planner, router | retries 408/429/5xx/529, 90 s timeout (`llm.ts`) |
 | Brave Search | `SEARCH_API_KEY` | `web-research`, `company-research` | UpstreamError; **no timeout** |
 | Resend | `MAIL_HTTP_KEY`, `MAIL_MODE="http"` | all outbound email | **every send is a dry run while `SENDS_LIVE="false"`** (C1) |
 | Companies House REST | `CH_API_KEY`, `CH_RATE_LIMIT=600` per 5 min | resolve, profile, monitoring | RateLimited → requeue; **no timeout** |

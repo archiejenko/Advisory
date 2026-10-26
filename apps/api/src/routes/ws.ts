@@ -17,10 +17,14 @@ import { registerSwarmRoutes } from "./swarms";
 import { registerTodayRoutes } from "./today";
 import { registerOsRoutes } from "./os";
 import { PLANS } from "../../../../packages/core/templates";
-import { planCheckout, portal } from "../lib/stripe";
+import { planCheckout, portal, topupCheckout, upgradeSubscription, scheduleDowngrade, releaseSchedule, type PaidPlan } from "../lib/stripe";
 import { sendMail } from "../lib/mail";
 import { storedCompany, companyCached } from "../lib/registers";
-import { modelBudget, modelSpend } from "../lib/budget";
+import { balance, available, grantUpgrade, periodOf } from "../lib/credits";
+import { upgradeRef } from "../lib/billing";
+import { PLAN_CREDITS } from "../../../../config/model-pricing";
+import { modeLabel } from "../../../../packages/core/credits";
+import { summariseCredits } from "../../../../packages/core/usage";
 
 export const ws = new Hono<{ Bindings: Env; Variables: Vars }>();
 ws.use("*", requireSession);
@@ -343,18 +347,42 @@ async function usage(c: any, month: string) {
       (SELECT COUNT(*) FROM usage_event u WHERE u.org_id = c.org_id AND u.number = c.number AND u.kind = 'brief' AND u.at >= ?2 AND u.at < ?3) AS briefs
     FROM client c WHERE c.org_id = ?1 ORDER BY alerts DESC, c.display_name`, from, to);
   const share = clients ? costPence / clients : 0;
-  const orgPlan = (await db.one("SELECT plan FROM org WHERE id = ?1")).plan as string;
-  const actions = (await db.one("SELECT COUNT(*) AS n FROM usage_event WHERE org_id = ?1 AND kind = 'agent_action' AND at >= ?2 AND at < ?3", from, to)).n as number;
-  const modelPence = (await db.one("SELECT COALESCE(SUM(cost_pence),0) AS n FROM usage_event WHERE org_id = ?1 AND kind = 'agent_run' AND at >= ?2 AND at < ?3", from, to)).n as number;
-  const byAgent = await db.all("SELECT g.name, g.template, COUNT(r.id) AS runs, COALESCE(SUM(r.tool_calls),0) AS actions FROM agent g LEFT JOIN agent_run r ON r.agent_id = g.id AND r.created_at >= ?2 AND r.created_at < ?3 WHERE g.org_id = ?1 GROUP BY g.id ORDER BY actions DESC", from, to);
+  const o = await db.one("SELECT plan, pending_plan, confirm_over FROM org WHERE id = ?1");
   const sent = (await db.one("SELECT COUNT(*) AS n FROM agent_action WHERE org_id = ?1 AND status = 'sent' AND decided_at >= ?2 AND decided_at < ?3", from, to)).n as number;
-  const p = PLANS[orgPlan] || PLANS.trial;
-  return { plan: orgPlan, plan_name: p.name, plan_actions: p.actions, plan_agents: p.agents, actions, model_pence: modelPence, model_budget_pence: modelBudget(c.env, orgPlan), model_spend_pence: await modelSpend(c.env, c.get("orgId")), emails_sent: sent, by_agent: byAgent, month, clients, runs, briefs, alerts, markup_pct: org.markup_pct, cost_pence: costPence, rebill_pence: Math.round(costPence * (1 + org.markup_pct / 100)), weeks, per_client: perClient.map((r: any) => ({ ...r, cost_pence: Math.round(share) })) };
+  const p = PLANS[o.plan] || PLANS.trial;
+  return { plan: o.plan, plan_name: p.name, plan_agents: p.agents, emails_sent: sent, month, clients, runs, briefs, alerts, markup_pct: org.markup_pct, cost_pence: costPence, rebill_pence: Math.round(costPence * (1 + org.markup_pct / 100)), weeks, per_client: perClient.map((r: any) => ({ ...r, cost_pence: Math.round(share) })),
+    credits: await creditUsage(c, month, o) };
 }
+
+/** Where a month's credits went: balance, by agent, by mode, the AI Team (system), the ledger, and cheaper-mode tips. */
+async function creditUsage(c: any, month: string, o: { plan: string; pending_plan: string | null; confirm_over: number }) {
+  const db = c.get("db"), orgId = c.get("orgId") as string;
+  const bal = await balance(c.env, orgId);
+  const entries = await db.all(`SELECT e.kind, e.at, e.credits, e.from_plan, e.from_topup, e.period, e.agent_id, e.run_id, e.mode, e.model, e.note, e.tokens_in, e.cache_read, e.cache_write, e.tokens_out, e.requests,
+      CASE WHEN r.status = 'failed' THEN 0 ELSE 1 END AS ok
+    FROM credit_entry e LEFT JOIN agent_run r ON r.id = e.run_id WHERE e.org_id = ?1 AND e.period = ?2`, month);
+  const agents = await db.all("SELECT id, name, template, mode, role, instructions, monthly_budget, budget_paused_period FROM agent WHERE org_id = ?1");
+  return summariseCredits({
+    month, period: periodOf(), plan: o.plan, entries: entries.map((e: any) => ({ ...e, ok: !!e.ok })), agents,
+    balance: { ...bal, available: await available(c.env, orgId) }, reset_on: bal.reset_on,
+    pending_plan: o.pending_plan, confirm_over: o.confirm_over, topup_available: !!c.env.STRIPE_PRICE_TOPUP,
+    planCredits: PLAN_CREDITS[o.plan] ?? (PLANS[o.plan] || PLANS.trial).credits,
+  });
+}
+
 const nextMonth = (m: string) => { const [y, mo] = m.split("-").map(Number); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`; };
 const monthOf = (c: any) => { const m = c.req.query("month") || nowIso().slice(0, 7); if (!/^\d{4}-\d{2}$/.test(m)) throw bad("month must look like 2026-10"); return m; };
 
 ws.get("/usage", async (c) => c.json(await usage(c, monthOf(c))));
+/** The month's credit ledger as CSV: every run, top-up, grant and reset, with tokens and exact credits. */
+ws.get("/usage/credits.csv", async (c) => {
+  const month = monthOf(c);
+  const rows = await c.get("db").all(`SELECT e.at, e.kind, g.name AS agent, e.mode, e.model, e.tokens_in, e.cache_read, e.cache_write, e.tokens_out, e.credits, e.from_plan, e.from_topup, e.note
+    FROM credit_entry e LEFT JOIN agent g ON g.id = e.agent_id WHERE e.org_id = ?1 AND e.period = ?2 ORDER BY e.at`, month);
+  const csv = toCsv([["When", "Entry", "Agent", "Mode", "Model", "Input tokens", "Cache reads", "Cache writes", "Output tokens", "Credits", "Plan credits", "Top-up credits", "Note"],
+    ...rows.map((r: any) => [r.at, r.kind, r.agent || "", r.mode ? modeLabel(r.mode) : "", r.model || "", r.tokens_in, r.cache_read, r.cache_write, r.tokens_out, r.credits.toFixed(2), r.from_plan.toFixed(2), r.from_topup.toFixed(2), r.note || ""])]);
+  return new Response(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="agent-house-credits-${month}.csv"` } });
+});
 ws.get("/usage/export", async (c) => {
   const u = await usage(c, monthOf(c));
   const csv = toCsv([["Client", "Company no.", "Alerts", "Briefs", "Cost share (GBP)", `Rebilled at ${u.markup_pct}% (GBP)`],
@@ -434,6 +462,53 @@ ws.post("/billing/checkout", owner, async (c) => {
   const s = await planCheckout(c.env, c.get("orgId"), c.get("user").email, b.plan);
   return c.json({ url: s.url });
 });
+/** Buy 1,000 credits once. Nothing is ever bought without the owner asking. */
+ws.post("/billing/topup", owner, async (c) => {
+  if (!c.env.STRIPE_SECRET) throw new HttpError(503, "billing_off", "Billing isn't set up in this environment.");
+  const sub = await c.get("db").one("SELECT stripe_customer FROM subscription WHERE org_id = ?1");
+  const s = await topupCheckout(c.env, c.get("orgId"), c.get("user").email, sub?.stripe_customer);
+  return c.json({ url: s.url });
+});
+
+/** Change plan. Upgrades take effect now (prorated, with this month's extra credits); downgrades on the 1st. */
+ws.post("/billing/plan", owner, async (c) => {
+  if (!c.env.STRIPE_SECRET) throw new HttpError(503, "billing_off", "Billing isn't set up in this environment.");
+  const b = await body(c, z.object({ plan: z.enum(["starter", "growth", "scale"]) }));
+  const db = c.get("db"), orgId = c.get("orgId");
+  const org = await db.one("SELECT plan, pending_plan FROM org WHERE id = ?1");
+  const sub = await db.one("SELECT stripe_subscription, status FROM subscription WHERE org_id = ?1");
+  if (!sub?.stripe_subscription || sub.status === "cancelled") throw new HttpError(409, "no_subscription", "Choose a plan with checkout first.");
+  if (b.plan === org.plan) {
+    // Staying put calls off a downgrade waiting for the 1st, in Stripe as well as here.
+    if (org.pending_plan) {
+      await releaseSchedule(c.env, sub.stripe_subscription);
+      await db.run("UPDATE org SET pending_plan = NULL WHERE id = ?1");
+      await audit(c.env, orgId, c.get("user").id, "plan_downgrade_cancelled", org.pending_plan);
+    }
+    return c.json({ plan: org.plan, pending_plan: null, effective: "now" });
+  }
+  const up = (PLAN_CREDITS[b.plan] || 0) > (PLAN_CREDITS[org.plan] || 0);
+  if (up) {
+    await upgradeSubscription(c.env, sub.stripe_subscription, b.plan as PaidPlan);
+    const granted = await grantUpgrade(c.env, orgId, org.plan, b.plan, upgradeRef(sub.stripe_subscription, b.plan));
+    await db.run("UPDATE org SET plan = ?2, pending_plan = NULL WHERE id = ?1", b.plan);
+    await audit(c.env, orgId, c.get("user").id, "plan_upgraded", b.plan, { from: org.plan, credits: granted });
+    return c.json({ plan: b.plan, pending_plan: null, effective: "now", credits_added: granted });
+  }
+  await scheduleDowngrade(c.env, sub.stripe_subscription, b.plan as PaidPlan);
+  await db.run("UPDATE org SET pending_plan = ?2 WHERE id = ?1", b.plan);
+  await audit(c.env, orgId, c.get("user").id, "plan_downgrade_scheduled", b.plan, { from: org.plan });
+  return c.json({ plan: org.plan, pending_plan: b.plan, effective: (await balance(c.env, orgId)).reset_on });
+});
+
+/** Credit settings: runs estimated above this many credits ask first. */
+ws.patch("/credits/settings", owner, async (c) => {
+  const b = await body(c, z.object({ confirm_over: z.number().min(1).max(100000) }));
+  await c.get("db").run("UPDATE org SET confirm_over = ?2 WHERE id = ?1", b.confirm_over);
+  await audit(c.env, c.get("orgId"), c.get("user").id, "credit_settings_changed", undefined, b);
+  return c.json({ ok: true, confirm_over: b.confirm_over });
+});
+
 ws.post("/billing/portal", owner, async (c) => {
   const sub = await c.get("db").one("SELECT stripe_customer FROM subscription WHERE org_id = ?1");
   if (!sub?.stripe_customer) throw new HttpError(409, "no_subscription", "Start a plan first.");

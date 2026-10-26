@@ -1,7 +1,7 @@
 // Swarms, the work board, handoffs, the CRM and the command bar, against the real SQL.
 import { describe, it, expect } from "vitest";
 import { testEnv, seedOrg, seedAgent } from "./d1";
-import { PRESETS, preset, estimateActions } from "../../packages/core/swarms";
+import { PRESETS, preset, estimateCredits } from "../../packages/core/swarms";
 import { checkBlueprint, stageFor, syncSwarm, floorState, specFor } from "../../apps/api/src/lib/swarm";
 import { createSwarm, removeSwarm, planBlueprint, nearestPreset, ask, briefText } from "../../apps/api/src/lib/engine";
 import { saveDeal, saveContact, companyView } from "../../apps/api/src/lib/crm";
@@ -30,7 +30,7 @@ describe("blueprints", () => {
       expect(r.ok, p.key + JSON.stringify((r as any).errors)).toBe(true);
     }
     expect(preset("markets-desk")!.blueprint.needs).toEqual(["Market data"]);
-    expect(estimateActions(preset("sales-floor")!.blueprint)).toBeGreaterThan(0);
+    expect(estimateCredits(preset("sales-floor")!.blueprint)).toBeGreaterThan(0);
   });
   it("names the problems in plain words, so Claude can fix them", () => {
     const bp = structuredClone(preset("sales-floor")!.blueprint) as any;

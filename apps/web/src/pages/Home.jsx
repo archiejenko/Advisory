@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "../router.jsx";
 import { Page, reduced, QA } from "../ui.jsx";
+import { Minds, PRICING_SUB, PRICING_FOOT, PRICING_FAQ } from "../credits.jsx";
 import { Reveal, Tile, Glyph, useInView } from "../kit.jsx";
 import { FACETS, CATEGORIES } from "../../../../packages/core/os.ts";
 import { PACKS, BUILDER_APPS } from "../../../../packages/core/osconfig.ts";
@@ -320,7 +321,7 @@ function Pricing() {
       <div className="wrap">
         <Reveal className="lp-head lp-head-row">
           <div><p className="label">Pricing</p><h2 id="lp-price-h">One price for the whole business.</h2></div>
-          <p className="body-l lp-price-l">Every app and up to 100 AI Team members on every plan. Plans differ only in how much work the AI Team does each month.</p>
+          <p className="body-l lp-price-l">{PRICING_SUB}</p>
         </Reveal>
         <div className="plans lp-plans">
           {["starter", "growth", "scale"].map((k) => {
@@ -330,15 +331,16 @@ function Pricing() {
                 <p className="plan-n">{p.name}{k === "growth" && <span className="st st-done">Most chosen</span>}</p>
                 <p className="plan-p"><b>£{p.price}</b><span>a month</span></p>
                 <p className="dt">{p.blurb}</p>
-                <ul className="ticks"><li>Every app</li><li>{p.actions.toLocaleString("en-GB")} AI Team actions a month</li><li>Unlimited people</li></ul>
+                <ul className="ticks"><li>Every app</li><li>{p.credits.toLocaleString("en-GB")} credits a month</li><li>Unlimited people</li></ul>
                 <Link to={BUILD} className={"btn btn-sm btn-block" + (k === "growth" ? "" : " btn-line")}>Build your OS free</Link>
               </article>
             );
           })}
         </div>
-        <p className="source">Prices before VAT. 14 days free, no card. When a month's actions are used, the AI Team pauses until the 1st: nothing is charged on top.</p>
+        <p className="source">{PRICING_FOOT}</p>
+        <Minds head={<Reveal className="lp-head mt-l"><div><p className="label">Modes</p><h2>Choose the right mind for the job.</h2></div><p className="body-l lp-price-l">Every task can run in any mode. We suggest one for each job, and you can always choose another.</p></Reveal>} />
         <h3 className="lp-faq-h">Questions</h3>
-        <QA items={FAQ} />
+        <QA items={[...PRICING_FAQ, ...FAQ]} />
       </div>
     </section>
   );

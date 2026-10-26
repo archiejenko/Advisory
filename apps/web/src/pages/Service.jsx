@@ -8,6 +8,7 @@ import { ApiShowcase, TERM } from "./showcase.jsx";
 import { ENDPOINTS } from "../data.js";
 import { TOOLS, AGENT_RUN_STEP_PENCE, pence } from "../catalogue.js";
 import { PLANS } from "../../../../packages/core/templates.ts";
+import { Minds, PRICING_SUB, PRICING_FOOT, PRICING_FAQ } from "../credits.jsx";
 import { FACETS } from "../../../../packages/core/os.ts";
 
 /* ---------- Shared form ---------- */
@@ -137,7 +138,7 @@ export function HealthCheck() {
 export function Pricing() {
   return (
     <Page title="Pricing">
-      <PageHead crumbs={[["Pricing"]]} label="Pricing" title="One price for the whole business. Per call for agents." lede="Businesses pay one monthly price for the whole OS: every app, unlimited people, and up to 100 agents. Plans differ only in how much work the agents do each month. Developers and agents pay per tool call; publishers earn 80% of every call to their tools." />
+      <PageHead crumbs={[["Pricing"]]} label="Pricing" title="One price for the whole business." lede={PRICING_SUB} />
       <Section tight>
         <h2 className="h-sub">For businesses</h2>
         <div className="plans plans-l">
@@ -145,7 +146,7 @@ export function Pricing() {
             <p className="plan-n">Free trial</p>
             <p className="plan-p"><b>£0</b><span>for 14 days</span></p>
             <p className="dt">The whole OS. No card.</p>
-            <ul className="ticks"><li>All {FACETS.length} apps</li><li>Up to {PLANS.trial.agents} agents</li><li>{PLANS.trial.actions.toLocaleString("en-GB")} actions</li><li>Channels for your whole team</li></ul>
+            <ul className="ticks"><li>All {FACETS.length} apps</li><li>Up to {PLANS.trial.agents} AI Team members</li><li>{PLANS.trial.credits.toLocaleString("en-GB")} credits, every mode</li><li>Channels for your whole team</li></ul>
             <Link to="/start" className="btn btn-sm btn-line btn-block">Start free</Link>
           </article>
           {["starter", "growth", "scale"].map((k) => {
@@ -155,13 +156,16 @@ export function Pricing() {
                 <p className="plan-n">{p.name}{k === "growth" && <span className="st st-done">Most chosen</span>}</p>
                 <p className="plan-p"><b>£{p.price}</b><span>a month</span></p>
                 <p className="dt">{p.blurb}</p>
-                <ul className="ticks"><li>All {FACETS.length} apps</li><li>Up to {p.agents} agents</li><li>{p.actions.toLocaleString("en-GB")} actions a month</li><li>Unlimited people</li></ul>
+                <ul className="ticks"><li>All {FACETS.length} apps</li><li>Up to {p.agents} AI Team members</li><li>{p.credits.toLocaleString("en-GB")} credits a month</li><li>Unlimited people</li></ul>
                 <Link to="/start" className={"btn btn-sm btn-block" + (k === "growth" ? "" : " btn-line")}>Start with a free trial</Link>
               </article>
             );
           })}
         </div>
-        <p className="source">Prices before VAT. Monthly, cancel any time. An action is one tool call by an agent. When a month's actions are used, agents pause until the 1st: there are no overage charges.</p>
+        <p className="source">{PRICING_FOOT}</p>
+      </Section>
+      <Section>
+        <Minds head={<SectionHead label="Modes" title="Choose the right mind for the job" lede="Every task can run in any mode. When you set up an agent or give it a task, we suggest the mode that suits the job and show what it's likely to use. You can always choose another." />} />
       </Section>
       <Section stone>
         <SectionHead label="For developers and agents" title="Pay per call" lede="Every tool has a price per call. Pay with x402 and no account, or use an API key with 100 free calls a month and prepaid credits after that." more={["See the catalogue", "/for-agents?s=catalogue"]} />
@@ -173,19 +177,19 @@ export function Pricing() {
           </tbody>
         </table>
         <div className="grid-2 mt-l">
-          <SpecTable rows={[["Free calls", "100 a month on every API key"], ["Credits", "Prepaid by card, from £10"], ["x402", "USDC on Base, settled per call, no account"], ["Failed calls", "Never charged"]]} />
+          <SpecTable rows={[["Free calls", "100 a month on every API key"], ["Prepaid balance", "By card, from £10"], ["x402", "USDC on Base, settled per call, no account"], ["Failed calls", "Never charged"]]} />
           <SpecTable rows={[["Publish a tool", "Free"], ["You earn", "80% of every paid call"], ["Review", "Within one working day"], ["Payouts", "Monthly, from £20 earned"]]} />
         </div>
       </Section>
       <Section id="billing">
         <SectionHead label="Billing" title="Questions about paying" />
         <QA items={[
-          ["What happens when the trial ends?", "Your agents pause and nothing is charged. Choose a plan in your workspace and they pick up where they left off."],
-          ["Is it priced per person or per agent?", "Neither. One price covers the whole business: every app, everyone on your team, and up to 100 agents. The orchestrator is free on top. Plans differ only in how many actions agents take each month."],
+          ...PRICING_FAQ,
+          ["What happens when the trial ends?", "Your AI Team pauses and nothing is charged. Choose a plan in your workspace and it picks up where it left off."],
+          ["Is it priced per person or per agent?", "Neither. One price covers the whole business: every app, everyone on your team, and up to 100 AI Team members. Plans differ only in how many credits the AI Team gets each month."],
           ["Do I need other software as well?", "No connectors needed. Accounts, HR, payroll, the rota, the CRM and the helpdesk are apps in the OS. Some are fully built, some partly, and the rest start as records with an agent; each app says which it is."],
-          ["What counts as an action?", "One tool call by one of your agents: a search, a page read, a lead saved, an email drafted. Watching customers against the registers and company checks don't count."],
-          ["Can I change plan?", "Any time, from Usage and plan in your workspace. Changes apply from the next bill."],
-          ["Do agents cost more if they're busy?", "No. Each plan has a monthly allowance and agents stop at it. You can set a lower limit per agent too."],
+          ["Can I change plan?", "Any time, from Usage and plan in your workspace. Moving up takes effect straight away: you pay the difference for the rest of the month and get the extra credits for it. Moving down takes effect on the 1st."],
+          ["Can I limit what one agent spends?", "Yes. Give any agent a monthly budget in credits. When it reaches it, only that agent pauses until the 1st, and we tell you."],
           ["How are developers paid?", "We pay 80% of each settled call to your tools, monthly by bank transfer once you've earned £20."],
           ["Do you charge VAT?", "Prices are shown before VAT."],
         ]} />
