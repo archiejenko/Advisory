@@ -129,16 +129,11 @@ So this failure comes from the live workspace and the API, which this overhaul d
 
 ## Known failures
 
-| Check | Suite | Status | Tracking |
-|---|---|---|---|
-| "outreach: hire, run now, watch the steps, edit and approve the email; the lead is contacted" | `tests/e2e/ui.mjs` (signed in) | **Known failure.** It still runs, is reported as `KNOWN FAILURE`, and the rest of the suite carries on. | [#1](https://github.com/archiejenko/Advisory/issues/1) |
-
-**Root-cause lead for #1:**
-- The sign-up check builds its OS from the "Trades and field service" pack, which doesn't include `lead-generation` or `outreach-and-follow-up`.
-- So `templateAllowed(os, "outreach")` is false, and the run worker refuses every Outreach run, even though hiring succeeded.
-- **Knock-on effect:** the Floor check's "Ashworth Hale" company comes from that run, so its assertion is skipped, with a printed note, while #1 is open.
-
-It fails the same way on `hardening-batch-3`, which predates this work. It will be fixed in its own PR after production is verified.
+None. #1 (the signed-in outreach run refused with "Outreach works in apps that aren't in this business's OS") is fixed:
+- **The cause:** the sign-up check builds its OS from the Trades pack, which has neither of Outreach's apps (Sequences, Lead generation). Hiring succeeded, but every run was refused.
+- **The fix:** hiring an agent now adds the app it works in when the OS has none of them, as a logged OS change (`addAppsFor`, `apps/api/src/lib/osbuilder.ts`). An app the owner has set to outsourced, kept elsewhere or off is left alone, and the hire is refused with a message saying so.
+- **Tests:** `tests/unit/osbuilder.test.ts` covers all three cases. In `ui.mjs` the outreach flow is a normal check again, and so is the Floor's Ashworth Hale company.
+- **Also fixed:** with the outreach flow running for real, the signed-in suite reached the API's per-business limit (300 requests a minute) by the team check. That check now waits for the window to clear. The limit itself is unchanged.
 
 ## Integration branch (`integrate/2026-10-26`)
 
@@ -147,11 +142,11 @@ This branch is `claude/peaceful-bell-mkmpa8` (the workspace overhaul) with `clau
 | Suite | Result |
 |---|---|
 | `npm run typecheck` | Clean |
-| `npm test` | 496 passed |
+| `npm test` | 499 passed |
 | `npm run test:e2e` (API, local Worker and mocks) | 47 of 47 flows passed |
 | `npm run test:workspace` | 42 of 42 checks passed |
 | `node tests/e2e/os-check.mjs` (demo build) | 6 of 6 passed |
-| `node tests/e2e/ui.mjs` (browser, signed in and out) | 21 flows passed, 1 known failure (#1) |
+| `node tests/e2e/ui.mjs` (browser, signed in and out) | 22 of 22 flows passed (21 and 1 known failure before #1 was fixed) |
 
 **What the merge needed:**
 - **Credits in the new shell.** Usage and credits opens inside the workspace at `/workspace/setup/usage`, from Setup and from the avatar menu. `/workspace/usage` now redirects there.
