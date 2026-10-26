@@ -113,7 +113,10 @@ jobs:
           wranglerVersion: ${{ env.WRANGLER_VERSION }}
           command: deploy --var BUILD_SHA:${{ env.SHA }} --var BUILD_TIME:${{ steps.stamp.outputs.time }} --message ${{ env.SHA }}
 
+      # The smoke checks run even when the deploy step reports an error: wrangler can put the new code live and still
+      # fail part-way (crons not attached, say), and the summary should say exactly what is live.
       - name: "Smoke test: the live site is this commit"
+        if: ${{ !cancelled() && steps.deploy.outcome != 'skipped' }}
         run: |
           live=""
           for i in $(seq 1 24); do
@@ -137,3 +140,16 @@ jobs:
             echo
             echo "Roll back the Worker with \`npx wrangler rollback\`; the database with the bookmark above."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Smoke test: the live crons match wrangler.toml"
+        if: ${{ !cancelled() && steps.deploy.outcome != 'skipped' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set +e
+          out=$(node scripts/check-crons.mjs 2>&1); code=$?
+          echo "$out"
+          { echo "### Crons"; echo '```'; echo "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ $code -eq 0 ] || echo "::error::The live Worker's cron schedules don't match wrangler.toml. Scheduled jobs won't run as configured."
+          exit $code
