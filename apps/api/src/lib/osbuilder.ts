@@ -5,6 +5,7 @@ import { newId, nowIso } from "../../../../packages/core/util";
 import { facet, KINDS, type Kind } from "../../../../packages/core/os";
 import {
   validateConfig, configFromPack, pack as packOf, featuresOf, estimate, moduleSetting, THEMES,
+  TEMPLATE_MODULES, DEPENDS, templateAllowed, defaultFeatures,
   type OsConfig, type ModuleConfig, type Mode, type Autonomy, type Theme, type CustomField, type CustomApp,
 } from "../../../../packages/core/osconfig";
 import { type Env, one, all, run, audit } from "./db";
@@ -67,6 +68,25 @@ export async function saveOs(env: Env, orgId: string, input: { pack?: string; th
   await env.DB.batch(stmts);
   await audit(env, orgId, by, "os_saved", undefined, { version, apps: modules.filter((m) => m.mode === "here").length });
   return { ...(await loadOs(env, orgId))!, warnings: check.warnings };
+}
+
+/**
+ * Hiring an agent asks for the work it does, so the apps it works in come with it. When the saved OS has none of
+ * them, the first one it doesn't mention is added to run here (with what it depends on), as a logged OS change.
+ * An app the owner has set to outsourced, kept elsewhere or off is their choice: the hire is refused instead.
+ * Returns the app added, if any.
+ */
+export async function addAppsFor(env: Env, orgId: string, by: string, template: string, agentName: string): Promise<string | null> {
+  const need = TEMPLATE_MODULES[template];
+  const os = need ? await loadOs(env, orgId) : null;
+  if (!need || !os || templateAllowed(os, template)) return null;
+  const has = (k: string) => os.modules.some((m) => m.key === k);
+  const key = need.find((k) => !has(k));
+  if (!key) throw new HttpError(409, "needs_apps", `${agentName} works in ${need.map((k) => facet(k)?.app || k).join(" or ")}, which your OS runs elsewhere or has off. Run one of them here in Your OS, then hire ${agentName}.`);
+  const add = [key, ...(DEPENDS[key] || []).filter((d) => !has(d))];
+  const modules = [...os.modules, ...add.map((k, i) => ({ key: k, mode: "here" as Mode, features: defaultFeatures(k), autonomy: "approve" as Autonomy, position: os.modules.length + i }))];
+  await saveOs(env, orgId, { ...os, modules, version: os.version }, by);
+  return facet(key)?.app || key;
 }
 
 export async function setPaused(env: Env, orgId: string, paused: boolean, by: string) {

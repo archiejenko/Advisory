@@ -1,6 +1,6 @@
 // The agent runtime: hire an agent, run it turn by turn on the job queue, and schedule the next run.
 import { postRunReply } from "./ostools";
-import { loadOs } from "./osbuilder";
+import { loadOs, addAppsFor } from "./osbuilder";
 import { toolAllowed, templateAllowed } from "../../../../packages/core/osconfig";
 import { newId, nowIso } from "../../../../packages/core/util";
 import { template, TEMPLATES, PLANS, type Template } from "../../../../packages/core/templates";
@@ -117,6 +117,8 @@ export async function hireAgent(env: Env, orgId: string, userId: string, h: Hire
   if (t.key !== "orchestrator" && count >= plan.agents) throw new HttpError(409, "plan_limit", `Your ${plan.name} plan includes ${plan.agents} ${plan.agents === 1 ? "agent" : "agents"}. Move to a bigger plan to hire more.`);
   const rhythm = h.rhythm && ["weekdays", "daily", "weekly", "monthly", "on_demand", "on_event"].includes(h.rhythm) ? h.rhythm : t.rhythm;
   const hour = Number.isInteger(h.run_hour) && h.run_hour! >= 0 && h.run_hour! <= 23 ? h.run_hour! : 8;
+  // Its apps come with it, so the agent can run as soon as it's hired.
+  if (!custom) await addAppsFor(env, orgId, userId, t.key, h.name || t.name);
   const id = newId("agt");
   await run(env, `INSERT INTO agent (id, org_id, template, name, brief, settings, rhythm, run_hour, autonomy, channel_id, next_run_at, created_by, created_at, swarm_id, swarm_key, role, instructions, tools, badges, reports_to, mode, monthly_budget) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     id, orgId, t.key, (h.name || t.name).slice(0, 80), (h.brief || t.brief({ name: org.name, ...JSON.parse(org.profile || "{}") })).slice(0, 4000),
