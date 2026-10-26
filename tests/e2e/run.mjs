@@ -96,6 +96,18 @@ async function main() {
   console.log("Flows:");
   /* 1. Health check, end to end, with the approval guardrail */
   let hcToken;
+  await check("build stamp: /api/version answers; page addresses without the # go to their page", async () => {
+    const v = await (await fetch(API + "/api/version")).json();
+    ok(typeof v.sha === "string" && v.sha.length > 0 && "builtAt" in v, JSON.stringify(v));
+    for (const [from, to] of [["/workspace", "/#/workspace"], ["/os", "/#/os"], ["/workspace/money/owed?f=overdue", "/#/workspace/money/owed?f=overdue"]]) {
+      const r = await fetch(API + from, { redirect: "manual" });
+      ok(r.status === 302 && r.headers.get("location") === to, `${from} → ${r.status} ${r.headers.get("location")}`);
+    }
+    ok((await fetch(API + "/api/nope")).status === 404, "unknown API routes stay 404");
+    const html = await (await fetch(API + "/")).text();
+    ok(/<meta name="build-sha" content="[0-9a-f]{7,}/.test(html), "the page carries its build SHA");
+  });
+
   await check("health check: upload, match, report held for approval, approve, email, report page", async () => {
     const rows = [["Client", "Postcode"], ["Ellacombe Print", ""], ["Tarnbrook Logistics", ""], ["Harlow Vale Studios", ""], ["Corriemoor Interiors", ""], ["Joe Bloggs Plumbing", ""], ...seeded.slice(0, 6).map((c) => [titleCase(c.name), c.postcode])];
     const fd = new FormData();

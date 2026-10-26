@@ -51,6 +51,8 @@ app.options("/mcp", (c) => new Response(null, { status: 204, headers: { "Access-
 app.options("/v1/*", (c) => new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Authorization, Content-Type, PAYMENT-SIGNATURE, X-PAYMENT", "Access-Control-Allow-Methods": "GET, POST, DELETE" } }));
 
 // ok says the Worker answers; crons says when each scheduled task last ran, and which are overdue (smoke checks it).
+// Which commit is live: stamped at deploy (scripts/deploy.mjs). The deploy workflow polls this until it matches.
+app.get("/api/version", (c) => c.json({ sha: c.env.BUILD_SHA || "dev", builtAt: c.env.BUILD_TIME || null }, 200, { "Cache-Control": "no-store" }));
 app.get("/api/health", async (c) => c.json({ ok: true, at: new Date().toISOString(), crons: await cronHealth(c.env).catch(() => null) }));
 app.route("/api/public", pub);
 app.route("/api/auth", auth);
@@ -79,7 +81,16 @@ app.onError(async (err, c) => {
 // Anything that isn't an API route is the website (static assets, single-page app).
 app.all("*", async (c) => {
   if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/v1/")) return c.json({ error: { code: "not_found", message: "No such endpoint." } }, 404);
-  if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw);
+  if (c.env.ASSETS) {
+    const res = await c.env.ASSETS.fetch(c.req.raw);
+    // The site routes after the "#": a page address typed or linked without it (/workspace, /os) goes to its page.
+    const p = c.req.path;
+    if (res.status === 404 && c.req.method === "GET" && !/\.[a-z0-9]+$/i.test(p) && !/^\/(r|mcp|\.well-known)(\/|$)/.test(p)) {
+      const url = new URL(c.req.url);
+      return c.redirect(`/#${p.replace(/\/+$/, "")}${url.search}`, 302);
+    }
+    return res;
+  }
   return c.text("Agent House API", 200);
 });
 

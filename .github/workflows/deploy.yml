@@ -1,0 +1,139 @@
+name: Deploy
+
+# Production: www.ejtech.co.uk. Runs after CI passes on a push to main, or by hand (from main only).
+# Every run: bookmark the database (D1 Time Travel), apply migrations, deploy with a build stamp, then prove the live
+# site is this commit (GET /api/version) and its pages answer. Fails loudly if the live SHA doesn't match.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SITE: https://www.ejtech.co.uk
+  DB: agent-house
+  WRANGLER_VERSION: "4.151.3"
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://www.ejtech.co.uk
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Only main's current HEAD goes live
+        run: |
+          git fetch --quiet origin main
+          MAIN=$(git rev-parse origin/main)
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Deploy by hand from main only (this run is on $GITHUB_REF)."; exit 1
+          fi
+          if [ "$MAIN" != "$SHA" ]; then
+            echo "::error::main has moved on ($MAIN); $SHA is not main's HEAD. The run for the newer commit deploys it."; exit 1
+          fi
+          echo "Deploying $SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci && npm --prefix apps/web ci
+
+      - name: Predeploy check and build stamp
+        id: stamp
+        run: |
+          node scripts/predeploy-check.mjs
+          echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build the website (stamped)
+        run: npm run web:build
+        env:
+          BUILD_SHA: ${{ env.SHA }}
+          BUILD_TIME: ${{ steps.stamp.outputs.time }}
+
+      - name: Bookmark the database before migrations (D1 Time Travel)
+        id: bookmark
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
+          command: d1 time-travel info ${{ env.DB }} --json
+
+      - name: Record the bookmark in the job summary
+        env:
+          OUT: ${{ steps.bookmark.outputs.command-output }}
+        run: |
+          BM=$(printf '%s' "$OUT" | sed -n '/^{/,/^}/p' | jq -r '.bookmark // empty' 2>/dev/null || true)
+          {
+            echo "### Database bookmark (before migrations)"
+            if [ -n "$BM" ]; then
+              echo "Bookmark: \`$BM\`"
+              echo
+              echo "Restore with: \`npx wrangler d1 time-travel restore $DB --bookmark=$BM\`"
+            else
+              echo "Couldn't read a bookmark from wrangler's output:"
+              echo '```'; printf '%s\n' "$OUT"; echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$BM" ] || { echo "::error::No D1 bookmark; not applying migrations without one."; exit 1; }
+
+      - name: Apply database migrations (remote)
+        id: migrate
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
+          command: d1 migrations apply ${{ env.DB }} --remote
+
+      - name: Deploy the Worker and website (stamped)
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
+          command: deploy --var BUILD_SHA:${{ env.SHA }} --var BUILD_TIME:${{ steps.stamp.outputs.time }} --message ${{ env.SHA }}
+
+      - name: "Smoke test: the live site is this commit"
+        run: |
+          live=""
+          for i in $(seq 1 24); do
+            live=$(curl -fsS -H 'Cache-Control: no-cache' "$SITE/api/version" | jq -r '.sha' 2>/dev/null || true)
+            [ "$live" = "$SHA" ] && break
+            sleep 5
+          done
+          if [ "$live" != "$SHA" ]; then
+            echo "::error::Live SHA is '$live', expected $SHA after 2 minutes. The deploy did not go live."; exit 1
+          fi
+          for path in / /workspace /os; do
+            code=$(curl -sSL -o page.html -w '%{http_code}' "$SITE$path")
+            [ "$code" = "200" ] || { echo "::error::$path answered $code"; exit 1; }
+            grep -q "<meta name=\"build-sha\" content=\"$SHA\">" page.html || { echo "::error::$path served a page from a different build"; exit 1; }
+          done
+          {
+            echo "### Live"
+            echo "\`$SITE/api/version\` → \`$live\` (matches)"
+            echo
+            echo "/, /workspace and /os answer 200 with this build."
+            echo
+            echo "Roll back the Worker with \`npx wrangler rollback\`; the database with the bookmark above."
+          } >> "$GITHUB_STEP_SUMMARY"

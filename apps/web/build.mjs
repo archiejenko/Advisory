@@ -3,6 +3,11 @@
 import { build } from "esbuild";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { execSync } from "node:child_process";
+
+// Build stamp: which commit this is and when it was built (scripts/deploy.mjs passes the same values to the Worker).
+const sha = process.env.BUILD_SHA || (() => { try { return execSync("git rev-parse HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch { return "dev"; } })();
+const builtAt = process.env.BUILD_TIME || new Date().toISOString();
 
 // DEMO=1 builds a stand-alone demo (no API needed) into dist-demo/, for static hosting such as Vercel or Cloudflare Pages.
 const DEMO = process.env.DEMO === "1";
@@ -28,6 +33,8 @@ const html = `<!doctype html>
 <html lang="en-GB">
 <head>
 <meta charset="utf-8">${DEMO ? "" : `\n<meta http-equiv="Content-Security-Policy" content="${csp}">`}
+<meta name="build-sha" content="${sha}">
+<meta name="build-time" content="${builtAt}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent House</title>
 <meta name="description" content="Agent House: the all-in-one business operating system. Drag together the apps your business runs on, all on one database, and let your AI Team do the manual work. For UK businesses of 1 to 100 people.">
@@ -77,4 +84,4 @@ self.addEventListener("notificationclick", (e) => {
   e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => { for (const c of cs) { if ("focus" in c) { c.navigate(to); return c.focus(); } } return self.clients.openWindow(to); }));
 });
 `);
-console.log(`${OUT}/index.html ${Math.round(html.length / 1024)} KB`);
+console.log(`${OUT}/index.html ${Math.round(html.length / 1024)} KB · ${sha.slice(0, 12)}`);

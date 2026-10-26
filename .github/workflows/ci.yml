@@ -1,8 +1,8 @@
 name: CI
 
+# Every push to any branch, and every pull request. A merge to main deploys only after this passes (deploy.yml).
 on:
   push:
-    branches: [main, "deploy/**", "hardening-batch-*"]
   pull_request:
 
 jobs:
@@ -24,3 +24,25 @@ jobs:
         run: npm --prefix apps/web ci && npm run web:build
       - name: End-to-end (mocks, local Worker, every API flow)
         run: node scripts/dev-secrets.mjs && npm run test:e2e
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci && npm --prefix apps/web ci
+      - run: npx playwright install --with-deps chromium
+      - name: Workspace QA (demo build; consistency, banned strings, links, 4 widths, five-minute test)
+        run: npm run test:workspace
+      - name: OS check (landing, /os, pricing, Usage and modes in the demo build)
+        run: node tests/e2e/os-check.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-shots
+          path: ui-shots/
+          retention-days: 7

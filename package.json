@@ -11,9 +11,10 @@
     "typecheck": "tsc -p .",
     "test": "vitest run",
     "test:e2e": "node tests/e2e/run.mjs",
-    "deploy": "node scripts/predeploy-check.mjs && npm run web:build && wrangler deploy",
+    "deploy": "node scripts/predeploy-check.mjs && node scripts/deploy.mjs",
     "test:workspace": "cd apps/web && DEMO=1 node build.mjs && cd ../.. && node tests/e2e/workspace-qa.mjs",
-    "seed:demo": "vite-node scripts/seed-demo.ts"
+    "seed:demo": "vite-node scripts/seed-demo.ts",
+    "whats-live": "node scripts/whats-live.mjs"
   },
   "keywords": [],
   "author": "",

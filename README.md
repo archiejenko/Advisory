@@ -142,9 +142,46 @@ The ledger (`credit_entry`, `lib/credits.ts`) records every run, AI Team (system
 
 `npm --prefix apps/web run build:demo` builds the website into `apps/web/dist-demo/index.html` with the demo forced on, so it needs no API and can be hosted anywhere static. `apps/web/vercel.json` deploys it on Vercel with `apps/web` as the root directory; on Cloudflare Pages use the same build command and output directory. The real product still deploys as the Worker below.
 
+## Deploying
+
+**Merging to `main` is how www.ejtech.co.uk changes.** Nothing else deploys production.
+
+1. **CI** (`.github/workflows/ci.yml`) runs on every push and every pull request: typecheck, unit tests, the website build, every API flow, the workspace QA and the OS check.
+2. **Deploy** (`.github/workflows/deploy.yml`) runs after CI passes on `main`, in the `production` environment, one deploy at a time. Each run:
+   - records a D1 Time Travel bookmark in the job summary
+   - applies remote migrations
+   - deploys with a build stamp
+   - waits until `https://www.ejtech.co.uk/api/version` reports this commit's SHA
+   - checks that `/`, `/workspace` and `/os` answer 200 with this build
+
+   If the live SHA doesn't match within 2 minutes, the job fails. You can also run it by hand from `main` (Actions → Deploy → Run workflow).
+3. **What's live:**
+   ```bash
+   npm run whats-live    # the live SHA (from /api/version), origin/main's HEAD, and the commits between them
+   ```
+   The SHA is also in every page, as `<meta name="build-sha">`.
+
+**Secrets** (GitHub → Settings → Secrets and variables → Actions): `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+
+**Rolling back.** The Worker and the database roll back separately:
+
+```bash
+npx wrangler deployments list          # recent deployments, newest first
+npx wrangler rollback                  # back to the previous version (prompts for a reason)
+npx wrangler rollback <version-id>     # or to a specific version from the list
+# The database: each deploy's job summary has the bookmark taken before its migrations.
+npx wrangler d1 time-travel restore agent-house --bookmark=<bookmark>
+```
+
+A Worker rollback is instant, but `/api/version` then reports the older SHA, and the next merge to `main` deploys forward again.
+
+Restore the database only if a migration went wrong. A restore discards every write made since the bookmark.
+
+**By hand, outside CI** (emergencies only): `npm run deploy   # stamped with git HEAD; normally the Deploy workflow does this on merge to main` stamps the build with git HEAD and refuses uncommitted changes.
+
 ## Deploy to Cloudflare
 
-### www.ejtech.co.uk (this branch)
+### www.ejtech.co.uk: first-time setup
 
 `wrangler.toml` is already set for www.ejtech.co.uk: both hosts are attached as custom domains, the apex redirects to www (`CANONICAL_HOST`), and outbound mail goes through Resend (`MAIL_MODE = "http"`). Three commands on your own machine:
 
