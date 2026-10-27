@@ -18,6 +18,8 @@ import { executeAction, rejectAction } from "../lib/actions";
 import { specFor, syncOrgSwarms } from "../lib/swarm";
 import { logActivity } from "../lib/crm";
 import { learnAfterApprove } from "./today";
+import { logRemovedDrafts, LOG_TYPES } from "../lib/agentlog";
+import { personaView } from "../../../../packages/core/personas";
 
 type App = Hono<{ Bindings: Env; Variables: Vars }>;
 const manager = requireRole("manager");
@@ -85,7 +87,7 @@ export function registerAgentRoutes(ws: App) {
   /* ---------- My agents ---------- */
   const agentOut = (a: any) => {
     const t = template(a.template) || (a.template === "custom" ? { engine: "llm", category: "Run", glyph: "spark" } : undefined);
-    return { id: a.id, template: a.template, swarm_id: a.swarm_id ?? null, role: a.role ?? null, name: a.name, brief: a.brief, settings: JSON.parse(a.settings || "{}"), status: a.status, rhythm: a.rhythm, rhythm_label: RHYTHM_LABEL[a.rhythm as keyof typeof RHYTHM_LABEL], run_hour: a.run_hour, autonomy: a.autonomy, channel_id: a.channel_id, mode: a.mode, mode_label: modeLabel(a.mode), monthly_budget: a.monthly_budget ?? null, budget_paused: a.budget_paused_period === periodOf(), next_run_at: a.next_run_at, last_run_at: a.last_run_at, created_at: a.created_at, engine: t?.engine, category: t?.category, glyph: t?.glyph, waiting: a.waiting ?? undefined, runs: a.runs ?? undefined };
+    return { id: a.id, template: a.template, swarm_id: a.swarm_id ?? null, role: a.role ?? null, name: a.name, brief: a.brief, settings: JSON.parse(a.settings || "{}"), status: a.status, rhythm: a.rhythm, rhythm_label: RHYTHM_LABEL[a.rhythm as keyof typeof RHYTHM_LABEL], run_hour: a.run_hour, autonomy: a.autonomy, channel_id: a.channel_id, mode: a.mode, mode_label: modeLabel(a.mode), monthly_budget: a.monthly_budget ?? null, budget_paused: a.budget_paused_period === periodOf(), next_run_at: a.next_run_at, last_run_at: a.last_run_at, created_at: a.created_at, engine: t?.engine, category: t?.category, glyph: t?.glyph, waiting: a.waiting ?? undefined, runs: a.runs ?? undefined, persona: a.persona ?? null, persona_view: personaView(a), probation_until: a.probation_until ?? null };
   };
   ws.get("/my-agents", async (c) => {
     const rows = await c.get("db").all(`SELECT a.*, (SELECT COUNT(*) FROM agent_action x WHERE x.agent_id = a.id AND x.status = 'proposed') AS waiting,
@@ -127,6 +129,40 @@ export function registerAgentRoutes(ws: App) {
     return c.json({ agent: agentOut(a), runs, credits_this_month: used, choices, template: tpl });
   });
 
+  /**
+   * The agent's log, newest first. Filters: type (comma list), from and to (ISO dates), linked (key:value, e.g.
+   * run:run_123 or action:act_456). Pages with cursor (the next_cursor of the page before).
+   */
+  ws.get("/my-agents/:id/log", async (c) => {
+    const db = c.get("db"), id = c.req.param("id"), q = c.req.query();
+    if (!(await db.one("SELECT id FROM agent WHERE org_id = ?1 AND id = ?2", id))) throw notFound("Agent");
+    const where: string[] = [], args: any[] = [id];
+    const arg = (v: unknown) => { args.push(v); return `?${args.length + 1}`; };
+    const types = (q.type || "").split(",").map((t) => t.trim()).filter(Boolean);
+    if (types.some((t) => !(LOG_TYPES as readonly string[]).includes(t))) throw bad(`type must be one or more of ${LOG_TYPES.join(", ")}.`);
+    if (types.length) where.push(`type IN (${types.map(arg).join(",")})`);
+    for (const [k, op] of [["from", ">="], ["to", "<="]] as const) {
+      if (!q[k]) continue;
+      const d = new Date(q[k]);
+      if (isNaN(d.getTime())) throw bad(`${k} must be a date, like 2026-10-01.`);
+      // A bare date for "to" means the whole of that day.
+      where.push(`at ${op} ${arg(k === "to" && /^\d{4}-\d{2}-\d{2}$/.test(q[k]) ? `${q[k]}T23:59:59.999Z` : d.toISOString())}`);
+    }
+    if (q.linked) {
+      const m = /^(run|action|task|item|lead|invoice|rule|agent):(.{1,80})$/.exec(q.linked);
+      if (!m) throw bad("linked must look like run:<id>, action:<id>, task:<id>, item:<id>, lead:<id>, invoice:<id>, rule:<id> or agent:<id>.");
+      where.push(`json_extract(linked, ${arg("$." + m[1])}) = ${arg(m[2])}`);
+    }
+    if (q.cursor) {
+      if (!/^\d+$/.test(q.cursor)) throw bad("cursor must be the next_cursor of the page before.");
+      where.push(`id < ${arg(Number(q.cursor))}`);
+    }
+    const limit = Math.min(Math.max(Number(q.limit) || 50, 1), 100);
+    const rows = await db.all(`SELECT id, type, summary, detail, linked, run_id, action_id, mode, tokens_in, tokens_out, credits, autonomy_level, undo_token, at FROM agent_log WHERE org_id = ?1 AND agent_id = ?2${where.map((w) => " AND " + w).join("")} ORDER BY id DESC LIMIT ${limit + 1}`, ...args);
+    const page = rows.slice(0, limit).map((r: any) => ({ ...r, detail: r.detail ? JSON.parse(r.detail) : null, linked: r.linked ? JSON.parse(r.linked) : {}, credits: Math.round(r.credits * 100) / 100 }));
+    return c.json({ entries: page, next_cursor: rows.length > limit ? String(page[page.length - 1].id) : null });
+  });
+
   ws.patch("/my-agents/:id", manager, async (c) => {
     const b = await body(c, z.object({ name: z.string().min(1).max(80).optional(), brief: z.string().min(1).max(4000).optional(), status: z.enum(["running", "paused"]).optional(), rhythm: z.enum(["weekdays", "daily", "weekly", "monthly", "on_demand", "on_event"]).optional(), run_hour: z.number().int().min(0).max(23).optional(), autonomy: z.enum(["approve_all", "approve_first", "auto"]).optional(), channel_id: z.string().nullable().optional(),
       mode: Mode.optional(), monthly_budget: z.number().min(1).max(1000000).nullable().optional(), confirm: z.boolean().optional() }));
@@ -162,6 +198,7 @@ export function registerAgentRoutes(ws: App) {
     if (!a) throw notFound("Agent");
     await setAgentStatus(c.env, c.get("orgId"), id, "paused");
     await c.get("db").run("DELETE FROM agent WHERE org_id = ?1 AND id = ?2", id);
+    await logRemovedDrafts(c.env, c.get("orgId"), id);
     await c.get("db").run("UPDATE agent_action SET status = 'rejected', decided_by = 'removed' WHERE org_id = ?1 AND agent_id = ?2 AND status = 'proposed'", id);
     await audit(c.env, c.get("orgId"), c.get("user").id, "agent_removed", id);
     return c.json({ ok: true });

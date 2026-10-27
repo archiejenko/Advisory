@@ -6,6 +6,7 @@ import { HttpError } from "./http";
 import { emit, queueRun, specFor } from "./swarm";
 import { saveContact, saveDeal, logActivity } from "./crm";
 import type { Tool, ToolCtx } from "./tools";
+import { logEvent } from "./agentlog";
 
 const S = (props: Record<string, any>, required: string[] = []) => ({ type: "object", properties: props, required, additionalProperties: false });
 const str = (description: string) => ({ type: "string", description });
@@ -85,6 +86,7 @@ export const SWARM_TOOL_DEFS: Tool[] = [
       const note = text(i.note, 600);
       await run(c.env, "UPDATE work_item SET agent_id = ?, last_from_agent = ?, handoff_day = ?, handoffs_today = ?, note = ?, updated_at = ? WHERE id = ?", target.id, a.id, day, count + 1, note, nowIso(), it.id);
       await emit(c.env, { orgId: c.orgId!, swarmId: a.swarm_id, agentId: a.id, runId: c.runId, itemId: it.id, kind: "handoff", summary: `${a.name} handed ${it.title} to ${target.name}`, detail: { from_agent: a.id, to_agent: target.id, stage: it.stage } });
+      await logEvent(c.env, { orgId: c.orgId!, agentId: a.id, type: "handoff", summary: `Handed ${it.title} to ${target.name}`, runId: c.runId, linked: { item: it.id, agent: target.id, run: c.runId }, detail: { stage: it.stage, note }, ref: `handoff:${it.id}:${day}:${count + 1}` });
       const spec = specFor(target);
       let woke: string | null = null;
       if (spec?.engine === "llm" && target.status === "running") {

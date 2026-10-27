@@ -7,6 +7,7 @@ import { toLedger, runCharge, creditsFor, type Tokens } from "../../../../packag
 import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
 import { notifyChannel } from "./delivery";
+import { logEvent } from "./agentlog";
 
 /* ---------- Periods ---------- */
 const ukParts = (d: Date) => Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(d).map((p) => [p.type, p.value]));
@@ -133,7 +134,11 @@ export async function spend(env: Env, s: Spend, now = new Date()) {
     ON CONFLICT(org_id, kind, ref) DO NOTHING`,
     newId("cr"), s.orgId, s.kind, c, period, s.agentId ?? null, s.runId ?? null, s.mode ?? null, s.model, s.taskType ?? null,
     s.tokens.input, s.tokens.cacheRead, s.tokens.cacheWrite, s.tokens.output, s.requests, s.cost, s.ref, s.note ?? null, now.toISOString());
-  if (r.meta.changes) await afterSpend(env, s.orgId, s.agentId ?? null, now);
+  if (r.meta.changes) {
+    await logEvent(env, { orgId: s.orgId, agentId: s.agentId, type: "cost", summary: `Used ${c} credits${s.note ? `: ${s.note}` : s.mode ? ` (${s.mode})` : ""}`, runId: s.runId, linked: { run: s.runId }, mode: s.mode,
+      tokensIn: s.tokens.input + s.tokens.cacheRead + s.tokens.cacheWrite, tokensOut: s.tokens.output, credits: c, detail: { kind: s.kind, task_type: s.taskType ?? null }, ref: `cost:${s.kind}:${s.ref}`, at: now.toISOString() });
+    await afterSpend(env, s.orgId, s.agentId ?? null, now);
+  }
   return !!r.meta.changes;
 }
 

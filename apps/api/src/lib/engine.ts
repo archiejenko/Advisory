@@ -16,6 +16,7 @@ import { checkBlueprint, emit, syncSwarm, specFor, loadSwarm, kpi } from "./swar
 import { builtin } from "./tools";
 import { hit } from "./limits";
 import { defaultBadges, PLANNING_TOOLS } from "../../../../packages/core/badges";
+import { logRemovedDrafts } from "./agentlog";
 
 /* ---------- Creating a swarm ---------- */
 
@@ -107,6 +108,7 @@ export async function removeSwarm(env: Env, orgId: string, swarmId: string, user
   for (const a of agents) {
     if (a.created_at >= s.created_at) {
       await setAgentStatus(env, orgId, a.id, "paused");
+      await logRemovedDrafts(env, orgId, a.id);
       await run(env, "UPDATE agent_action SET status = 'rejected', decided_by = 'removed' WHERE org_id = ? AND agent_id = ? AND status = 'proposed'", orgId, a.id);
       await run(env, "DELETE FROM agent WHERE id = ? AND org_id = ?", a.id, orgId);
     } else await run(env, "UPDATE agent SET swarm_id = NULL, swarm_key = NULL, role = NULL WHERE id = ? AND org_id = ?", a.id, orgId);

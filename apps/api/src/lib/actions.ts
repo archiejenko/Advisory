@@ -5,6 +5,7 @@ import { HttpError } from "./http";
 import { sendMail } from "./mail";
 import { unsubLink } from "./crypto";
 import { emitForAgent } from "./swarm";
+import { logEvent } from "./agentlog";
 import { logActivity, leadForEmail } from "./crm";
 import { loadOs } from "./osbuilder";
 import { effectiveAutonomy, templateAutonomy, moduleSetting, type OsConfig, type Autonomy } from "../../../../packages/core/osconfig";
@@ -48,6 +49,8 @@ export async function proposeEmail(env: Env, ctx: { orgId: string; agentId: stri
   await run(env, "INSERT INTO agent_action (id, org_id, agent_id, run_id, kind, title, payload, reason, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
     id, ctx.orgId, ctx.agentId, ctx.runId ?? null, "email", `Email ${to}: ${payload.subject}`, JSON.stringify(payload), p.reason?.slice(0, 500) ?? null, "proposed", nowIso());
   await emitForAgent(env, ctx.agentId, { runId: ctx.runId, kind: "proposed", summary: `${agent.name} drafted an email to ${to}`, detail: { action_id: id } });
+  await logEvent(env, { orgId: ctx.orgId, agentId: ctx.agentId, type: "approval", summary: `Drafted an email to ${to}: ${payload.subject}`, runId: ctx.runId, actionId: id,
+    linked: { action: id, run: ctx.runId, lead: payload.lead_id, invoice: payload.invoice_id }, detail: { kind: "email", reason: p.reason?.slice(0, 300) }, ref: `action:${id}:proposed` });
   const auto = await mayAutoSend(env, agent, payload, ctx.runId);
   if (auto === true) {
     const r = await executeAction(env, ctx.orgId, id, "agent");
@@ -128,6 +131,10 @@ export async function executeAction(env: Env, orgId: string, actionId: string, d
   // Claim it first so a double click can't send twice
   const claim = await run(env, "UPDATE agent_action SET status = 'sent', decided_by = ?, decided_at = ?, payload = ? WHERE id = ? AND status = 'proposed'", decidedBy, nowIso(), JSON.stringify(p), actionId);
   if (!claim.meta.changes) throw new HttpError(409, "already_decided", "This action was already decided.");
+  // One log row for the decision, whatever the send then does.
+  const decided = (outcome: string) => logEvent(env, { orgId, agentId: a.agent_id, type: decidedBy === "agent" ? "action" : "decision",
+    summary: `${decidedBy === "agent" ? "Sent on its own" : `Approved by ${decidedBy}`}${edits?.subject || edits?.body ? " with edits" : ""}: ${outcome}`,
+    runId: a.run_id, actionId, linked: { action: actionId, run: a.run_id, lead: p.lead_id, invoice: p.invoice_id }, detail: { by: decidedBy, outcome }, ref: `action:${actionId}:decided` });
   const org = await one<any>(env, "SELECT name FROM org WHERE id = ?", orgId);
   const owner = await one<any>(env, "SELECT u.email FROM membership m JOIN user u ON u.id = m.user_id WHERE m.org_id = ? AND m.role = 'owner' LIMIT 1", orgId);
   const footer = p.lead_id
@@ -138,10 +145,12 @@ export async function executeAction(env: Env, orgId: string, actionId: string, d
     result = await sendMail(env, { to: p.to, subject: p.subject, text: p.body + footer, replyTo: owner?.email, kind: isService(p) ? "service" : "outbound" });
   } catch (e: any) {
     await run(env, "UPDATE agent_action SET status = 'failed', result = ? WHERE id = ?", String(e.message).slice(0, 300), actionId);
+    await decided(`the email to ${p.to} didn't send`);
     throw new HttpError(502, "send_failed", "The email didn't send: " + e.message);
   }
   if (result === "suppressed") {
     await run(env, "UPDATE agent_action SET status = 'failed', result = 'suppressed' WHERE id = ?", actionId);
+    await decided(`not sent, ${p.to} has opted out`);
     return { status: "failed", result };
   }
   // SENDS_LIVE is off: nothing left the building, so don't record it as sent or move the lead or invoice on.
@@ -149,6 +158,7 @@ export async function executeAction(env: Env, orgId: string, actionId: string, d
   if (result === "dry_run") {
     await run(env, "UPDATE agent_action SET status = 'failed', result = ? WHERE id = ?", DRY_RUN_NOTE, actionId);
     await audit(env, orgId, decidedBy, "action_dry_run", actionId, { to: p.to });
+    await decided(`not sent to ${p.to} (test mode)`);
     return { status: "dry_run", result };
   }
   await run(env, "UPDATE agent_action SET result = ? WHERE id = ?", result, actionId);
@@ -156,6 +166,7 @@ export async function executeAction(env: Env, orgId: string, actionId: string, d
   if (p.invoice_id) await run(env, "UPDATE invoice SET reminders = reminders + 1, last_reminder_at = ? WHERE id = ? AND org_id = ?", nowIso(), p.invoice_id, orgId);
   if (p.message_id) await run(env, "UPDATE inbox_message SET status = 'replied' WHERE id = ? AND org_id = ?", p.message_id, orgId);
   await audit(env, orgId, decidedBy, "action_sent", actionId, { to: p.to });
+  await decided(`email sent to ${p.to}`);
   await emitForAgent(env, a.agent_id, { kind: "sent", summary: `Email sent to ${p.to}: ${p.subject}`, detail: { action_id: actionId, by: decidedBy } });
   const leadId = p.lead_id || (await leadForEmail(env, orgId, p.to));
   if (leadId) {
@@ -169,4 +180,7 @@ export async function rejectAction(env: Env, orgId: string, actionId: string, de
   const r = await run(env, "UPDATE agent_action SET status = 'rejected', decided_by = ?, decided_at = ? WHERE id = ? AND org_id = ? AND status = 'proposed'", decidedBy, nowIso(), actionId, orgId);
   if (!r.meta.changes) throw new HttpError(409, "already_decided", "This action was already decided.");
   await audit(env, orgId, decidedBy, "action_rejected", actionId);
+  const a = await one<any>(env, "SELECT agent_id, run_id, title FROM agent_action WHERE id = ? AND org_id = ?", actionId, orgId);
+  await logEvent(env, { orgId, agentId: a?.agent_id, type: "decision", summary: `Rejected by ${decidedBy}: ${a?.title || "a draft"}`, runId: a?.run_id, actionId,
+    linked: { action: actionId, run: a?.run_id }, detail: { by: decidedBy }, ref: `action:${actionId}:decided` });
 }
