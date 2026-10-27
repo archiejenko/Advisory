@@ -10,6 +10,7 @@ import { emit, loadSwarm, specFor, syncSwarm } from "./swarm";
 import { hireAgent, setAgentStatus, nextRunAt, startRun, spreadMinute, estimateRun, modeFor } from "./agents";
 import { MODES } from "../../../../config/model-pricing";
 import { badgesOf } from "./orgbase";
+import { logRemovedDrafts } from "./agentlog";
 
 export type OrgView = OrgAgent & { key: string; template: string; engine: string; tools: number; last_run_at: string | null; next_run_at: string | null; status: string };
 
@@ -63,6 +64,7 @@ export async function applyOrg(env: Env, orgId: string, swarmId: string, user: {
     if (after.some((a) => a.id === old.id)) continue;
     const row = rows[old.id];
     await setAgentStatus(env, orgId, old.id, "paused");
+    await logRemovedDrafts(env, orgId, old.id);
     await run(env, "UPDATE agent_action SET status = 'rejected', decided_by = 'removed' WHERE org_id = ? AND agent_id = ? AND status = 'proposed'", orgId, old.id);
     await run(env, "UPDATE agent_task SET status = 'dropped', result = 'The agent was removed.', updated_at = ? WHERE agent_id = ? AND org_id = ? AND status IN ('todo','doing','blocked')", nowIso(), old.id, orgId);
     if (row && row.created_at < s.created_at) await run(env, "UPDATE agent SET swarm_id = NULL, swarm_key = NULL, role = NULL, reports_to = NULL WHERE id = ? AND org_id = ?", old.id, orgId);

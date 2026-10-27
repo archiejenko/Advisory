@@ -7,6 +7,7 @@ import { claude } from "./llm";
 import { creditsProblem, chargeSystem } from "./credits";
 import { tokensOf } from "../../../../packages/core/credits";
 import { MODES, SYSTEM_MODE } from "../../../../config/model-pricing";
+import { logEvent } from "./agentlog";
 
 const DAY = 864e5;
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
@@ -76,8 +77,11 @@ export async function addRule(env: Env, orgId: string, text: string, by: string,
   if (source === "owner" && (await one<any>(env, "SELECT COUNT(*) AS n FROM house_rule WHERE org_id = ? AND status = 'active'", orgId)).n >= MAX_RULES)
     throw new HttpError(409, "too_many_rules", `You have ${MAX_RULES} house rules. Remove one before adding another.`);
   const id = newId("hr");
-  await run(env, "INSERT INTO house_rule (id, org_id, text, source, status, action_id, created_by, created_at, decided_at) VALUES (?,?,?,?,?,?,?,?,?)",
-    id, orgId, t, source, source === "owner" ? "active" : "proposed", actionId ?? null, by, nowIso(), source === "owner" ? nowIso() : null);
+  const agentId = actionId ? (await one<any>(env, "SELECT agent_id FROM agent_action WHERE id = ? AND org_id = ?", actionId, orgId))?.agent_id ?? null : null;
+  await run(env, "INSERT INTO house_rule (id, org_id, text, source, status, action_id, created_by, created_at, decided_at, agent_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    id, orgId, t, source, source === "owner" ? "active" : "proposed", actionId ?? null, by, nowIso(), source === "owner" ? nowIso() : null, agentId);
+  await logEvent(env, { orgId, agentId, type: "learning", summary: source === "owner" ? `New house rule from ${by}: ${t}` : `Learned from an edit, waiting for you: ${t}`,
+    actionId, linked: { rule: id, action: actionId }, detail: { source }, ref: `rule:${id}:${source === "owner" ? "added" : "proposed"}` });
   await audit(env, orgId, by, source === "owner" ? "rule_added" : "rule_proposed", id, { text: t });
   return { id, duplicate: false };
 }
@@ -91,6 +95,7 @@ export async function decideRule(env: Env, orgId: string, id: string, by: string
   if (text.length < 4) throw new HttpError(400, "invalid_request", "A rule needs a few words.");
   await run(env, "UPDATE house_rule SET text = ?, status = ?, decided_at = ? WHERE id = ? AND org_id = ?", text, change.status ?? r.status, change.status ? nowIso() : r.decided_at, id, orgId);
   await audit(env, orgId, by, "rule_" + (change.status || "edited"), id, { text });
+  if (change.status === "active" && r.status !== "active") await logEvent(env, { orgId, agentId: r.agent_id, type: "learning", summary: `House rule now followed: ${text}`, actionId: r.action_id, linked: { rule: id, action: r.action_id }, detail: { by }, ref: `rule:${id}:active` });
 }
 
 /** Is this edit more than a typo? Compares word sets, so moving a comma doesn't count. */

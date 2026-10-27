@@ -4,6 +4,8 @@ import { loadOs, addAppsFor } from "./osbuilder";
 import { toolAllowed, templateAllowed } from "../../../../packages/core/osconfig";
 import { newId, nowIso } from "../../../../packages/core/util";
 import { template, TEMPLATES, PLANS, type Template } from "../../../../packages/core/templates";
+import { personaForTemplate } from "../../../../packages/core/personas";
+import { logEvent } from "./agentlog";
 import { type Env, one, all, run, audit } from "./db";
 import { HttpError } from "./http";
 import { claude, type Msg, type Block } from "./llm";
@@ -120,12 +122,12 @@ export async function hireAgent(env: Env, orgId: string, userId: string, h: Hire
   // Its apps come with it, so the agent can run as soon as it's hired.
   if (!custom) await addAppsFor(env, orgId, userId, t.key, h.name || t.name);
   const id = newId("agt");
-  await run(env, `INSERT INTO agent (id, org_id, template, name, brief, settings, rhythm, run_hour, autonomy, channel_id, next_run_at, created_by, created_at, swarm_id, swarm_key, role, instructions, tools, badges, reports_to, mode, monthly_budget) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  await run(env, `INSERT INTO agent (id, org_id, template, name, brief, settings, rhythm, run_hour, autonomy, channel_id, next_run_at, created_by, created_at, swarm_id, swarm_key, role, instructions, tools, badges, reports_to, mode, monthly_budget, persona) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     id, orgId, t.key, (h.name || t.name).slice(0, 80), (h.brief || t.brief({ name: org.name, ...JSON.parse(org.profile || "{}") })).slice(0, 4000),
     JSON.stringify(h.settings || {}), rhythm, hour, ["approve_all", "approve_first", "auto"].includes(h.autonomy || "") ? h.autonomy : "approve_all",
     h.channel_id || null, t.engine === "llm" ? nextRunAt(rhythm, hour, new Date(), spreadMinute(id)) : null, userId, nowIso(),
     h.swarm_id ?? null, h.swarm_key ?? null, h.role?.slice(0, 120) ?? null, custom ? h.instructions!.slice(0, 4000) : null, custom ? JSON.stringify(h.tools || []) : null,
-    h.badges ? JSON.stringify(h.badges) : null, h.reports_to ?? null, isMode(h.mode) ? h.mode : defaultModeFor(t.key), h.monthly_budget ?? null);
+    h.badges ? JSON.stringify(h.badges) : null, h.reports_to ?? null, isMode(h.mode) ? h.mode : defaultModeFor(t.key), h.monthly_budget ?? null, personaForTemplate(t.key)?.key ?? null);
   // The register agents keep their own engines: switching one on here switches it on there.
   const engineKey = { watch: "watch", check: "check", prospect: "prospect" }[t.engine as string];
   if (engineKey) await run(env, "UPDATE agent_config SET on_ = 1, channel_id = COALESCE(?, channel_id) WHERE org_id = ? AND agent = ?", h.channel_id || null, orgId, engineKey);
@@ -255,6 +257,7 @@ export async function agentLoop(env: Env, o: LoopOpts): Promise<LoopOut> {
         out.toolCalls.push({ tool: u.name, input: u.input, ok: false, result: e.message });
         results.push({ type: "tool_result", tool_use_id: u.id, content: `Error: ${e.message}`, is_error: true });
         if (o.onTool) await o.onTool(u.name, false, e.message);
+        if (o.ctx.runId && o.ctx.orgId) await logEvent(env, { orgId: o.ctx.orgId, agentId: o.ctx.agentId, type: "error", summary: `${u.name} failed: ${String(e.message).slice(0, 200)}`, runId: o.ctx.runId, linked: { run: o.ctx.runId }, detail: { tool: u.name }, ref: `run:${o.ctx.runId}:tool:${out.toolCalls.length - 1}` });
       }
     }
     messages.push({ role: "user", content: results });
@@ -291,7 +294,7 @@ function seedTrustedUrls(org: any, r: { trigger: string; input?: string | null }
 }
 
 /** Record what a run cost and did, whether it finished or failed partway, and charge it to the credit ledger. */
-async function settleRun(env: Env, orgId: string, runId: string, out: LoopOut, fields: { status: string; summary?: string | null; error?: string | null; transcript_key?: string | null }) {
+async function settleRun(env: Env, orgId: string, runId: string, out: LoopOut, fields: { status: string; summary?: string | null; error?: string | null; transcript_key?: string | null; agentId?: string | null; mode?: string | null; waiting?: number }) {
   const pence = Math.ceil(out.credits);
   // Only a run still marked running is settled. If the sweep already called it interrupted, that stands:
   // the cost and transcript are still recorded, but the status isn't overwritten.
@@ -300,6 +303,10 @@ async function settleRun(env: Env, orgId: string, runId: string, out: LoopOut, f
     out.tokensIn, out.cacheRead, out.cacheWrite, out.tokensOut, out.credits, pence, nowIso(), runId);
   if (!r.meta.changes) await run(env, "UPDATE agent_run SET steps = ?, tool_calls = ?, tokens_in = ?, cache_read = ?, cache_write = ?, tokens_out = ?, credits = ?, cost_pence = ?, transcript_key = COALESCE(?, transcript_key) WHERE id = ?",
     out.steps, out.toolCalls.length, out.tokensIn, out.cacheRead, out.cacheWrite, out.tokensOut, out.credits, pence, fields.transcript_key ?? null, runId);
+  const failed = fields.status === "failed";
+  await logEvent(env, { orgId, agentId: fields.agentId, type: failed ? "error" : "action", runId, linked: { run: runId }, mode: fields.mode,
+    summary: failed ? `Stopped: ${fields.error || "the run failed"}` : `Finished${fields.waiting ? `, ${fields.waiting} waiting for approval` : ""}: ${(fields.summary || "").split("\n")[0] || "no summary"}`,
+    tokensIn: out.tokensIn + out.cacheRead + out.cacheWrite, tokensOut: out.tokensOut, credits: out.credits, detail: { steps: out.steps, tool_calls: out.toolCalls.length }, ref: `run:${runId}:end` });
   await chargeSettled(env, runId);
   return out.credits;
 }
@@ -345,6 +352,7 @@ export async function runAgent(env: Env, runId: string) {
   if (!r) return "skipped"; // deleted between claim and read (the workspace was purged)
   const agent = await one<any>(env, "SELECT * FROM agent WHERE id = ?", r.agent_id);
   const t = agent && specFor(agent);
+  await logEvent(env, { orgId: r.org_id, agentId: r.agent_id, type: "action", summary: `Started${r.trigger === "event" ? " on a handoff" : r.trigger === "manual" ? " (asked)" : r.trigger === "schedule" ? " on schedule" : ""}`, runId, linked: { run: runId }, mode: agent ? modeFor(agent, r.mode) : r.mode, detail: { trigger: r.trigger }, ref: `run:${runId}:start` });
   const out = newLoopOut();
   const swarmEv = (kind: string, summary: string, detail?: unknown) => agent?.swarm_id ? emit(env, { orgId: r.org_id, swarmId: agent.swarm_id, agentId: agent.id, runId, kind, summary, detail }) : Promise.resolve();
   let swarmLines: string | undefined;
@@ -390,7 +398,7 @@ export async function runAgent(env: Env, runId: string) {
     });
     const key = await saveTranscript(env, org.id, runId, out);
     const waiting = (await one<any>(env, "SELECT COUNT(*) AS n FROM agent_action WHERE run_id = ? AND status = 'proposed'", runId)).n as number;
-    await settleRun(env, org.id, runId, out, { status: waiting ? "waiting" : "done", summary: out.text.slice(0, 4000), transcript_key: key });
+    await settleRun(env, org.id, runId, out, { status: waiting ? "waiting" : "done", summary: out.text.slice(0, 4000), transcript_key: key, agentId: agent.id, mode, waiting });
     await run(env, "UPDATE agent SET last_run_at = ? WHERE id = ?", nowIso(), agent.id);
     if (agent.swarm_id) await settleTasksForRun(env, org.id, runId, waiting ? "waiting" : "done", out.text);
     if (agent.swarm_id) {
@@ -402,7 +410,7 @@ export async function runAgent(env: Env, runId: string) {
     return waiting ? "waiting" : "done";
   } catch (e: any) {
     const key = out.steps ? await saveTranscript(env, r.org_id, runId, out) : null;
-    await settleRun(env, r.org_id, runId, out, { status: "failed", summary: out.text ? out.text.slice(0, 4000) : null, error: String(e.message || e).slice(0, 500), transcript_key: key });
+    await settleRun(env, r.org_id, runId, out, { status: "failed", summary: out.text ? out.text.slice(0, 4000) : null, error: String(e.message || e).slice(0, 500), transcript_key: key, agentId: r.agent_id, mode: r.mode });
     if (r.reply_channel) await postRunReply(env, runId);
     await swarmEv("run_failed", `${agent?.name || "Agent"} stopped: ${String(e.message || e).slice(0, 160)}`);
     if (agent?.swarm_id) { try { await settleTasksForRun(env, r.org_id, runId, "failed", String(e.message || e)); } catch (err) { console.error("task settle failed", err); } }
@@ -425,6 +433,7 @@ export async function sweepRuns(env: Env, now = new Date()) {
     const done = await run(env, "UPDATE agent_run SET status = 'failed', error = ?, finished_at = ? WHERE id = ? AND status = 'running'",
       "Interrupted: the run stopped partway. Anything already sent is in Approvals; run the agent again if needed.", nowIso(), r.id);
     if (!done.meta.changes) continue;
+    await logEvent(env, { orgId: r.org_id, agentId: r.agent_id, type: "error", summary: "Stopped: interrupted partway", runId: r.id, linked: { run: r.id }, mode: r.mode, ref: `run:${r.id}:end` });
     await chargeSettled(env, r.id);
   }
   // Re-queue a run once. A run waiting behind a backlog still has its message; sending another every 15 minutes

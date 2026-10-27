@@ -7,6 +7,7 @@ import { HttpError } from "./http";
 import { emit, queueRun, specFor } from "./swarm";
 import { badgesOf, wakeAssigner } from "./orgbase";
 import type { Tool, ToolCtx } from "./tools";
+import { logEvent } from "./agentlog";
 
 const S = (props: Record<string, any>, required: string[] = []) => ({ type: "object", properties: props, required, additionalProperties: false });
 const str = (description: string) => ({ type: "string", description });
@@ -86,6 +87,7 @@ export const ORG_TOOL_DEFS: Tool[] = [
         await run(c.env, "UPDATE agent_task SET status = 'doing', run_id = ?, attempts = attempts + 1, updated_at = ? WHERE id = ?", runId, nowIso(), id);
       }
       await emit(c.env, { orgId: c.orgId!, swarmId: a.swarm_id, agentId: a.id, runId: c.runId, itemId, kind: "task", summary: `${a.name} gave ${t.name}: ${title}`, detail: { task_id: id, to_agent: t.id } });
+      await logEvent(c.env, { orgId: c.orgId!, agentId: a.id, type: "handoff", summary: `Gave ${t.name} a task: ${title}`, runId: c.runId, linked: { task: id, agent: t.id, run: c.runId, item: itemId }, detail: { to_run: runId }, ref: `task:${id}` });
       return { task_id: id, to: t.name, status: runId ? "doing" : "todo", note: runId ? undefined : `${t.name} is paused; the task waits until it's resumed.` };
     },
   },
