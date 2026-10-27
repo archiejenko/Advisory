@@ -184,7 +184,7 @@ async function main() {
     await shot("05-settings");
   });
 
-  await knownFailure("#1 https://github.com/archiejenko/Advisory/issues/1", "outreach: hire, run now, watch the steps, edit and approve the email; the lead is contacted", async () => {
+  await check("outreach: hire, run now, watch the steps, edit and approve the email; the lead is contacted", async () => {
     const idx = ["CompanyName,CompanyNumber,CompanyStatus,IncorporationDate,RegAddress.PostCode,SICCode.SicText_1",
       "ASHWORTH HALE SOLICITORS LTD,09112783,Active,01/07/2014,M2 4WU,69102 - Solicitors",
       "PEEL STREET ACCOUNTANTS LTD,10284419,Active,15/07/2016,M3 1AA,69201 - Accounting and auditing activities"].join("\n");
@@ -321,9 +321,8 @@ async function main() {
     await page.getByRole("button", { name: "Board", exact: true }).click();
     await page.locator(".bd-col").first().waitFor();
     await page.getByRole("button", { name: "Companies", exact: true }).click();
-    // Ashworth Hale is the lead the outreach run saves; while that run is refused (known failure #1) it isn't there.
-    if (known.some((k) => k.startsWith("outreach"))) console.log("        (skipped the Ashworth Hale company: it comes from the outreach run, known failure #1)");
-    else await text("Ashworth Hale", 15000);
+    // Ashworth Hale is the lead the outreach run saved.
+    await text("Ashworth Hale", 15000);
     await page.getByRole("button", { name: "Floor", exact: true }).click();
     await page.getByRole("button", { name: /^Inbox:/ }).click();
     await btn("Resume Inbox");
@@ -333,7 +332,7 @@ async function main() {
   await check("business OS: open an app, add a record, ask its agent in #finance and see the answer", async () => {
     await go("/workspace/apps");
     await page.getByText(/\d+ apps across \d+ areas/).first().waitFor();
-    // Invoicing is in every industry pack (Payables isn't in Trades, which the sign-up check picks; see issue #1).
+    // Invoicing is in every industry pack (Payables isn't in Trades, which the sign-up check picks).
     await page.locator(".os-app", { hasText: "Invoicing" }).first().click();
     await page.getByRole("button", { name: "New entry" }).click();
     await page.fill("#nr-title", "Van lease, November");
@@ -361,7 +360,17 @@ async function main() {
     await page.waitForURL(/checkout\.stripe\.example/);
   });
 
+  // The signed-in checks all run as one business, so by here they can reach the API's per-business limit (300 requests
+  // a minute) in a way a person never would. Wait for the window to clear instead of reading a refused page.
+  const underLimit = async () => {
+    for (let i = 0; i < 20; i++) {
+      if ((await page.evaluate(() => fetch("/api/ws/me").then((r) => r.status))) !== 429) return;
+      await sleep(5000);
+    }
+    throw new Error("Still rate limited after 100 seconds");
+  };
   await check("team: invite a viewer, sign out; the viewer can read but not approve or hire", async () => {
+    await underLimit();
     await go("/workspace/settings");
     await page.fill("#inv-email", "sam@brightwork.example");
     await page.selectOption("#inv-role", "viewer");
@@ -373,6 +382,7 @@ async function main() {
     const token = await tokenFor("sam@brightwork.example");
     await go("/sign-in?token=" + token);
     await page.waitForURL(/#\/workspace$/);
+    await underLimit();
     await go("/workspace/approvals?f=all");
     await page.locator(".inbox-item").first().waitFor();
     await text("Sent");

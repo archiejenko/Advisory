@@ -11,7 +11,8 @@ import {
 import { TEMPLATES } from "../../packages/core/templates";
 import { getTool, runTool } from "../../apps/api/src/lib/tools";
 import { proposeEmail } from "../../apps/api/src/lib/actions";
-import { saveOs } from "../../apps/api/src/lib/osbuilder";
+import { saveOs, loadOs, changes } from "../../apps/api/src/lib/osbuilder";
+import { hireAgent } from "../../apps/api/src/lib/agents";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -189,6 +190,36 @@ describe("the OS limits the AI Team", () => {
     const r: any = await runTool({ env, orgId: org.id, agentId: "agt_pay", runId: "run_h" }, tool, { module: "payroll", subject: "October payroll", body: "Two starters, one leaver." });
     expect(JSON.stringify(r)).toContain("waiting_for_approval");
     expect(raw.prepare("SELECT status FROM agent_action").all()).toEqual([{ status: "proposed" }]);
+  });
+  it("hiring an agent brings the app it works in, so its first run isn't refused (issue #1)", async () => {
+    const { raw, env } = testEnv();
+    const org = seedOrg(raw);
+    await saveOs(env, org.id, configFromPack("trades"), org.user); // no outreach or lead generation in Trades
+    expect(templateAllowed(await loadOs(env, org.id), "outreach")).toBe(false);
+    await hireAgent(env, org.id, org.user, { template: "outreach" });
+    const os = (await loadOs(env, org.id))!;
+    expect(templateAllowed(os, "outreach")).toBe(true);
+    expect(os.modules.find((m) => m.key === "outreach-and-follow-up")).toMatchObject({ mode: "here", autonomy: "approve" });
+    expect((await changes(env, org.id))[0].summary).toBe("added Sequences");
+    // Hiring another agent whose app is already here changes nothing.
+    await hireAgent(env, org.id, org.user, { template: "inbox" });
+    expect((await loadOs(env, org.id))!.version).toBe(os.version);
+  });
+  it("an app the owner turned off isn't switched back on by a hire: the hire is refused", async () => {
+    const { raw, env } = testEnv();
+    const org = seedOrg(raw);
+    const cfg = configFromPack("agencies");
+    for (const m of cfg.modules) if (m.key === "outreach-and-follow-up" || m.key === "lead-generation") m.mode = m.key === "lead-generation" ? "off" : "external";
+    await saveOs(env, org.id, cfg, org.user);
+    await expect(hireAgent(env, org.id, org.user, { template: "outreach" })).rejects.toMatchObject({ status: 409, code: "needs_apps" });
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM agent").get()).toEqual({ n: 0 });
+    expect((await loadOs(env, org.id))!.version).toBe(1);
+  });
+  it("with no OS built, a hire leaves the OS alone", async () => {
+    const { raw, env } = testEnv();
+    const org = seedOrg(raw);
+    await hireAgent(env, org.id, org.user, { template: "outreach" });
+    expect(await loadOs(env, org.id)).toBeNull();
   });
   it("no tool lets an agent move money or delete a record", async () => {
     const { env } = testEnv();
