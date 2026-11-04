@@ -11,6 +11,8 @@ import * as q from "./demo/selectors";
 import { relative } from "./demo/format";
 
 const NAV = [{ id: "home", name: "Home", icon: "Home", to: "/workspace" }, ...HUBS.map((h) => ({ id: h.id, name: h.name, icon: h.icon, to: "/workspace/" + h.id }))];
+// Engagement sits under the hubs in the sidebar. On a phone it's reached from Customers and Ask, so the tab bar keeps five.
+const SIDE = [...NAV.slice(0, 2), { id: "engagement", name: "Engagement", icon: "MessagesSquare", to: "/workspace/engagement" }, ...NAV.slice(2)];
 const RAIL_KEY = "bw:rail";
 
 function useActive() {
@@ -38,6 +40,7 @@ export function AppShell({ children }) {
   const s = useStore();
   const active = useActive();
   const pending = q.pendingCount(s);
+  const waiting = q.engagementWaiting(s);
   const [rail, setRail] = useState(() => { try { return localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; } });
   const [ask, setAsk] = useState(false);
   const [menu, setMenu] = useState(null);
@@ -59,10 +62,11 @@ export function AppShell({ children }) {
       <div className={"w-shell" + (rail ? " is-rail" : "")}>
         <nav className="w-side" aria-label="Workspace">
           <Link to="/workspace" className="w-brand" aria-label={`${s.org.name}, Home`}><span className="w-brand-mark" aria-hidden="true">{s.org.name[0]}</span><b>{s.org.name.split(" ")[0]}</b></Link>
-          {NAV.map((n) => (
+          {SIDE.map((n) => (
             <Link key={n.id} to={n.to} className="w-nav" aria-current={active === n.id ? "page" : undefined} title={n.name}>
               <Icon name={n.icon} size={20} /><span>{n.name}</span>
               {n.id === "home" && pending > 0 && <span className="w-count" aria-label={`${pending} decisions need you`}>{pending}</span>}
+              {n.id === "engagement" && waiting > 0 && <span className="w-count" aria-label={`${waiting} waiting on us`}>{waiting}</span>}
             </Link>
           ))}
           <span className="w-sp" />

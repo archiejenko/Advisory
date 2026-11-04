@@ -181,5 +181,7 @@ export function Customers({ tab }) {
     <MetricTile key="q" label="Quotes waiting 5+ days" value={q.quotesUnanswered(s).length} tone={q.quotesUnanswered(s).length ? "attn" : undefined} to="/workspace/customers/quotes" sub={plural(s.quotes.filter((x) => x.status === "sent").length, "quote") + " out"} />,
     <MetricTile key="i" label="Inbox to answer" value={c.new + c.open} to="/workspace/customers/inbox" sub={`${c.new} new`} />,
   ];
-  return <HubFrame hub="customers" tab={app?.key} metrics={metrics}>{V ? <V /> : <GenericApp app={app} />}</HubFrame>;
+  const waiting = q.engagementWaiting(s);
+  const actions = <Button icon="MessagesSquare" to="/workspace/engagement">Engagement{waiting > 0 && <span className="w-count" aria-label={`${waiting} waiting on us`}>{waiting}</span>}</Button>;
+  return <HubFrame hub="customers" tab={app?.key} metrics={metrics} actions={actions}>{V ? <V /> : <GenericApp app={app} />}</HubFrame>;
 }

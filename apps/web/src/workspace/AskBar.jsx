@@ -5,7 +5,7 @@ import { navigate } from "../router.jsx";
 import { Icon, hrefFor, useStore } from "./core.jsx";
 import { AgentBadge, Button } from "./ui.jsx";
 import { answer, routeAgent } from "./demo/ask";
-import { search, title } from "./demo/selectors";
+import { accKey, accountName, allAccounts, search, title } from "./demo/selectors";
 import { HUBS, appName, shellApps } from "./demo/catalogue";
 import { useVoice, voiceSupported, speakText, stopSpeaking } from "../voice.js";
 
@@ -35,6 +35,10 @@ export function AskPalette({ open, onClose }) {
   const pages = useMemo(() => [
     { label: "Home", sub: "Decisions, outcomes and today", to: "/workspace", icon: "Home" },
     ...HUBS.flatMap((h) => [{ label: h.name, sub: h.purpose, to: "/workspace/" + h.id, icon: h.icon }, ...shellApps(s.os, h.id).map((a) => ({ label: appName(a, s.prefs.view), sub: h.name, to: `/workspace/${h.id}/${a.key}`, icon: a.icon }))]),
+    { label: "Engagement", sub: "Every touch with every buyer and supplier", to: "/workspace/engagement", icon: "MessagesSquare" },
+    { label: "Guard log", sub: "Engagement · when the contact rules stepped in", to: "/workspace/engagement/guard", icon: "ShieldCheck" },
+    { label: "Contact rules", sub: "Engagement · who may contact whom, and when", to: "/workspace/engagement/rules", icon: "ShieldCheck" },
+    { label: "Usage and credits", sub: "What the AI Team used, day by day", to: "/workspace/setup/usage", icon: "Zap" },
     { label: "Setup", sub: "Apps, agents and tools", to: "/workspace/setup", icon: "Settings" },
   ], [s.os, s.prefs.view]);
   const t = text.trim();
@@ -44,7 +48,13 @@ export function AskPalette({ open, onClose }) {
     const ask = { kind: "ask", label: `Ask: ${t}`, text: t };
     const goPages = pages.filter((p) => p.label.toLowerCase().includes(w)).slice(0, 4).map((p) => ({ kind: "go", ...p }));
     const recs = search(s, t).map((h) => ({ kind: "go", label: h.label, sub: h.sub, to: hrefFor(h.ref, s), icon: "ArrowRight" }));
-    return QUESTION.test(t) ? [ask, ...goPages, ...recs] : [...goPages, ...recs, ask];
+    // "log", "log a touch with castle", or just a buyer or supplier's name: offer to log a touch with them.
+    const logWord = /^log( a touch)?( with)?\s*/i;
+    const who = t.replace(logWord, "").toLowerCase();
+    const logs = (logWord.test(t) || who.length >= 3) ? allAccounts(s).filter((r) => who && accountName(s, r).toLowerCase().includes(who)).slice(0, logWord.test(t) ? 5 : 2)
+      .map((r) => ({ kind: "go", label: `Log a touch with ${accountName(s, r)}`, sub: "Engagement · checked against the contact rules", to: `/workspace/engagement?a=${accKey(r)}&log=1`, icon: "Plus" })) : [];
+    if (logWord.test(t) && !who) logs.push({ kind: "go", label: "Log a touch", sub: "Engagement · choose the account", to: "/workspace/engagement?log=1", icon: "Plus" });
+    return QUESTION.test(t) ? [ask, ...goPages, ...recs, ...logs] : logWord.test(t) ? [...logs, ...goPages, ...recs, ask] : [...goPages, ...recs, ...logs, ask];
   }, [t, pages, s]);
   useEffect(() => setSel(0), [t]);
 

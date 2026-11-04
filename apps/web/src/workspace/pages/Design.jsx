@@ -7,6 +7,10 @@ import {
   PageHeader, RecordLink, Section, SegmentedControl, StatusChip, Tabs, Timeline, delta,
 } from "../ui.jsx";
 import { DecisionCard } from "../DecisionCard.jsx";
+import { ChannelIcon, PresenceDots, SEQUENCE_STATES, SequenceChip, TouchStrip, VerdictChip } from "../engagement/bits.jsx";
+import { DecisionChip, HoldCard } from "../engagement/Inspector.jsx";
+import { HeldNotice } from "../engagement/Held.jsx";
+import { TouchChart } from "../engagement/TouchChart.jsx";
 import { AskButton } from "../AskBar.jsx";
 import { pounds } from "../demo/format";
 import * as q from "../demo/selectors";
@@ -15,6 +19,12 @@ const COLOURS = [
   ["--surface-base", "Surface: base"], ["--surface-raised", "Surface: raised"], ["--surface-overlay", "Surface: overlay"],
   ["--line-border", "Border"], ["--line-divider", "Divider"], ["--text-primary", "Text: primary"], ["--text-secondary", "Text: secondary"], ["--text-muted", "Text: muted"],
   ["--primary", "Primary (lavender)"], ["--status-attn-fill", "Amber: needs you"], ["--status-done-fill", "Green: done or paid"], ["--status-risk", "Coral: overdue or risk"], ["--status-agent", "Lavender: agent or info"], ["--status-neutral", "Grey: neutral"],
+];
+
+const VIZ = [
+  ["--viz-agent", "Agent"], ["--viz-person", "Person"], ["--viz-them", "Them"],
+  ["--viz-email", "Email"], ["--viz-phone", "Phone"], ["--viz-whatsapp", "WhatsApp"], ["--viz-linkedin", "LinkedIn"], ["--viz-web", "Web form"], ["--viz-visit", "Visit"],
+  ["--heat-1", "Heatmap: level 1"], ["--heat-2", "Heatmap: level 2"], ["--heat-3", "Heatmap: level 3"], ["--heat-4", "Heatmap: level 4"],
 ];
 
 export function Design() {
@@ -108,6 +118,24 @@ export function Design() {
       </Section>
 
       <Section title="Ask bar" id="d-ask"><div style={{ maxWidth: 420 }}><AskButton onOpen={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))} /></div></Section>
+
+      <Section title="Data colours" id="d-viz" sub="Only for charts, strips and the heatmap; checked for colour-blind separation on this surface">
+        <div className="w-grid w-grid-3">{VIZ.map(([v, t]) => <div key={v} className="w-design-swatch"><i style={{ background: `var(${v})` }} /><span>{t}<br /><code className="mono muted">{v}</code></span></div>)}</div>
+      </Section>
+
+      <Section title="Engagement" id="d-eng" sub="Touch strip, channels, presence, verdicts, automations, held sends and the chart">
+        <div className="w-stack">
+          <div className="w-row">{["co_salford", "co_chorlton", "co_ashworth", "co_hulme"].map((id) => <span key={id} className="w-row" style={{ gap: 8 }}><span className="muted">{q.accountName(s, { kind: "company", id })}</span><TouchStrip refTo={{ kind: "company", id }} /></span>)}</div>
+          <div className="w-row">{q.CHANNELS.map((c) => <span key={c.key} className="w-row" style={{ gap: 6 }}><ChannelIcon channel={c.key} />{c.label}</span>)}</div>
+          <div className="w-row"><PresenceDots list={s.presence} verbose /></div>
+          <div className="w-row">{["confirm", "reply", "quiet", "capped", "dnc", "clear"].map((v) => <VerdictChip key={v} verdict={v} dueAt={v === "clear" ? null : new Date(Date.parse(s.now) + (v === "confirm" ? -2 : 5) * 3600e3).toISOString()} />)}</div>
+          <div className="w-row">{SEQUENCE_STATES.map(([k]) => <SequenceChip key={k} state={k} />)}</div>
+          <div className="w-row">{["held", "blocked", "overridden", "breach"].map((d) => <DecisionChip key={d} d={d} />)}</div>
+          {q.pendingHolds(s)[0] && <div style={{ maxWidth: 440 }}><HoldCard g={q.pendingHolds(s)[0]} /></div>}
+          <HeldNotice refTo={{ type: "conversation", id: "cv_salford" }} />
+          <TouchChart />
+        </div>
+      </Section>
 
       <Section title="Empty state" id="d-empty"><div className="w-card"><EmptyState icon="Inbox" title="Inbox zero" body="New emails, web enquiries and call notes appear here, with a reply drafted." action={<Button icon="Plus">Log a call</Button>} /></div></Section>
 

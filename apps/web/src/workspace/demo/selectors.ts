@@ -1,6 +1,6 @@
 // Every figure the workspace shows is worked out here, from the store. Nothing on screen is typed in by hand.
 import type { AccountRef, Actor, Agent, Approval, ApprovalType, Company, GuardEvent, Invoice, Job, Presence, Ref, RuleId, State, Supplier, Touch, TouchChannel } from "./types";
-import { evaluate, check, RULE_COPY, VERDICT_COPY, type CTouch, type Evaluation } from "../../../../../packages/core/contact";
+import { evaluate, check, classifyLogged, RULE_COPY, VERDICT_COPY, type CTouch, type Evaluation } from "../../../../../packages/core/contact";
 import { demoHistory } from "../../../../../packages/core/demoUsage";
 import { dailyUsage, percentileBins, quantile, weekly, biggestRuns, balanceOf, type Day, type Entry } from "../../../../../packages/core/usage";
 import { modeName } from "../../../../../packages/core/credits";
@@ -354,7 +354,8 @@ export type EngRow = {
   last: Touch | null; touches30: number; channels: TouchChannel[]; holds: number; presence: Presence[];
 };
 export type EngSort = { key: "name" | "verdict" | "due" | "last" | "touches" | "owner"; dir: 1 | -1 };
-const VERDICT_RANK = { dnc: 0, confirm: 1, reply: 2, quiet: 3, capped: 4, clear: 5 } as const;
+// Default order: what needs action first, then what limits contact, then the rest.
+const VERDICT_RANK = { confirm: 0, reply: 1, quiet: 2, capped: 3, dnc: 4, clear: 5 } as const;
 export function engagementRow(s: State, r: AccountRef): EngRow {
   const a = accountOf(s, r)!, e = verdictFor(s, r), xs = touchesFor(s, r);
   const recent = xs.filter((t) => Date.parse(t.at) > clockOf(s) - 30 * D);
@@ -627,3 +628,17 @@ export const topRuns = (s: State, days = 30, n = 5) => {
   const now = nowMs(s);
   return biggestRuns(usageLedger(s).entries, now - days * D, now, n).map((e) => ({ id: e.run_id!, at: e.at, agentId: e.agent_id!, agent: agent(s, e.agent_id!)?.name || "", mode: e.mode!, note: e.note || "", credits: -e.credits, cost: creditCost(-e.credits) }));
 };
+/** What logging a touch from earlier would record: the rule it broke at the time, if any. */
+export function previewLogged(s: State, r: AccountRef, x: { actor: Actor; channel: TouchChannel; at: string; contactId?: string | null; thread?: string | null }) {
+  const before = touchesFor(s, r).filter((t) => Date.parse(t.at) < Date.parse(x.at)).map(toC);
+  return classifyLogged(accountOf(s, r) || { owner: null }, before, s.contactRules, { at: x.at, actor: x.actor, direction: "out", channel: x.channel, contactId: x.contactId ?? null, thread: x.thread ?? null });
+}
+/** "due in 3 h", "2 h overdue", "until 3 May": how long a rule has left, from the demo clock. */
+export function dueText(s: State, iso: string | null, kind: "due" | "until" = "due") {
+  if (!iso) return "";
+  const ms = Date.parse(iso) - clockOf(s), a = Math.abs(ms);
+  const span = a < H ? `${Math.max(1, Math.round(a / 60e3))} min` : a < 2 * D ? `${Math.round(a / H)} h` : `${Math.round(a / D)} days`;
+  if (kind === "until") return a > 14 * D ? `until ${new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : `for ${span}`;
+  return ms >= 0 ? `due in ${span}` : `${span} overdue`;
+}
+export const isOverdueAt = (s: State, iso: string | null) => !!iso && Date.parse(iso) < clockOf(s);

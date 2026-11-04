@@ -34,7 +34,7 @@ export const RULE_ORDER: RuleId[] = ["R1", "R2", "R3", "R4", "R5", "R6"];
 export const RULE_COPY: Record<RuleId, { name: string; explain: (r: ContactRules) => string }> = {
   R1: { name: "Do not contact", explain: (r) => `After a decline or opt-out, nobody contacts them for ${r.R1.days} days, or until the date set on the account` },
   R2: { name: "Quiet period", explain: (r) => `After anyone contacts them, nobody else does for ${r.R2.hours} hours unless they reply first` },
-  R3: { name: "Owner starts threads", explain: () => "Only the owner, or someone they hand to, starts a new conversation. Agents are held; people are warned" },
+  R3: { name: "Owner starts threads", explain: () => "Only the owner, or someone they hand to, starts a new conversation" },
   R4: { name: "Confirm acceptances", explain: (r) => `An accepted invitation is confirmed within ${r.R4.hours} hours, on whatever channel it came in` },
   R5: { name: "Reply in time", explain: (r) => `A message from them is answered within ${r.R5.hours} hours` },
   R6: { name: "Frequency cap", explain: (r) => `No more than ${r.R6.max} outbound touches to one contact in any ${r.R6.windowDays} days` },

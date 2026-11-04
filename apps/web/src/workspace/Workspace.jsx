@@ -14,6 +14,7 @@ import { Setup } from "./pages/Setup.jsx";
 import { EmptyState, Button, Toaster } from "./ui.jsx";
 import { Start } from "./pages/Start.jsx";
 import { Usage } from "./pages/Usage.jsx";
+import { Engagement } from "./engagement/Engagement.jsx";
 import { setDemo } from "../api.js";
 import { Link } from "../router.jsx";
 
@@ -62,6 +63,7 @@ export function Workspace() {
   if (parts[0] === "floor") page = <Team tab="floor" />;
   else if (parts.length === 1) page = <Home />;
   else if (parts[1] === "design") page = <Design />;
+  else if (parts[1] === "engagement") page = <Engagement tab={parts[2] || "overview"} />;
   else if (parts[1] === "setup") page = parts[2] === "usage" ? <Usage /> : <Setup />;
   else if (HUB_PAGES[parts[1]]) {
     const H = HUB_PAGES[parts[1]];
