@@ -21,7 +21,7 @@ The test reads the expected figures from the demo's own store, using the same se
 
 | Figure | Expected | Where it was checked |
 |---|---|---|
-| Pending decisions | 10 | Sidebar badge, notifications badge, Home "Needs you" count, number of cards on Home |
+| Pending decisions | 9 | Sidebar badge, notifications badge, Home "Needs you" count, number of cards on Home |
 | Routine decisions | 4 | "Approve all 4 routine" |
 | Overdue total | £2,336.00 | Money header, ageing buckets |
 | Overdue invoices | 3 | Money header, late rows in Money owed to you, Invoices "Overdue" filter |
@@ -29,12 +29,12 @@ The test reads the expected figures from the demo's own store, using the same se
 | Agents | 6 | Team header, roster, Setup summary |
 | Apps | 18 | Setup summary, and the tab count across the four hubs |
 
-Approving one decision moves all three badges to 9 together, and Undo returns them all to 10.
+Approving one decision moves all three badges to 8 together, and Undo returns them all to 9.
 
 The seed itself is checked in `tests/unit/seed.test.ts`, at three times of day on each of seven days, so 21 points in all. At every point it confirms:
 - 3 overdue invoices totalling £2,336.00, and INV-1047 at 21 days late with one reminder sent
 - £320.00 due in the next 7 days
-- 10 decisions, split 4 routine and 6 to review
+- 9 decisions, split 4 routine and 5 to review. Theo's Salford reply is held by the contact rules (the quiet period: Dana phoned first), so it waits in Engagement instead of the queue
 - 6 new leads, 2 replies (1 today), and Ancoats won this week
 - 6 agents and 8 people
 - 8 weeks of history
@@ -96,7 +96,7 @@ The test opened 36 routes at 375, 768, 1280 and 1440px: 144 screenshots in `ui-s
 
 ## 6. Five-minute test (automated, 375px, touch)
 
-The test cleared the Home queue from 10 decisions to "Nothing needs you" with **8 taps or swipes in about 4 seconds**:
+The test cleared the Home queue from 10 decisions (9 since the contact rules hold Salford's reply) to "Nothing needs you" with **8 taps or swipes in about 4 seconds**:
 
 1. Tap "Yes, let Rosa do it" on the trust-ladder prompt. Spinningfields' £400 reminder goes out under the new rule.
 2. Tap "Approve all 3 routine".

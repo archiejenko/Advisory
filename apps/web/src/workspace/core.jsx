@@ -35,6 +35,7 @@ const PATH = {
   person: (id) => `/workspace/team/people/${id}`,
   agent: (id) => `/workspace/team/agents/${id}`,
   approval: (id) => `/workspace?decision=${id}`,
+  supplier: (id) => `/workspace/engagement?a=supplier:${id}`,
 };
 export function hrefFor(ref, s = getState()) {
   if (!ref) return "/workspace";

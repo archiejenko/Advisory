@@ -63,3 +63,50 @@ export function balanceOf(entries: Pick<Entry, "period" | "from_plan" | "from_to
   const topup = toLedger(sum(entries.map((e) => e.from_topup)));
   return { plan, topup, total: Math.max(0, plan) + Math.max(0, topup) };
 }
+
+/* ---------- Day by day: the Usage page's heatmap, spend by agent and biggest runs ---------- */
+
+export type Day = { day: string; credits: number; actions: number; byAgent: Record<string, number>; biggest: { credits: number; agent_id: string | null; note: string | null } | null };
+const isUse = (e: Entry) => e.kind === "run" || e.kind === "system";
+/** Credits used and runs, per UTC day (YYYY-MM-DD), optionally for one agent. Credits unrounded; round where shown. */
+export function dailyUsage(entries: Entry[], o: { agentId?: string | null } = {}): Map<string, Day> {
+  const out = new Map<string, Day>();
+  for (const e of entries) {
+    if (!isUse(e) || (o.agentId && e.agent_id !== o.agentId)) continue;
+    const k = e.at.slice(0, 10), c = -e.credits;
+    const d = out.get(k) || { day: k, credits: 0, actions: 0, byAgent: {}, biggest: null };
+    d.credits += c; if (e.kind === "run") d.actions++;
+    const who = e.agent_id || "system";
+    d.byAgent[who] = (d.byAgent[who] || 0) + c;
+    if (e.kind === "run" && (!d.biggest || c > d.biggest.credits)) d.biggest = { credits: c, agent_id: e.agent_id ?? null, note: e.note ?? null };
+    out.set(k, d);
+  }
+  return out;
+}
+/** The value at quantile p (0 to 1) of a sorted list, by linear interpolation. */
+export const quantile = (sorted: number[], p: number) => {
+  if (!sorted.length) return 0;
+  const i = (sorted.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+};
+/** Thresholds at the 30th, 60th and 90th percentiles of the days with any use: five levels (none, then four). */
+export function percentileBins(values: number[], ps: number[] = [0.3, 0.6, 0.9]) {
+  const v = values.filter((x) => x > 0).sort((a, b) => a - b);
+  const thresholds = ps.map((p) => quantile(v, p));
+  const level = (x: number) => (x <= 0 ? 0 : x <= thresholds[0] ? 1 : x <= thresholds[1] ? 2 : x <= thresholds[2] ? 3 : 4);
+  return { thresholds, level };
+}
+/** The single runs that used the most credits between `from` and `to`. */
+export function biggestRuns(entries: Entry[], from: number, to: number, n = 5) {
+  return entries.filter((e) => e.kind === "run" && Date.parse(e.at) >= from && Date.parse(e.at) <= to).sort((a, b) => a.credits - b.credits).slice(0, n);
+}
+/** Credits per week for the last `weeks` weeks ending at `now`, oldest first. */
+export function weekly(entries: Entry[], now: number, weeks: number, agentId?: string | null) {
+  const out = Array(weeks).fill(0);
+  for (const e of entries) {
+    if (!isUse(e) || (agentId && e.agent_id !== agentId)) continue;
+    const back = Math.floor((now - Date.parse(e.at)) / (7 * 864e5));
+    if (back >= 0 && back < weeks) out[weeks - 1 - back] += -e.credits;
+  }
+  return out;
+}

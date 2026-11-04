@@ -4,14 +4,16 @@
 import React, { useRef, useState } from "react";
 import { Icon, toast, useStore } from "./core.jsx";
 import { AgentBadge, Button, RecordLink, StatusChip } from "./ui.jsx";
-import { approve, reject } from "./demo/store";
+import { approve, guardOutcome, reject } from "./demo/store";
 import { relative } from "./demo/format";
 
 const DONE = { send_reminder: "Reminder sent", send_outreach: "Email sent", reply_enquiry: "Reply sent", pay_bill: "Payment sent", confirm_job: "Crew told", post_briefing: "Briefing posted", send_invoice: "Invoice sent", follow_up_quote: "Follow-ups sent" };
 
 export function decide(a, how, preview) {
   const tok = how === "approve" ? approve(a.id, preview ? { preview } : undefined) : reject(a.id);
-  if (tok) toast(how === "approve" ? `${DONE[a.type] || "Done"}: ${a.title}` : `Rejected: ${a.title}. Nothing was sent.`, { undo: tok });
+  // The contact rules are checked again on approval: something may have changed since the draft.
+  const g = how === "approve" ? guardOutcome(tok) : null;
+  if (tok) toast(g?.outcome === "held" ? `Held, not sent: ${g.reason}. Decide in Engagement.` : g?.outcome === "blocked" ? `Not sent: they're on do not contact.` : how === "approve" ? `${DONE[a.type] || "Done"}: ${a.title}` : `Rejected: ${a.title}. Nothing was sent.`, { undo: tok });
 }
 
 export function DecisionCard({ a, focused, onFocus, innerRef }) {

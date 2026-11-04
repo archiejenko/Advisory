@@ -8,6 +8,7 @@ import {
   RecordLink, Section, StatusChip, Tabs, Timeline, cap,
 } from "../ui.jsx";
 import { DecisionCard } from "../DecisionCard.jsx";
+import { HeldNotice, draftToast } from "../engagement/Held.jsx";
 import { ChaseLine, InvoiceDoc, QuoteDoc } from "./Summary.jsx";
 import { getState, draftReply, markPaid, moveDeal, setAutonomy, setConversation, setTask, undo, undoTokenForEvent } from "../demo/store";
 import * as q from "../demo/selectors";
@@ -234,7 +235,7 @@ function ConversationPage({ id }) {
       <div className="w-rec-grid">
         <div>
           <div className="w-card">{c.messages.map((m) => <div key={m.id} className={"w-msg" + (m.direction === "out" ? " out" : "")}><div className="w-msg-m"><b>{m.from}</b>{m.actor?.kind === "agent" && <AgentBadge agentId={m.actor.id} role={false} />}<span>{ukShort(m.at)}, {ukTime(m.at)}</span></div><p>{m.body}</p></div>)}</div>
-          {draft ? <div style={{ marginTop: 16 }}><DecisionCard a={draft} /></div> : c.status !== "resolved" && <div style={{ marginTop: 16 }}><Button icon="Sparkles" onClick={() => { const tok = draftReply(id); toast("Theo drafted a reply.", { undo: tok }); }}>Ask Theo to draft a reply</Button></div>}
+          {draft ? <div style={{ marginTop: 16 }}><DecisionCard a={draft} /></div> : q.approvalsFor(s, { type: "conversation", id }).some((x) => x.status === "held") ? <div style={{ marginTop: 16 }}><HeldNotice refTo={{ type: "conversation", id }} /></div> : c.status !== "resolved" && <div style={{ marginTop: 16 }}><Button icon="Sparkles" onClick={() => { draftToast(draftReply(id), "Theo drafted a reply."); }}>Ask Theo to draft a reply</Button></div>}
         </div>
         <Card title="Timeline"><Timeline events={q.timelineFor(s, [{ type: "conversation", id }])} /></Card>
       </div>

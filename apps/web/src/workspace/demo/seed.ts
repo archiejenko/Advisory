@@ -1,11 +1,12 @@
 // Brightwork Cleaning Ltd: the demo business. Everything is relative to `now`, so the story reads the same on any day:
 // three invoices overdue (£2,336.00), £320.00 due in the next seven days, Ancoats won this week, six new leads,
-// two replies (one today), ten decisions waiting (four routine, six to review), and eight weeks of history behind it.
+// two replies (one today), nine decisions waiting (four routine, five to review) with Salford's reply held by the contact rules, and eight weeks of history behind it.
 import type {
   ActivityEvent as Activity, Agent, Approval, Bill, Channel, ChatMessage, Company, Contact, Contract, Conversation, Deal, DiaryEntry,
-  GenericRecord, Invoice, Job, Person, Quote, State, Task, Payment, Line,
+  GenericRecord, Invoice, Job, Person, Quote, State, Task, Payment, Line, Supplier, Touch, GuardEvent, Sequence, Presence, Actor, AccountRef,
 } from "./types";
 import { brightworkOs } from "./catalogue";
+import { DEFAULT_RULES, classifyLogged, type CTouch } from "../../../../../packages/core/contact";
 
 const H = 3600e3, D = 24 * H;
 
@@ -58,13 +59,17 @@ export function seed(nowMs: number = Date.now()): State {
   ];
   // Credits: Theo reads every enquiry closely, so he runs on Deep; the rest on Standard.
   for (const a of agents) { a.mode = a.id === "agt_cs" ? "deep" : "standard"; a.monthlyBudget = null; }
+  // Usage history: the kind of work each does, and when it joined. The workspace started 270 days ago; Bea came later.
+  const TEMPLATE: Record<string, string> = { agt_sales: "outreach", agt_cs: "inbox", agt_credit: "credit-control", agt_ops: "orchestrator", agt_fin: "bookkeeping", agt_brief: "briefing" };
+  const RHYTHM: Record<string, string> = { agt_sales: "weekdays", agt_cs: "on_event", agt_credit: "weekdays", agt_ops: "daily", agt_fin: "weekdays", agt_brief: "weekly" };
+  for (const a of agents) { a.template = TEMPLATE[a.id]; a.rhythm = RHYTHM[a.id]; a.hiredAt = ago((a.id === "agt_brief" ? 118 : 270) * D); }
 
   /* ---------- Companies and contacts ---------- */
   const companies: Company[] = [];
   const SHORT: Record<string, string> = { co_tarnbrook: "Tarnbrook", co_ancoats: "Ancoats Architects", co_quayside: "Quayside Opticians", co_irwell: "Irwell Engineering", co_marston: "Marston Interiors", co_peel: "Peel Street Accountants", co_castlefield: "Castlefield Dental", co_ashworth: "Ashworth Hale", co_hulme: "Hulme Dental", co_didsfam: "Didsbury Family Dental" };
   const contacts: Contact[] = [];
   const co = (id: string, name: string, type: string, postcode: string, staff: number | null, status: Company["status"], pay: Company["paymentBehaviour"], createdDaysAgo: number, sinceDaysAgo: number | null, email: string | null, notes: string, source = "Referral") => {
-    companies.push({ id, name, short: SHORT[id] || name.replace(/ (Ltd|LLP)$/, ""), type, postcode, staff, status, paymentBehaviour: pay, website: email ? "https://" + email.split("@")[1] : null, email, source, createdAt: ago(createdDaysAgo * D), customerSince: sinceDaysAgo == null ? null : dateOnly(-sinceDaysAgo), notes });
+    companies.push({ owner: null, handoffTo: [], dnc: null, id, name, short: SHORT[id] || name.replace(/ (Ltd|LLP)$/, ""), type, postcode, staff, status, paymentBehaviour: pay, website: email ? "https://" + email.split("@")[1] : null, email, source, createdAt: ago(createdDaysAgo * D), customerSince: sinceDaysAgo == null ? null : dateOnly(-sinceDaysAgo), notes });
   };
   const ct = (companyId: string, name: string, role: string, email: string | null, phone: string | null = null) => contacts.push({ id: "con_" + (contacts.length + 1), companyId, name, role, email, phone });
   // Customers
@@ -90,6 +95,7 @@ export function seed(nowMs: number = Date.now()): State {
   co("co_ashworth", "Ashworth Hale Solicitors Ltd", "Law firm", "M2 5NT", 28, "lead", "new", 19, null, "hello@ashworthhale.example", "Moving to a bigger office in January.", "Outreach");
   co("co_chorlton", "Chorlton Vets Ltd", "Veterinary practice", "M21 9PQ", 14, "lead", "new", 16, null, "reception@chorltonvets.example", "Two consulting rooms and a small surgery.", "Referral");
   co("co_hulme", "Hulme Dental Studio Ltd", "Dental practice", "M15 5BQ", 10, "lead", "new", 14, null, "hello@hulmedental.example", "Single site, evening clean wanted.", "Website form");
+  co("co_brightside", "Brightside Nurseries Ltd", "Day nurseries", "M20 4BX", 30, "lead", "new", 20, null, "office@brightsidenurseries.example", "Two nurseries, Didsbury and Withington. Manager is in on Mondays.", "Outreach");
   co("co_didsfam", "Didsbury Family Dental Ltd", "Dental practice", "M20 2RN", 12, "lost", "new", 24, null, "reception@didsburydental.example", "Already on a two-year contract with another cleaner.", "Outreach");
   ct("co_tarnbrook", "Gary Fenton", "Finance manager", "finance@tarnbrook.example", "0161 496 0101");
   ct("co_tarnbrook", "Lou Mercer", "Site manager", "lou.mercer@tarnbrook.example", "0161 496 0102");
@@ -112,6 +118,7 @@ export function seed(nowMs: number = Date.now()): State {
   ct("co_ashworth", "Nadia Hale", "Partner", "hello@ashworthhale.example", null);
   ct("co_chorlton", "Pete Byrne", "Practice manager", "reception@chorltonvets.example", null);
   ct("co_hulme", "Ola Ade", "Practice manager", "hello@hulmedental.example", null);
+  ct("co_brightside", "Kerry Lund", "Nursery manager", "office@brightsidenurseries.example", "0161 496 1401");
   ct("co_didsfam", "Reception", "Reception", "reception@didsburydental.example", null);
   const contactOf = (companyId: string) => contacts.find((c) => c.companyId === companyId)!;
 
@@ -233,8 +240,22 @@ export function seed(nowMs: number = Date.now()): State {
 
   /* ---------- Bills ---------- */
   const bills: Bill[] = [];
+  // Suppliers: the people we buy from, looked after by Fern. Clearwater asked to stop sales calls until the new year.
+  const SUPPLIER_ID: Record<string, string> = { "Northern Janitorial Supplies": "sup_njs", "Redhill Estates": "sup_redhill", "Lex Vehicle Leasing": "sup_lex", "EE Business": "sup_ee", "Hiscox": "sup_hiscox" };
+  const FERN: Actor = { kind: "agent", id: "agt_fin" };
+  const sup = (id: string, name: string, category: string, contactName: string | null, email: string | null, phone: string | null, dnc: Supplier["dnc"] = null): Supplier =>
+    ({ id, name, category, contactName, email, phone, owner: FERN, handoffTo: [{ kind: "person", id: "p_sam" }, { kind: "person", id: "p_dana" }], dnc });
+  const suppliers: Supplier[] = [
+    sup("sup_njs", "Northern Janitorial Supplies", "Cleaning chemicals and equipment", "Gail Rowe", "orders@njsupplies.example", "0161 496 2001"),
+    sup("sup_redhill", "Redhill Estates", "Unit 4 landlord", "Martin Hough", "lettings@redhill.example", "0161 496 2002"),
+    sup("sup_lex", "Lex Vehicle Leasing", "Van leases", null, "accounts@lexleasing.example", null),
+    sup("sup_ee", "EE Business", "Team phones", null, "business@ee.example", null),
+    sup("sup_hiscox", "Hiscox", "Insurance", null, "renewals@hiscox.example", null),
+    sup("sup_clearwater", "Clearwater Window Supplies", "Window cleaning kit", "Jo Pryce", "sales@clearwaterwindows.example", "0161 496 2006",
+      { since: ago(20 * D), until: day(40, "00:00"), reason: "Asked us to stop sales calls; orders through their portal only until the new year" }),
+  ];
   const bill = (id: string, supplier: string, category: string, total: number, issuedDaysAgo: number, dueIn: number, status: Bill["status"], paidDaysAgo: number | null = null) =>
-    bills.push({ id, supplier, category, total, issuedAt: ago(issuedDaysAgo * D), dueAt: day(dueIn, "23:59"), status, paidAt: paidDaysAgo == null ? null : ago(paidDaysAgo * D) });
+    bills.push({ id, supplier, supplierId: SUPPLIER_ID[supplier] || null, category, total, issuedAt: ago(issuedDaysAgo * D), dueAt: day(dueIn, "23:59"), status, paidAt: paidDaysAgo == null ? null : ago(paidDaysAgo * D) });
   bill("bill_1", "Northern Janitorial Supplies", "Cleaning chemicals, September", 68420, 36, -6, "overdue");
   bill("bill_2", "Redhill Estates", "Unit 4 rent, Q4", 125000, 12, 2, "due");
   bill("bill_3", "Lex Vehicle Leasing", "Van lease, November", 48900, 5, 8, "due");
@@ -276,7 +297,7 @@ export function seed(nowMs: number = Date.now()): State {
   // History for response times: 8 weeks of enquiries answered.
   const histCos = ["co_spinning", "co_quayside", "co_holcombe", "co_irwell", "co_marston", "co_didsbury", "co_trafford", "co_northgate", "co_castlequay"];
   for (let i = 0; i < 24; i++) {
-    const daysAgo = 2 + i * 2.3, c = histCos[i % histCos.length];
+    const daysAgo = 2.5 + i * 2.3, c = histCos[i % histCos.length];
     const late = daysAgo > 28 ? 1.6 : 1;
     const mins = Math.round((18 + rand() * 40) * late);
     const t = nowMs - daysAgo * D;
@@ -310,7 +331,8 @@ export function seed(nowMs: number = Date.now()): State {
   apr({ id: "apr_peel", agentId: "agt_sales", type: "send_outreach", risk: "review", value: null, createdAt: ago(5 * H), linkedRecord: { type: "company", id: "co_peel" },
     title: "First email to Peel Street Accountants", reason: "New lead in M3 · 15 staff · public office email · new client meeting suite",
     preview: email("office@peelstreet.example", "Office cleaning for Peel Street Accountants", "Hello,\n\nI run Brightwork Cleaning, a Manchester firm that looks after offices and clinics across the city centre. I saw you've opened a new client meeting suite; we keep spaces like that spotless after hours, so they're ready for the first meeting of the day.\n\nWould a short visit to give you a fixed monthly price be useful?\n\nDana Price\nBrightwork Cleaning") });
-  apr({ id: "apr_salford", agentId: "agt_cs", type: "reply_enquiry", risk: "review", value: null, createdAt: ago(38 * 60e3), linkedRecord: { type: "conversation", id: "cv_salford" },
+  // Held by the quiet period: Dana phoned Ellie just before Theo's draft was ready (see Engagement below).
+  apr({ id: "apr_salford", agentId: "agt_cs", type: "reply_enquiry", risk: "review", value: null, createdAt: ago(38 * 60e3), linkedRecord: { type: "conversation", id: "cv_salford" }, status: "held", guardEventId: "ge_salford",
     title: "Reply to Salford Quays Media", reason: "Quote request · 3 floors, about 9,000 sq ft · two questions needed to price it",
     preview: email("facilities@salfordmedia.example", "Re: Quote for nightly cleaning, 3 floors", "Hello Ellie,\n\nThanks for getting in touch. Nightly cleaning across three floors is exactly what we do.\n\nTo give you an exact price, two quick questions:\n1. Roughly how many desks and kitchens are there on each floor?\n2. Do you need washrooms restocked, or do you supply consumables?\n\nWe could start within two weeks of your go-ahead.\n\nKind regards,\nDana Price\nBrightwork Cleaning") });
   apr({ id: "apr_castlefield", agentId: "agt_cs", type: "reply_enquiry", risk: "review", value: null, createdAt: ago(3 * H - 4 * 60e3), linkedRecord: { type: "conversation", id: "cv_castlefield" },
@@ -426,15 +448,145 @@ export function seed(nowMs: number = Date.now()): State {
   ev(P("p_sam"), "logged a call from Tarnbrook about a scratched worktop", { type: "conversation", id: "cv_tarnbrook" }, nowMs - 2 * D, 0);
   ev(A("agt_cs"), "triaged the Salford Quays Media enquiry and drafted a reply", { type: "conversation", id: "cv_salford" }, nowMs - 38 * 60e3, 10);
   ev(A("agt_credit"), "drafted the second reminder for INV-1047", { type: "invoice", id: "INV-1047" }, nowMs - 4 * H, 10);
+
+  /* ---------- Engagement: owners, every touch with every buyer and supplier, and what the guard did ---------- */
+  // Leads are Maya's (Theo and Dana may start threads too); customers are Sam's, handed to the agents who serve them.
+  for (const c of companies) {
+    if (c.status === "customer") { c.owner = P("p_sam"); c.handoffTo = [A("agt_credit"), A("agt_fin"), A("agt_cs"), A("agt_ops"), P("p_dana")]; }
+    else { c.owner = A("agt_sales"); c.handoffTo = [A("agt_cs"), P("p_dana")]; }
+    c.dnc = null;
+  }
+  const touches: Touch[] = [];
+  const guard: GuardEvent[] = [];
+  let tN = 0;
+  const CO = (id: string): AccountRef => ({ kind: "company", id }), SUP = (id: string): AccountRef => ({ kind: "supplier", id });
+  const touch = (account: AccountRef, at: number, actor: Actor | null, channel: Touch["channel"], direction: Touch["direction"], text: string, o: Partial<Touch> = {}) => {
+    const x: Touch = { id: "t_" + (++tN), account, contactId: account.kind === "company" ? contactOf(account.id)?.id || null : null, at: iso(at), loggedAt: iso(at),
+      actor, heardBy: null, channel, direction, text, outcome: null, quiet: false, thread: null, ...o };
+    touches.push(x);
+    return x;
+  };
+  // Email and web history is the inbox's own messages, so the two never disagree.
+  const ACCEPTED = new Set(["cv_castlefield", "cv_ancoats"]);
+  for (const c of conversations) {
+    if (!c.companyId) continue;
+    for (const m of c.messages) {
+      const call = c.channel === "phone";
+      touch(CO(c.companyId), Date.parse(m.at), m.direction === "out" ? m.actor || P("p_dana") : null, call ? "phone" : c.channel, m.direction, m.body.split("\n").find((l) => l.trim() && !/^(Hello|Hi)\b.{0,20},?$/.test(l.trim()))?.trim() || m.body,
+        { thread: c.id, heardBy: m.direction === "in" && call ? m.actor : null, outcome: m.direction === "in" && ACCEPTED.has(c.id) ? "accepted" : null,
+          // Call notes were dealt with on the call, so they don't wait for a reply.
+          quiet: m.direction === "in" && call });
+    }
+  }
+  for (const x of invoices) if (x.status !== "draft") touch(CO(x.companyId), Date.parse(x.issuedAt), A("agt_fin"), "email", "out", `Sent invoice ${x.id} for ${fmt(x.total)}`, { thread: "inv_" + x.id });
+  for (const x of invoices) for (const ch of x.chaseLog) if (ch.kind === "reminder" && ch.agentId) touch(CO(x.companyId), Date.parse(ch.at), A(ch.agentId), "email", "out", `Reminder for ${x.id}`, { thread: "inv_" + x.id });
+  for (const x of quotes) if (x.sentAt) touch(CO(x.companyId), Date.parse(x.sentAt), A("agt_sales"), "email", "out", `Sent quote ${x.number} for ${fmt(x.total)} a year`, { thread: "q_" + x.id });
+  // Sam's site visits: every customer about once a fortnight, never in the last three days.
+  const STORY = new Set(["co_castlequay", "co_northgate"]);
+  companies.filter((c) => c.status === "customer" && !STORY.has(c.id)).forEach((c, i) => {
+    for (let k = 0; k < 4; k++) touch(CO(c.id), nowMs - (3.5 + ((i * 1.7) % 9) + k * 14) * D - 6 * H, P("p_sam"), "visit", "out", "Site visit: checked the clean with the contact", { thread: "visit_" + c.id });
+  });
+  // Suppliers: bills come in, remittances go out, and Sam orders by phone.
+  for (const b of bills) {
+    if (!b.supplierId) continue;
+    touch(SUP(b.supplierId), Date.parse(b.issuedAt), null, "email", "in", `Bill: ${b.category}`, { quiet: true, thread: "bill_" + b.id });
+    if (b.paidAt) touch(SUP(b.supplierId), Date.parse(b.paidAt), A("agt_fin"), "email", "out", `Remittance for ${b.category}`, { thread: "bill_" + b.id });
+  }
+  touch(SUP("sup_njs"), nowMs - 9 * D - 3 * H, P("p_sam"), "phone", "out", "Ordered floor cleaner, 20 × 5L", { thread: "order_njs" });
+  touch(SUP("sup_njs"), nowMs - 9 * D - 2 * H, null, "email", "in", "Order confirmed, delivery Thursday", { quiet: true, thread: "order_njs" });
+  touch(SUP("sup_clearwater"), nowMs - 21 * D, null, "email", "in", "Please stop calling: order through the portal until the new year", { quiet: true });
+  // Leads: Dana works LinkedIn alongside Maya's emails.
+  touch(CO("co_nq"), nowMs - 6 * D - 2 * H, A("agt_sales"), "email", "out", "First email: cleaning for a growing co-working space", { thread: "out_nq" });
+  touch(CO("co_nq"), nowMs - 3 * D - 5 * H, P("p_dana"), "linkedin", "out", "Connected with Rob Kane and mentioned Maya's email", { thread: "out_nq" });
+
+  // The story. Castlefield accepted by email this afternoon and nobody has confirmed: that's the conversation above.
+  // Chorlton: Pete accepted on Lee's WhatsApp this morning, and it never reached anyone else.
+  touch(CO("co_chorlton"), nowMs - 4 * D - 3 * H, A("agt_sales"), "email", "out", "Following up the quote: any questions?", { thread: "q_q_chorlton" });
+  touch(CO("co_chorlton"), nowMs - 6 * H, null, "whatsapp", "in", "Pete: happy to go ahead with the quote. Could you start a week on Tuesday?", { heardBy: P("p_lee"), outcome: "accepted", thread: "q_q_chorlton" });
+  // Whalley and Northgate are waiting on a reply.
+  touch(CO("co_whalley"), nowMs - 20 * H, null, "phone", "in", "Fran rang: could Saturday mornings work too? Wants a call back", { heardBy: P("p_sam"), thread: "cv_whalley" });
+  touch(CO("co_northgate"), nowMs - 10 * H, null, "email", "in", "Ian: could you quote for a deep clean of both schools over the summer?", { thread: "nq_summer" });
+  touch(CO("co_northgate"), nowMs - 16 * D, P("p_sam"), "visit", "out", "Site visit: checked the after-school clean", { thread: "visit_co_northgate" });
+  // Salford: Ellie's enquiry came in; Dana rang her; Theo's reply was ready moments later and the quiet period held it.
+  const sfIn = Date.parse(conversations.find((c) => c.id === "cv_salford")!.messages[0].at);
+  const sfCall = sfIn + (nowMs - sfIn) * 0.05, sfHeld = sfIn + (nowMs - sfIn) * 0.1;
+  touch(CO("co_salford"), sfCall, P("p_dana"), "phone", "out", "Rang Ellie to talk through the three floors", { thread: "cv_salford" });
+  guard.push({ id: "ge_salford", account: CO("co_salford"), at: iso(sfHeld), actor: A("agt_cs"), channel: "email", attempted: "Reply to Ellie: two questions to price the nightly clean",
+    ruleId: "R2", decision: "held", outcome: null, pending: true, reason: "Dana phoned Ellie a few minutes earlier", approvalId: "apr_salford", touchId: null, decidedBy: null, decidedAt: null });
+  // Ashworth: Maya's quote and follow-up and Dana's LinkedIn, then Sam's call (logged the next morning) was a fourth in a week.
+  touch(CO("co_ashworth"), nowMs - 6.5 * D, A("agt_sales"), "email", "out", "Following up the quote", { thread: "q_q_ashworth" });
+  touch(CO("co_ashworth"), nowMs - 4.5 * D, P("p_dana"), "linkedin", "out", "Messaged Nadia about the January move", { thread: "q_q_ashworth" });
+  // Castle Quay: Theo emailed Bea about Christmas; Lee messaged her the next morning about key fobs, inside the quiet period.
+  touch(CO("co_castlequay"), nowMs - 30 * H, A("agt_cs"), "email", "out", "Christmas closing dates for the cleaning rota", { thread: "cq_xmas" });
+  // Brightside: Maya emailed yesterday; Dana rang anyway, with a reason, inside the quiet period.
+  touch(CO("co_brightside"), nowMs - 30 * H, A("agt_sales"), "email", "out", "First email: cleaning for two nurseries", { thread: "out_brightside" });
+  // Do not contact. Hulme rang to say no after the quote; Didsbury Family Dental signed elsewhere.
+  touch(CO("co_hulme"), nowMs - 2 * D - 4 * H, null, "phone", "in", "Ola rang: they've gone with another cleaner and asked us not to contact them again", { heardBy: P("p_sam"), outcome: "declined", quiet: true, thread: "q_q_hulme" });
+  touch(CO("co_didsfam"), nowMs - 15 * D, null, "email", "in", "We've signed a two-year contract with another cleaner. Please take us off your list", { outcome: "declined", quiet: true, thread: "q_q_didsfam" });
+
+  // Touches logged after the fact: each is judged by the rules as they stood when it happened.
+  const owned = (a: AccountRef) => (a.kind === "company" ? companies.find((c) => c.id === a.id)! : suppliers.find((c) => c.id === a.id)!);
+  const ctouch = (x: Touch): CTouch => ({ at: x.at, actor: x.actor, direction: x.direction, channel: x.channel, outcome: x.outcome, quiet: x.quiet, contactId: x.contactId, thread: x.thread });
+  const logged = (account: AccountRef, at: number, loggedAfter: number, actor: Actor, channel: Touch["channel"], text: string, o: Partial<Touch> = {}, override: string | null = null) => {
+    const before = touches.filter((x) => x.account.kind === account.kind && x.account.id === account.id && Date.parse(x.at) < at).map(ctouch);
+    const x = touch(account, at, actor, channel, "out", text, { loggedAt: iso(at + loggedAfter), ...o });
+    const b = classifyLogged(owned(account), before, DEFAULT_RULES, { ...ctouch(x), actor });
+    if (b.breach) guard.push({ id: "ge_" + x.id, account, at: x.at, actor, channel, attempted: text, ruleId: b.breach, decision: override ? "overridden" : "breach",
+      outcome: override ? "Sent with a reason" : "Logged after it happened", pending: false, reason: override || b.reason, approvalId: null, touchId: x.id, decidedBy: override ? actor.id : null, decidedAt: override ? x.at : null });
+  };
+  logged(CO("co_ashworth"), nowMs - 2.2 * D, 15 * H, P("p_sam"), "phone", "Called Nadia about the quote", { thread: "q_q_ashworth" });
+  logged(CO("co_castlequay"), nowMs - 20 * H, 2 * H, P("p_lee"), "whatsapp", "Messaged Bea about the new key fobs");
+  logged(CO("co_brightside"), nowMs - 26 * H, 0, P("p_dana"), "phone", "Rang Kerry to book a look round", { thread: "out_brightside" }, "Kerry is only in on Mondays and asked at the networking breakfast for a call today");
+  // An older double contact on a customer, for the chart: Owen and Sam both messaged Trafford the same afternoon.
+  touch(CO("co_trafford"), nowMs - 12 * D - 5 * H, A("agt_ops"), "email", "out", "New crew from Monday", { thread: "tr_crew" });
+  logged(CO("co_trafford"), nowMs - 12 * D - 3 * H, H, P("p_sam"), "phone", "Rang Karen about the new crew", { thread: null });
+  touches.sort((a, b) => b.at.localeCompare(a.at));
+  guard.sort((a, b) => b.at.localeCompare(a.at));
+
+  // Agent sequences, one per account they're working.
+  const seq = (id: string, agentId: string, account: AccountRef, name: string, state: Sequence["state"], step: number, steps: number): Sequence => ({ id, agentId, account, name, state, step, steps });
+  const sequences: Sequence[] = [
+    seq("sq_castlefield", "agt_cs", CO("co_castlefield"), "Book the walk-round", "awaiting", 2, 3),
+    seq("sq_salford", "agt_cs", CO("co_salford"), "Answer the quote request", "held", 1, 3),
+    seq("sq_holcombe", "agt_cs", CO("co_holcombe"), "Answer the deep clean request", "awaiting", 1, 2),
+    seq("sq_peel", "agt_sales", CO("co_peel"), "Dental and professional services, autumn", "awaiting", 1, 4),
+    seq("sq_whalley", "agt_sales", CO("co_whalley"), "Clinics in south Manchester", "active", 3, 4),
+    seq("sq_nq", "agt_sales", CO("co_nq"), "Co-working spaces", "active", 2, 4),
+    seq("sq_ashworth", "agt_sales", CO("co_ashworth"), "Quote follow-up", "paused", 3, 4),
+    seq("sq_chorlton", "agt_sales", CO("co_chorlton"), "Quote follow-up", "finished", 4, 4),
+    seq("sq_hulme", "agt_sales", CO("co_hulme"), "Quote follow-up", "stopped", 2, 4),
+    seq("sq_tarnbrook", "agt_credit", CO("co_tarnbrook"), "Chase INV-1047", "awaiting", 2, 4),
+    seq("sq_spinning", "agt_credit", CO("co_spinning"), "Chase the overdue invoice", "awaiting", 1, 4),
+    seq("sq_didsbury", "agt_credit", CO("co_didsbury"), "Chase the overdue invoice", "awaiting", 1, 4),
+    seq("sq_njs", "agt_fin", SUP("sup_njs"), "Pay the September bill", "awaiting", 1, 2),
+  ];
+  // Who's looking at an account right now.
+  const presence: Presence[] = [
+    { id: "pr_1", account: CO("co_salford"), actor: P("p_sam"), doing: "viewing", since: iso(nowMs - 4 * 60e3) },
+    { id: "pr_2", account: CO("co_northgate"), actor: A("agt_cs"), doing: "drafting", since: iso(nowMs - 3 * 60e3) },
+    { id: "pr_3", account: CO("co_chorlton"), actor: P("p_lee"), doing: "viewing", since: iso(nowMs - 9 * 60e3) },
+  ];
+  ev(A("agt_cs"), "had a reply to Salford Quays Media held: Dana phoned Ellie first", { type: "company", id: "co_salford" }, sfHeld, 0);
+  ev(P("p_sam"), "logged a call to Ashworth Hale, the fourth contact in a week", { type: "company", id: "co_ashworth" }, nowMs - 2.2 * D + 15 * H, 0);
+  ev(P("p_lee"), "logged a WhatsApp to Castle Quay inside the quiet period", { type: "company", id: "co_castlequay" }, nowMs - 18 * H, 0);
+  ev(P("p_dana"), "rang Brightside Nurseries inside the quiet period, with a reason", { type: "company", id: "co_brightside" }, nowMs - 26 * H, 0);
   activity.sort((a, b) => b.at.localeCompare(a.at));
 
   return {
     now: iso(nowMs),
     org: { name: "Brightwork Cleaning Ltd", owner: "p_dana", postcode: "M4 6DE", cashBalance: 1842035, balanceAt: iso(nowMs - 2 * H) },
     companies, contacts, deals, quotes, jobs, invoices, payments, bills, conversations, tasks, approvals, people, agents, activity,
-    channels, chat, contracts, records, diary,
+    channels, chat, contracts, records, diary, touches, suppliers, guard, sequences, presence,
     os: brightworkOs(iso(nowMs - 40 * D)), paused: false,
     prefs: { view: "owner", trustDismissed: [], leaksDismissed: [], onboarded: true },
+    contactRules: DEFAULT_RULES,
+    usage: {
+      plan: "growth", joinedAt: ago(270 * D),
+      planChanges: [{ at: ago(152 * D), from: "starter", to: "growth" }],
+      modeChanges: [{ at: ago(200 * D), agentId: "agt_cs", from: "standard", to: "deep" }, { at: ago(75 * D), agentId: "agt_sales", from: "standard", to: "deep" }, { at: ago(46 * D), agentId: "agt_sales", from: "deep", to: "standard" }],
+      pausedDays: [ago(33 * D).slice(0, 10)],
+      topups: [{ at: ago(58 * D), credits: 1000 }],
+    },
   };
 }
 
@@ -479,7 +631,7 @@ export function dayOne(input: { business: string; owner: string; description: st
   return {
     ...base,
     org: { ...base.org, name, owner: "p_dana", cashBalance: 0, balanceAt: iso(nowMs) },
-    companies, contacts: [], deals: [], quotes: [], jobs: [], invoices, payments: [], bills: [], conversations, tasks: [], approvals, people: [owner], agents,
+    companies: companies.map((c) => ({ ...c, owner: { kind: "person" as const, id: "p_dana" }, handoffTo: [], dnc: null })), contacts: [], deals: [], quotes: [], jobs: [], invoices, payments: [], bills: [], conversations, tasks: [], approvals, people: [owner], agents,
     activity: [
       ev("agt_brief", "set up your workspace and started 48 hours of watch mode", null, 5),
       ev("agt_sales", "found 2 companies that fit your customers", { type: "company", id: "co_d1" }, 50),
@@ -487,7 +639,8 @@ export function dayOne(input: { business: string; owner: string; description: st
       ...(has("email") ? [ev("agt_cs", "read this week's inbox and drafted a reply", { type: "conversation", id: "cv_d1" }, 25)] : []),
     ],
     chat: [{ id: "ch_d1", channelId: "ch_general", author: { kind: "agent", id: "agt_brief" }, body: `Welcome, ${first}. For the next 48 hours we'll show you what we would have done, and send nothing. Approve or reject each one and we'll learn how you like things done.`, at: ago(5 * 60e3), card: null }],
-    contracts: [], records: [], diary: [],
+    contracts: [], records: [], diary: [], touches: [], suppliers: [], guard: [], sequences: [], presence: [],
+    usage: { plan: "growth", joinedAt: iso(nowMs), planChanges: [], modeChanges: [], pausedDays: [], topups: [] },
     prefs: { view: "owner", trustDismissed: [], leaksDismissed: [], onboarded: true, watchUntil: iso(nowMs + 48 * H) },
   };
 }

@@ -31,10 +31,11 @@ describe.each(CLOCKS.map((t) => [new Date(t).toISOString(), t]))("Brightwork see
 
   it("has £320.00 due in the next 7 days", () => expect(q.dueSoonTotal(s)).toBe(32000));
 
-  it("has 10 decisions waiting: 4 routine and 6 to review", () => {
-    expect(q.pendingCount(s)).toBe(10);
+  it("has 9 decisions waiting: 4 routine and 5 to review, and Theo's Salford reply held by the contact rules", () => {
+    expect(q.pendingCount(s)).toBe(9);
     expect(q.routine(s).length).toBe(4);
-    expect(q.review(s).length).toBe(6);
+    expect(q.review(s).length).toBe(5);
+    expect(s.approvals.find((a) => a.id === "apr_salford")!.status).toBe("held");
   });
 
   it("has 6 new leads, 2 replies (1 today) and Ancoats won this week", () => {
@@ -47,10 +48,11 @@ describe.each(CLOCKS.map((t) => [new Date(t).toISOString(), t]))("Brightwork see
     expect(s.jobs.some((j) => j.companyId === "co_ancoats" && j.kind === "clean")).toBe(true);
   });
 
-  it("has a pending outreach for Peel Street and drafted replies for Salford Quays and Castlefield", () => {
+  it("has a pending outreach for Peel Street, a drafted reply for Castlefield, and Salford's held", () => {
     const p = q.pending(s);
     expect(p.some((a) => a.type === "send_outreach" && a.linkedRecord.id === "co_peel")).toBe(true);
-    expect(p.some((a) => a.linkedRecord.id === "cv_salford")).toBe(true);
+    expect(p.some((a) => a.linkedRecord.id === "cv_salford")).toBe(false);
+    expect(s.guard.find((g) => g.approvalId === "apr_salford")).toMatchObject({ decision: "held", ruleId: "R2", pending: true });
     const c = p.find((a) => a.linkedRecord.id === "cv_castlefield")!;
     expect(c.note).toMatch(/diary/i);
     expect(c.preview.kind === "email" && c.preview.body).toMatch(/5\.30pm/);
@@ -104,12 +106,12 @@ describe("store actions keep the figures in step", async () => {
     const before = store.getState();
     const tok = store.approve("apr_tarnbrook")!;
     let s = store.getState();
-    expect(q.pendingCount(s)).toBe(9);
+    expect(q.pendingCount(s)).toBe(8);
     expect(q.remindersSent(s.invoices.find((x) => x.id === "INV-1047")!)).toBe(2);
     expect(s.activity[0].verb).toMatch(/second reminder for INV-1047/);
     store.undo(tok);
     s = store.getState();
-    expect(q.pendingCount(s)).toBe(10);
+    expect(q.pendingCount(s)).toBe(9);
     expect(q.remindersSent(s.invoices.find((x) => x.id === "INV-1047")!)).toBe(1);
     expect(s.activity.length).toBe(before.activity.length);
   });
@@ -117,7 +119,7 @@ describe("store actions keep the figures in step", async () => {
     store.init(seed(Date.UTC(2026, 9, 26, 18)));
     store.acceptTrust("agt_credit", "send_reminder", 50000);
     const s = store.getState();
-    expect(q.pendingCount(s)).toBe(9); // Spinningfields (£400) went; Didsbury (£656) and Tarnbrook (£1,280) still ask
+    expect(q.pendingCount(s)).toBe(8); // Spinningfields (£400) went; Didsbury (£656) and Tarnbrook (£1,280) still ask
     expect(s.agents.find((a) => a.id === "agt_credit")!.autonomy[0]).toMatchObject({ mode: "auto", maxValue: 50000 });
     expect(q.trustPrompts(s)).toEqual([]);
   });

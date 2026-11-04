@@ -4,6 +4,7 @@ import { navigate, useRoute } from "../../router.jsx";
 import { Icon, toast, useStore } from "../core.jsx";
 import { AgentBadge, ActorName, Button, CONV_TONE, DEAL_TONE, DataTable, EmptyState, FilterChips, MetricTile, QUOTE_TONE, RecordDrawer, RecordLink, StatusChip, cap } from "../ui.jsx";
 import { DecisionCard } from "../DecisionCard.jsx";
+import { HeldNotice, draftToast } from "../engagement/Held.jsx";
 import { HubFrame, useTab } from "./Hub.jsx";
 import { GenericApp } from "./Money.jsx";
 import { Summary } from "../records/Summary.jsx";
@@ -156,8 +157,9 @@ function Inbox() {
           <div className="w-pane-b">
             {!sel ? <p className="w-sub">Choose a conversation to see what Theo would send.</p>
               : draft ? <DecisionCard a={draft} />
+              : q.approvalsFor(s, { type: "conversation", id: sel.id }).some((x) => x.status === "held") ? <HeldNotice refTo={{ type: "conversation", id: sel.id }} />
               : sel.status === "resolved" ? <p className="w-sub">Resolved. Nothing to send.</p>
-              : <EmptyState icon="Pencil" title="No draft yet" body="Theo hasn't drafted a reply to this one." action={<Button variant="primary" icon="Sparkles" onClick={() => { const tok = draftReply(sel.id); toast("Theo drafted a reply for you to check.", { undo: tok }); }}>Ask Theo to draft one</Button>} />}
+              : <EmptyState icon="Pencil" title="No draft yet" body="Theo hasn't drafted a reply to this one." action={<Button variant="primary" icon="Sparkles" onClick={() => { draftToast(draftReply(sel.id), "Theo drafted a reply for you to check."); }}>Ask Theo to draft one</Button>} />}
           </div>
         </div>
       </div>
