@@ -64,6 +64,10 @@ Signed out, `/workspace` is the Brightwork Cleaning demo. It runs entirely in th
 - `selectors.ts` works out every figure on screen.
 - `store.ts` holds the actions, each of which can be undone.
 
+Two screens sit on top of it:
+- **Engagement** (`/workspace/engagement`, `apps/web/src/workspace/engagement`): every touch with every buyer and supplier, from people and agents, with the contact rules checked before anyone sends. The rules themselves are in `packages/core/contact.ts`, so the API can run the same check; every agent draft reaches the approvals queue through `propose()` in `store.ts`, which holds or skips it if a rule says so.
+- **Usage and credits** (`/workspace/setup/usage`, `apps/web/src/workspace/usage`): a year of AI Team usage as a heatmap, spend by agent, the plan and the biggest runs. The history comes from `demoHistory()` in `packages/core/demoUsage.ts`, priced from `config/model-pricing.ts`.
+
 The screens live in `apps/web/src/workspace`. `/workspace/design` shows every component. `docs/AUDIT.md` records what the overhaul replaced, and `docs/QA.md` the checks it passes.
 
 ```bash

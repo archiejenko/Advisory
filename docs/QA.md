@@ -171,6 +171,71 @@ This branch is `claude/peaceful-bell-mkmpa8` (the workspace overhaul) with `clau
   - `tests/unit/no-monthly-cap.test.ts` fails if any app source reads it, the Floor test checks the API response leaves it out even when an old row has one, and `workspace-qa.mjs` bans "monthly cap" and "team cap" on every route.
 - **`os-check.mjs` moved onto the new shell.** It covers the landing page, `/os`, pricing in credits, Usage with a top-up, agent modes, and phone width. The workspace screens themselves are covered by `workspace-qa.mjs`.
 
+## Engagement and Usage and credits
+
+**Result:** `npm test` 849 passed (310 new). `npm run typecheck` clean. `npm run test:workspace` 58 of 58 checks passed (16 new), now at 375, 390, 768, 1280 and 1440px.
+
+### The contact rules (`tests/unit/contact.test.ts`, 43 tests)
+They run against `packages/core/contact.ts`, the same function the workspace uses and the API can call.
+- **Each rule:**
+  - R1 do not contact: N days after a decline, or until a set date on an opt-out.
+  - R2 quiet period: holds others for N hours; the sender may follow up; ends when they reply; the boundary is exact.
+  - R3 owner starts threads: agents are held, people warned, a handoff allows it.
+  - R4 confirm acceptances: met on any channel; the due time is checked.
+  - R5 reply in time: messages that need no reply are ignored.
+  - R6 frequency cap: per contact, rolling window.
+- **Verdict priority:** R1, then R4, R5, R2 and R6, each shown by switching the rule above it off.
+- **Overrides:** a person's send needs a written reason and is logged as overridden.
+- **Breaches:** a touch logged after the fact is judged by the rules as they stood at the time.
+- **The agent hold path:** an agent is held, or blocked by do not contact. It is never warned and can never override.
+
+### The demo store (`tests/unit/engagement.test.ts`, at 21 times across a week)
+- **The Brightwork story at every clock:**
+  - Castlefield accepted by email and nobody has confirmed.
+  - Chorlton accepted on Lee's WhatsApp and is past its 4 hours.
+  - Whalley and Northgate are waiting on replies.
+  - Salford: Theo's reply is held (Dana phoned first) and waiting.
+  - Ashworth (R6) and Castle Quay (R2) are breaches, logged after the fact.
+  - Brightside is an override with a reason.
+  - Hulme, Clearwater and Didsbury Family Dental are on do not contact.
+- **Needs attention** has 6 items (two acceptances, three replies, one held send), soonest first.
+- **Every pending decision passes the rules,** so approving them all sends them all.
+- **The guard hook:**
+  - A draft for an account in someone else's quiet period is held, its owner gets a task, and Undo removes all of it.
+  - A draft for an account on do not contact is skipped, with a blocked entry.
+  - Following up quotes skips Hulme, holds Ashworth and drafts Chorlton.
+  - Approving checks again, so a call logged since the draft holds the send.
+- **Send it** needs a reason; **Drop it** sends nothing. Both can be undone, and so can owner changes, paused automations and rule changes.
+
+### Usage history (`tests/unit/usage-history.test.ts`)
+- **The history:** deterministic, and runs only from the day the workspace joined. Bea runs only after she was hired. Nothing runs on the paused day. Maya ran on Deep for exactly her month.
+- **The ledger:** every run is priced from the pricing config; plan credits follow the plan in force each month; charges split between plan and top-up credits.
+- **The page's figures:** daily totals add up to the ledger. Bins sit at the 30th, 60th and 90th percentiles. Biggest runs are the top five. Spend shares add to one. The plan reads Growth's 5,000 credits from the config.
+
+### In the browser (`workspace-qa.mjs`, section 7)
+- **One count everywhere:** "waiting on us" is the same in the sidebar, the Overview tab, Needs attention, its list and the Customers link. The Needs action view matches.
+- **Keyboard only:** J and K move a visible cursor, Enter opens the account, L opens Log a touch with a visible focus ring, Esc closes the dialog and then the account, and / focuses the filter.
+- **Usage:** the sidebar's AI Team list opens Usage filtered to that agent. There are 52 week columns of 7 days, days before joining are greyed, and the pins are listed. Setup's credits left equals Usage's.
+- **Screens:** both are rendered at 1440 and 390 with no sideways scroll, and no console errors on any route.
+- **Motion:** with reduced motion emulated, transitions are 0s, and no animation loops anywhere in the workspace.
+
+### Against the mockup
+`docs/mockups/agent-house-engagement.html` isn't in the repository: no branch or commit has ever had `docs/mockups/`. So these screens were built from the written brief, and **the side-by-side comparison still has to be done** once the file is committed. Differences that were chosen on purpose:
+- **Look:** the workspace's dark theme and Helvetica Neue, not the mockup's light theme and IBM Plex Sans. The radial blue wash on the background is gone.
+- **Agents:** all six from the seed, Bea included.
+- **Colour:** used only where it means something. Blue is an agent and orange a person. The six channels and the heatmap's single blue all passed a colour-blind check on the dark surface. The brand blue itself is too light to use as a chart colour.
+- **Held drafts** leave the approvals queue, so Home shows 9 decisions (4 routine, 5 to review).
+- **Usage costs** are AI cost at 1 credit to 1p, from `packages/core/credits.ts`. The plan is Growth at 5,000 credits from `config/model-pricing.ts`, not the mockup's £2 per 1,000 credits or its 60,000-credit plan.
+- **Rule readings:**
+  - R2 lets the person who sent the last message follow up.
+  - R3 counts as starting a conversation when there's no open thread.
+  - R6 counts per contact.
+- **Guesses to confirm against the mockup:**
+  - Brightside is a lead and Clearwater a supplier.
+  - The six figures are outbound touches, messages from them, the share sent by agents, median time to reply, double contacts, and held or blocked sends.
+- **Phone tab bar:** Engagement isn't on it, which keeps five tabs. On a phone it's reached from Customers and from Ask.
+- **Presence** is seeded, not live.
+
 ## Known limits
 
 - **Signed-in workspace.** As agreed, customers who sign in still see the existing live workspace. The new workspace runs on the demo store until an API adapter exists.
