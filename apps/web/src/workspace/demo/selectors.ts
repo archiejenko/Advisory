@@ -642,3 +642,8 @@ export function dueText(s: State, iso: string | null, kind: "due" | "until" = "d
   return ms >= 0 ? `due in ${span}` : `${span} overdue`;
 }
 export const isOverdueAt = (s: State, iso: string | null) => !!iso && Date.parse(iso) < clockOf(s);
+/** Each agent's credits so far this month (UK months, as the ledger counts them). */
+export function monthByAgent(s: State) {
+  const { entries } = usageLedger(s), period = periodOf(s.now);
+  return s.agents.map((a) => ({ id: a.id, name: a.name, credits: Math.round(creditsOf(entries.filter((e) => e.kind === "run" && e.period === period && e.agent_id === a.id))) }));
+}

@@ -44,7 +44,7 @@ export function AppShell({ children }) {
   const [rail, setRail] = useState(() => { try { return localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; } });
   const [ask, setAsk] = useState(false);
   const [menu, setMenu] = useState(null);
-  const { path } = useRoute();
+  const { path, query } = useRoute();
   useEffect(() => { setMenu(null); setAsk(false); }, [path]);
   useEffect(() => {
     const k = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setAsk((x) => !x); } };
@@ -69,6 +69,15 @@ export function AppShell({ children }) {
               {n.id === "engagement" && waiting > 0 && <span className="w-count" aria-label={`${waiting} waiting on us`}>{waiting}</span>}
             </Link>
           ))}
+          <div className="w-side-team" role="group" aria-labelledby="w-side-team-h">
+            <p className="w-side-h" id="w-side-team-h">AI Team</p>
+            {s.agents.map((a) => (
+              <Link key={a.id} to={`/workspace/setup/usage?agent=${a.id}`} className="w-side-agent" aria-current={path === "/workspace/setup/usage" && query.agent === a.id ? "page" : undefined} title={`${a.name}'s usage`}>
+                <i className={"w-dot" + (s.paused ? " is-paused" : "")} aria-hidden="true" /><span>{a.name}</span><small>{a.roleName}</small>
+                <span className="sr-only">{s.paused ? ", paused" : ", working"}. Open usage</span>
+              </Link>
+            ))}
+          </div>
           <span className="w-sp" />
           <Link to="/workspace/setup" className="w-nav" aria-current={active === "setup" ? "page" : undefined} title="Setup"><Icon name="Settings" size={20} /><span>Setup</span></Link>
           <button type="button" className="w-nav w-collapse" onClick={flipRail} aria-pressed={rail} title={rail ? "Expand the sidebar" : "Collapse to icons"}>

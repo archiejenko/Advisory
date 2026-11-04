@@ -3,7 +3,7 @@
 //   1. Consistency: every shared figure matches its selector, on every screen that shows it.
 //   2. Banned strings: no build-status copy in rendered output.
 //   3. Cross-linking: entity references are links, and 20 of them open real records.
-//   4. Responsive: every route at 375, 768, 1280 and 1440px, with nothing wider than the screen.
+//   4. Responsive: every route at 375, 390, 768, 1280 and 1440px, with nothing wider than the screen.
 //   5. Copy: American spellings and "entrys"-style slips.
 //   6. Five-minute test: clear Home's queue at 375px with touch, counting taps.
 // Writes screenshots to ui-shots/workspace/ and a JSON summary to ui-shots/workspace/results.json.
@@ -23,6 +23,7 @@ const ROUTES = [
   "/workspace/money/invoices/INV-1047", "/workspace/customers/companies/co_tarnbrook", "/workspace/customers/pipeline/deal_ancoats", "/workspace/customers/quotes/q_ancoats",
   "/workspace/work/jobs/job_tarnbrook", "/workspace/customers/inbox/cv_castlefield", "/workspace/team/agents/agt_credit", "/workspace/team/people/p_sam",
   "/workspace/money/bills/bill_1", "/workspace/work/tasks/task_coshh", "/workspace/customers/contacts/con_1", "/workspace/work/safety/rec_coshh",
+  "/workspace/engagement", "/workspace/engagement?a=company:co_salford", "/workspace/engagement/guard", "/workspace/engagement/rules", "/workspace/setup/usage?agent=agt_cs",
 ];
 const BANNED = [/Partly built/i, /Records and AI Team/i, /Some of this runs natively today/i, /records and the AI Team fill the rest/i, /The full native screen is still being built/i, /Open the full .* screen/i, /\bentrys\b/i, /\bcrm\b/, /monthly[ _]cap/i, /team cap/i];
 const AMERICAN = [/\borganiz/i, /\bcolor\b/i, /\bcenter\b/i, /\bbehavior/i, /\bfavorite/i, /\banalyz/i, /\bcatalog\b/i, /\bcanceled\b/i, /\$\d/];
@@ -88,7 +89,7 @@ console.log("1. Consistency");
   // Credits: Setup's figure is the Usage page's figure.
   const left = await txt(p, "[data-testid=setup-credits]");
   await go(p, "/workspace/setup/usage");
-  const usage = await p.locator(".stat-row > div").first().locator("b").innerText().catch(() => "(missing)");
+  const usage = await txt(p, "[data-testid=usage-left]");
   ok(left !== "(missing)" && usage.replace(/\D/g, "") === left.replace(/\D/g, ""), "credits: Setup summary matches Usage", `${left} vs ${usage}`);
   let tabs = 0;
   for (const h of ["customers", "money", "work", "team"]) { await go(p, "/workspace/" + h); tabs += await p.locator(".w-tabs .w-tab").count(); }
@@ -156,7 +157,7 @@ console.log("2. Banned strings · 3. Cross-links · 5. Copy");
 console.log("4. Responsive");
 {
   const over = [];
-  for (const w of [375, 768, 1280, 1440]) {
+  for (const w of [375, 390, 768, 1280, 1440]) {
     const p = await page(w);
     for (const r of ROUTES) {
       await go(p, r);
@@ -177,7 +178,50 @@ console.log("4. Responsive");
     await p.context().close();
   }
   results.overflow = over;
-  ok(!over.length, "nothing overflows at 375, 768, 1280 or 1440px", over.slice(0, 8).join("; "));
+  ok(!over.length, "nothing overflows at 375, 390, 768, 1280 or 1440px", over.slice(0, 8).join("; "));
+}
+
+/* ---------- 7. Engagement and Usage: shared counts, and the keyboard ---------- */
+console.log("7. Engagement and Usage");
+{
+  const p = await page(1440);
+  await go(p, "/workspace/engagement");
+  const want = await p.evaluate(() => { const { getState, q } = window.__workspace; const S = getState(); return { waiting: String(q.engagementWaiting(S)), needs: String(q.viewCounts(S).needs), holds: String(q.pendingHolds(S).length) }; });
+  const seen = [
+    await txt(p, ".w-side a[href$='/workspace/engagement'] .w-count"), await txt(p, ".w-tabs .w-tab.is-on .w-count"),
+    await txt(p, ".w-needs .w-count"), String(await p.locator(".w-needs-l li").count()),
+  ];
+  ok(want.waiting === "6" && seen.every((x) => x === want.waiting), "engagement: waiting on us agrees in the sidebar, tab, Needs attention and its list", `${want.waiting} vs ${seen.join(",")}`);
+  ok((await txt(p, ".w-fchip[aria-pressed] + .w-fchip .w-n")) === want.needs, "engagement: Needs action view count", want.needs);
+  await go(p, "/workspace/customers");
+  ok((await txt(p, "a[href$='/workspace/engagement'] .w-count")) === want.waiting, "engagement: Customers links to it with the same count");
+
+  // Keyboard only: J/K move, Enter opens, L logs, Esc closes, / filters; focus is always visible.
+  await go(p, "/workspace/engagement");
+  await p.keyboard.press("j"); await p.keyboard.press("j"); await p.keyboard.press("k");
+  const row = await p.evaluate(() => { const a = document.activeElement; return { tag: a.tagName, name: a.querySelector?.(".w-cell-main")?.textContent, outline: getComputedStyle(a.querySelector("td")).boxShadow }; });
+  ok(row.tag === "TR" && row.name && row.outline !== "none", "keyboard: J and K move a visible cursor through the grid", JSON.stringify(row));
+  await p.keyboard.press("Enter"); await p.waitForTimeout(250);
+  ok((await txt(p, "#w-insp-title")).startsWith(row.name), "keyboard: Enter opens the account", await txt(p, "#w-insp-title"));
+  await p.keyboard.press("l"); await p.waitForTimeout(250);
+  ok(await p.locator(".w-dialog").count() === 1, "keyboard: L opens Log a touch");
+  const ring = await p.evaluate(() => getComputedStyle(document.activeElement).outlineStyle + " " + getComputedStyle(document.activeElement).boxShadow);
+  ok(!/^none none$/.test(ring), "keyboard: focus is visible in the dialog", ring);
+  await p.keyboard.press("Escape"); await p.waitForTimeout(150);
+  ok(await p.locator(".w-dialog").count() === 0, "keyboard: Esc closes the dialog");
+  await p.locator("body").press("Escape"); await p.waitForTimeout(250);
+  ok(await p.locator("#w-insp-title").count() === 0, "keyboard: Esc closes the account");
+  await p.keyboard.press("/");
+  ok(await p.evaluate(() => document.activeElement.type === "search"), "keyboard: / focuses the filter");
+
+  // Usage: the sidebar's AI Team list opens Usage filtered to that agent.
+  await p.locator(".w-side-agent", { hasText: "Theo" }).click(); await p.waitForTimeout(400);
+  ok(/agent=agt_cs/.test(await p.evaluate(() => location.hash)) && /Theo/.test(await txt(p, "#w-heat-h")), "usage: the sidebar opens Usage filtered to the agent", await txt(p, "#w-heat-h"));
+  ok(await p.locator(".w-heat-col").count() === 52 && await p.locator(".w-heat-col").first().locator("i").count() === 7, "usage: 52 weeks of Monday to Sunday");
+  ok(await p.locator(".w-heat-col i.is-before").count() > 50, "usage: days before the workspace joined are greyed");
+  ok(await p.locator(".w-heat-pinlist li").count() >= 5, "usage: pins for joined, plan, new agent, mode and paused");
+  ok(!p.errors.length, "no console errors (engagement and usage)", p.errors.join(" | "));
+  await p.context().close();
 }
 
 /* ---------- 6. Five-minute test ---------- */

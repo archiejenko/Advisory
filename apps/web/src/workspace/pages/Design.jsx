@@ -11,6 +11,10 @@ import { ChannelIcon, PresenceDots, SEQUENCE_STATES, SequenceChip, TouchStrip, V
 import { DecisionChip, HoldCard } from "../engagement/Inspector.jsx";
 import { HeldNotice } from "../engagement/Held.jsx";
 import { TouchChart } from "../engagement/TouchChart.jsx";
+import { Heatmap } from "../usage/Heatmap.jsx";
+import { SpendByAgent } from "../usage/SpendByAgent.jsx";
+import { PlanCard } from "../usage/PlanCard.jsx";
+import { BiggestRuns } from "../usage/BiggestRuns.jsx";
 import { AskButton } from "../AskBar.jsx";
 import { pounds } from "../demo/format";
 import * as q from "../demo/selectors";
@@ -134,6 +138,14 @@ export function Design() {
           {q.pendingHolds(s)[0] && <div style={{ maxWidth: 440 }}><HoldCard g={q.pendingHolds(s)[0]} /></div>}
           <HeldNotice refTo={{ type: "conversation", id: "cv_salford" }} />
           <TouchChart />
+        </div>
+      </Section>
+
+      <Section title="Usage and credits" id="d-usage" sub="Heatmap, spend by agent, the plan card and biggest runs">
+        <div className="w-stack">
+          <Heatmap agentId={null} onAgent={() => {}} />
+          <div className="w-usage-2"><SpendByAgent agentId={null} onAgent={() => {}} /><PlanCard /></div>
+          <BiggestRuns />
         </div>
       </Section>
 
